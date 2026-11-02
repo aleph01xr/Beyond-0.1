@@ -28,98 +28,7 @@ interface SanctuaryLobbyProps {
 
 type LobbyTab = 'expeditions' | 'classes' | 'codex' | 'controls';
 
-const PixelHeroPreview: React.FC<{ heroClass: HeroClassId; size?: number }> = ({
-  heroClass,
-  size = 64,
-}) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, 24, 24);
-
-    const def = HERO_CLASSES[heroClass];
-
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(6, 19, 12, 3);
-
-    ctx.fillStyle = def.capeColor;
-    ctx.fillRect(6, 9, 12, 9);
-
-    ctx.fillStyle = '#2B2A33';
-    ctx.fillRect(8, 18, 3, 3);
-    ctx.fillRect(13, 18, 3, 3);
-
-    ctx.fillStyle = def.primaryColor;
-    ctx.fillRect(7, 9, 10, 9);
-
-    ctx.fillStyle = def.accentColor;
-    ctx.fillRect(7, 14, 10, 2);
-
-    if (heroClass === 'vanguard') {
-      ctx.fillStyle = '#A8B5CC';
-      ctx.fillRect(7, 3, 10, 7);
-      ctx.fillStyle = '#242632';
-      ctx.fillRect(9, 6, 6, 2);
-      ctx.fillStyle = def.accentColor;
-      ctx.fillRect(11, 2, 2, 2);
-      ctx.fillStyle = def.accentColor;
-      ctx.fillRect(3, 10, 4, 7);
-      ctx.fillStyle = '#CBD5E1';
-      ctx.fillRect(18, 4, 2, 10);
-      ctx.fillStyle = def.accentColor;
-      ctx.fillRect(17, 12, 4, 2);
-    } else if (heroClass === 'ranger') {
-      ctx.fillStyle = '#385C41';
-      ctx.fillRect(7, 3, 10, 6);
-      ctx.fillStyle = '#E8C39E';
-      ctx.fillRect(9, 6, 6, 3);
-      ctx.fillStyle = '#1E293B';
-      ctx.fillRect(10, 7, 1, 1);
-      ctx.fillRect(13, 7, 1, 1);
-      ctx.fillStyle = '#B88446';
-      ctx.fillRect(18, 5, 2, 12);
-      ctx.fillRect(17, 4, 2, 2);
-      ctx.fillRect(17, 16, 2, 2);
-    } else if (heroClass === 'arcanist') {
-      ctx.fillStyle = '#3B3769';
-      ctx.fillRect(6, 5, 12, 2);
-      ctx.fillRect(8, 3, 8, 2);
-      ctx.fillRect(10, 1, 4, 2);
-      ctx.fillStyle = '#E8C39E';
-      ctx.fillRect(9, 7, 6, 3);
-      ctx.fillStyle = '#7A593C';
-      ctx.fillRect(18, 6, 2, 13);
-      ctx.fillStyle = '#7CC6FE';
-      ctx.fillRect(17, 3, 4, 3);
-    } else {
-      ctx.fillStyle = '#EAE4D7';
-      ctx.fillRect(7, 3, 10, 6);
-      ctx.fillStyle = '#E8C39E';
-      ctx.fillRect(9, 6, 6, 3);
-      ctx.fillStyle = def.accentColor;
-      ctx.fillRect(10, 3, 4, 2);
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillRect(18, 8, 2, 9);
-      ctx.fillStyle = '#F4D378';
-      ctx.fillRect(17, 5, 4, 4);
-    }
-  }, [heroClass]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={24}
-      height={24}
-      style={{ width: size, height: size }}
-      className="pixelated shrink-0"
-    />
-  );
-};
+import { PixelHeroPreview } from './PixelHeroPreview.tsx';
 
 export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   user,
@@ -138,6 +47,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [seedInput, setSeedInput] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [muted, setMuted] = useState(() => sfx.isMuted());
+  const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
 
   const handleQuickStart = () => {
     sfx.playUiClick();
@@ -241,7 +151,9 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-[#9E9CAE] font-mono tabular-nums">
               <span className="text-[#E6E4EE] font-semibold">{user.username}</span>
               <span aria-hidden="true">·</span>
-              <span>{currentClassDef.name}</span>
+              <span className="text-[#FBBF24] font-semibold flex items-center gap-1">
+                <span>🔒</span> {currentClassDef.name} ({currentClassDef.title})
+              </span>
               <span aria-hidden="true">·</span>
               <span>{onlineCount} Online</span>
               <span aria-hidden="true">·</span>
@@ -376,44 +288,54 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                 </div>
               )}
 
-              {/* Class Selection Strip */}
-              <div className="pt-2 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-display text-base sm:text-lg text-white">
-                    Selected Hero: {currentClassDef.name}
-                  </h3>
-                  <span className="text-xs text-[#9E9CAE]">
-                    {currentClassDef.weapon}
-                  </span>
+              {/* Locked Soul Oath Hero Card */}
+              <div className="p-4 sm:p-5 bg-[#20202B] border-2 border-[#D9AA52] relative overflow-hidden space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#353346] pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-display text-base sm:text-lg text-white font-semibold">
+                      Your Sworn Hero: {currentClassDef.name}
+                    </span>
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#FCD34D] px-1.5 py-0.5 bg-[#171622] border border-[#3E3C50]">
+                      {currentClassDef.roleBadge}
+                    </span>
+                  </div>
+                  <div className="px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs flex items-center gap-1.5">
+                    <span>🔒</span> Permanent Soul Oath
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-                  {(Object.keys(HERO_CLASSES) as HeroClassId[]).map((cid) => {
-                    const c = HERO_CLASSES[cid];
-                    const active = selectedClass === cid;
-                    return (
-                      <button
-                        key={cid}
-                        type="button"
-                        onClick={() => {
-                          sfx.playAttack(cid);
-                          onSelectClass(cid);
-                        }}
-                        className={`p-3 text-left border transition-colors flex flex-col items-center gap-1.5 cursor-pointer min-h-[90px] ${
-                          active
-                            ? 'bg-[#2A293A] border-[#D9AA52] text-white'
-                            : 'bg-[#20202B] border-[#2F2E3E] text-[#B3B1C2] hover:border-[#49475F]'
-                        }`}
-                      >
-                        <PixelHeroPreview heroClass={cid} size={48} />
-                        <div className="text-center">
-                          <div className="font-display text-sm sm:text-base">{c.name}</div>
-                          <div className="text-[10px] sm:text-[11px] text-[#9A98AA] font-mono tabular-nums">
-                            HP {c.maxHp} · DMG {c.damage}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+                  <div className="p-2.5 bg-[#171622] border border-[#3A384C] shrink-0">
+                    <PixelHeroPreview heroClass={currentClassDef.id} size={64} />
+                  </div>
+                  <div className="space-y-1.5 flex-1 text-center sm:text-left min-w-0">
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                      <span className="text-sm font-display text-[#E2E8F0]">
+                        {currentClassDef.title}
+                      </span>
+                      <span className="text-xs text-[#9E9CAE] font-mono">
+                        · {currentClassDef.role}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 text-xs text-[#9E9CAE] font-mono tabular-nums">
+                      <span>Weapon: <strong className="text-white">{currentClassDef.weapon}</strong></span>
+                      <span aria-hidden="true">·</span>
+                      <span>HP: <strong className="text-[#4ADE80]">{currentClassDef.maxHp}</strong></span>
+                      <span aria-hidden="true">·</span>
+                      <span>DMG: <strong className="text-[#F87171]">{currentClassDef.damage}</strong></span>
+                      <span aria-hidden="true">·</span>
+                      <span>SPD: <strong className="text-[#38BDF8]">{currentClassDef.speed}</strong></span>
+                    </div>
+
+                    <p className="text-xs text-[#C7C5D8] leading-relaxed pt-0.5">
+                      <strong className="text-[#FBBF24]">Passive [{currentClassDef.passiveName}]:</strong> {currentClassDef.passiveDesc}
+                    </p>
+
+                    <p className="text-[11px] text-[#8C8A9E] font-mono pt-1">
+                      🔒 This account is locked to this class. To play as another hero class, create a separate adventurer account.
+                    </p>
+                  </div>
                 </div>
               </div>
             </section>
@@ -512,73 +434,199 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
           </div>
         )}
 
-        {/* TAB 2: CLASSES */}
+        {/* TAB 2: HERO SANCTUM & CODEX */}
         {activeTab === 'classes' && (
           <section className="space-y-6">
-            <div>
-              <h2 className="font-display text-2xl text-white">
-                Playable Hero Classes
-              </h2>
-              <p className="text-xs sm:text-sm text-[#9B99AB] mt-1">
-                Each hero features distinct combat attributes, tactical skills, and a co-op Ultimate.
-              </p>
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 p-5 bg-[#1B1A24] border border-[#2F2E3E]">
+              <div>
+                <h2 className="font-display text-2xl text-white flex items-center gap-2">
+                  <span>Grand Hero Sanctum & Codex</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-[#A8A6B8] mt-1 max-w-2xl leading-relaxed">
+                  Every hero represents an unbroken soul oath with specialized abilities, passives, and distinct pixel armaments. Each adventurer account is permanently bonded to 1 class.
+                </p>
+              </div>
+              <div className="p-3 bg-[#242332] border border-[#D9AA52]/40 text-xs text-[#E6E4EE] font-mono shrink-0">
+                <div className="text-[#9E9CAE] text-[11px]">Your Sworn Account Oath:</div>
+                <div className="text-sm font-display text-[#FCD34D] font-bold flex items-center gap-1.5 mt-0.5">
+                  <span>🔒</span> {currentClassDef.name} — {currentClassDef.title}
+                </div>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               {(Object.keys(HERO_CLASSES) as HeroClassId[]).map((cid) => {
                 const c = HERO_CLASSES[cid];
-                const isSelected = selectedClass === cid;
+                const isMyClass = selectedClass === cid;
                 return (
                   <div
                     key={cid}
-                    className={`p-5 sm:p-6 bg-[#20202B] border transition-colors flex flex-col justify-between gap-4 ${
-                      isSelected ? 'border-[#D9AA52]' : 'border-[#2F2E3E]'
+                    className={`p-5 sm:p-6 bg-[#20202B] border-2 transition-all flex flex-col justify-between gap-5 relative overflow-hidden ${
+                      isMyClass
+                        ? 'border-[#D9AA52] shadow-xl bg-gradient-to-b from-[#252433] to-[#1C1B26]'
+                        : 'border-[#2F2E3E] opacity-90'
                     }`}
                   >
-                    <div className="flex items-start gap-4">
-                      <PixelHeroPreview heroClass={cid} size={68} />
-                      <div className="space-y-1">
-                        <h3 className="font-display text-xl text-white">
+                    {/* Top Status Banner */}
+                    <div className="flex items-center justify-between gap-2 border-b border-[#2D2C3D] pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-[#FCD34D] px-2 py-0.5 bg-[#161521] border border-[#3E3C50]">
+                          {c.roleBadge}
+                        </span>
+                        <span className="text-xs text-[#9E9CAE] font-mono">
+                          {c.role}
+                        </span>
+                      </div>
+                      {isMyClass ? (
+                        <div className="px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs font-semibold flex items-center gap-1">
+                          <span>🔒</span> Your Account Class
+                        </div>
+                      ) : (
+                        <div className="px-2 py-0.5 bg-[#171622] border border-[#38364A] text-[#868498] font-mono text-[11px]">
+                          Locked Oath
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Hero Header with Pixel Preview & Core Stats */}
+                    <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                      <div className="p-3 bg-[#15141E] border border-[#353346] shadow-inner shrink-0">
+                        <PixelHeroPreview heroClass={cid} size={76} />
+                      </div>
+                      <div className="space-y-1.5 flex-1 text-center sm:text-left min-w-0">
+                        <h3 className="font-display text-xl sm:text-2xl text-white font-semibold">
                           {c.name}
                         </h3>
-                        <div className="text-xs text-[#9E9CAE] font-mono tabular-nums">
-                          {c.title} · HP {c.maxHp} · DMG {c.damage}
-                        </div>
-                        <p className="text-xs text-[#C7C5D5] pt-0.5">
-                          Weapon: {c.weapon}
+                        <p className="text-xs sm:text-sm text-[#D9AA52] font-mono">
+                          {c.title}
                         </p>
+                        <p className="text-xs text-[#E2E8F0]">
+                          <strong className="text-[#9E9CAE] font-mono">Armament:</strong> {c.weapon} ({c.weaponType})
+                        </p>
+
+                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-1 text-xs font-mono tabular-nums">
+                          <span className="px-2 py-0.5 bg-[#171622] border border-[#2F2E40] text-[#4ADE80]">
+                            HP {c.maxHp}
+                          </span>
+                          <span className="px-2 py-0.5 bg-[#171622] border border-[#2F2E40] text-[#F87171]">
+                            DMG {c.damage}
+                          </span>
+                          <span className="px-2 py-0.5 bg-[#171622] border border-[#2F2E40] text-[#38BDF8]">
+                            RNG {c.range}
+                          </span>
+                          <span className="px-2 py-0.5 bg-[#171622] border border-[#2F2E40] text-[#FBBF24]">
+                            SPD {c.speed}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="space-y-2 pt-2 border-t border-[#2C2B3B] text-xs leading-relaxed">
+                    {/* Stat Meters */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 p-3 bg-[#171622] border border-[#2B2A3B] text-xs">
+                      {(
+                        [
+                          ['Survivability', c.stats.survivability],
+                          ['Damage', c.stats.damage],
+                          ['Range', c.stats.range],
+                          ['Mobility', c.stats.mobility],
+                          ['Utility', c.stats.utility],
+                        ] as [string, number][]
+                      ).map(([label, val]) => (
+                        <div key={label} className="space-y-1">
+                          <div className="text-[10px] text-[#9A98AA] font-mono truncate">{label}</div>
+                          <div className="flex gap-1">
+                            {[1, 2, 3, 4, 5].map((step) => (
+                              <span
+                                key={step}
+                                className={`h-1.5 flex-1 ${
+                                  step <= val
+                                    ? isMyClass
+                                      ? 'bg-[#FBBF24]'
+                                      : 'bg-[#93C5FD]'
+                                    : 'bg-[#2B2A3B]'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Innate Resistances Matrix */}
+                    <div className="pt-2 border-t border-[#2C2B3B] space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-mono text-[#E2E8F0]">
+                        <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
+                          <span>🛡️</span> Innate Resistances
+                        </span>
+                        <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1.5 text-[10px] font-mono">
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#94A3B8]">Physical</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.physical * 100)}%</span>
+                        </div>
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#F97316]">🔥 Fire</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.fire * 100)}%</span>
+                        </div>
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#38BDF8]">❄️ Frost</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.frost * 100)}%</span>
+                        </div>
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#FBBF24]">⚡ Shock</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.lightning * 100)}%</span>
+                        </div>
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#22C55E]">☣️ Poison</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.poison * 100)}%</span>
+                        </div>
+                        <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
+                          <span className="text-[#EF4444]">🩸 Bleed</span>
+                          <span className="font-semibold text-white">+{Math.round(c.resistances.bleed * 100)}%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Abilities Breakdown */}
+                    <div className="space-y-2.5 pt-2 border-t border-[#2C2B3B] text-xs leading-relaxed">
+                      <div className="p-2.5 bg-[#1B1A26] border border-[#2D2C3D]">
+                        <span className="font-semibold text-[#FDE047] font-mono">
+                          ★ Passive — {c.passiveName}:
+                        </span>{' '}
+                        <span className="text-[#C7C5D6]">{c.passiveDesc}</span>
+                      </div>
                       <div>
-                        <span className="font-semibold text-white">
-                          [Q] {c.tacticalName}:
+                        <span className="font-semibold text-white font-mono">
+                          [Q] Tactical — {c.tacticalName} ({Math.round(c.tacticalCooldownMs / 1000)}s CD):
                         </span>{' '}
                         <span className="text-[#B4B2C4]">{c.tacticalDesc}</span>
                       </div>
                       <div>
-                        <span className="font-semibold text-[#D9AA52]">
-                          [R] {c.ultName}:
+                        <span className="font-semibold text-[#D9AA52] font-mono">
+                          [R] Ultimate — {c.ultName} ({Math.round(c.ultCooldownMs / 1000)}s CD):
                         </span>{' '}
                         <span className="text-[#B4B2C4]">{c.ultDesc}</span>
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        sfx.playAttack(cid);
-                        onSelectClass(cid);
-                      }}
-                      className={`py-2 px-4 font-display text-sm border transition-colors self-start cursor-pointer min-h-[44px] flex items-center ${
-                        isSelected
-                          ? 'bg-[#D9AA52] border-[#D9AA52] text-[#181820] font-semibold'
-                          : 'bg-[#292837] border-[#3F3E54] text-white hover:border-[#6A6887]'
-                      }`}
-                    >
-                      {isSelected ? 'Selected' : `Select ${c.name}`}
-                    </button>
+                    {/* Lore Excerpt */}
+                    <p className="text-[11px] text-[#8E8C9E] italic border-t border-[#292837] pt-2 leading-relaxed">
+                      &quot;{c.lore}&quot;
+                    </p>
+
+                    {/* Bottom Action / Lock Notice */}
+                    <div className="pt-1">
+                      {isMyClass ? (
+                        <div className="w-full py-2.5 px-4 bg-[#D9AA52] text-[#181820] font-display font-semibold text-sm text-center flex items-center justify-center gap-1.5 shadow-md">
+                          <span>🔒</span> Your Active Expedition Class (Ready to Delve)
+                        </div>
+                      ) : (
+                        <div className="w-full py-2 px-3 bg-[#1A1924] border border-[#333244] text-[#9E9CAE] font-mono text-xs text-center">
+                          🔒 Account Locked. To play {c.name}, create a new adventurer account.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -586,40 +634,168 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
           </section>
         )}
 
-        {/* TAB 3: RELIC CODEX */}
+        {/* TAB 3: RELIC CODEX & STATUS EFFECTS */}
         {activeTab === 'codex' && (
           <section className="space-y-6">
             <div>
               <h2 className="font-display text-2xl text-white">
-                Ancient Relics Codex
+                Ancient Relics &amp; Status Effects Codex
               </h2>
               <p className="text-xs sm:text-sm text-[#9B99AB] mt-1">
-                Draft relics from Relic Vaults located in treasure rooms and after defeating floor bosses.
+                Draft relics from Relic Vaults located in treasure rooms and after defeating floor bosses to trigger elemental afflictions.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {RELIC_CATALOG.map((relic) => (
-                <div
-                  key={relic.id}
-                  className="p-4 bg-[#20202B] border border-[#2F2E3E] space-y-1.5"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <h3
-                      style={{ color: relic.accent }}
-                      className="font-display text-lg font-semibold"
-                    >
-                      {relic.name}
-                    </h3>
-                    <span className="text-[11px] text-[#9E9CAE] font-mono">
-                      {relic.category}
-                    </span>
+            {/* Status Effects Mechanics Guide */}
+            <div className="bg-[#1C1C27] border border-[#2F2E40] p-4 sm:p-5 space-y-3">
+              <h3 className="font-display text-base text-[#D9AA52] flex items-center gap-2">
+                <span>⚡</span> Elemental &amp; Combat Status Afflictions
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#F97316] space-y-1">
+                  <div className="font-display text-sm text-[#F97316] font-semibold flex items-center gap-1.5">
+                    <span>🔥</span> Burn (Ignite)
                   </div>
-                  <p className="text-xs sm:text-sm text-[#C7C5D5] leading-relaxed">
-                    {relic.summary}
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Ticks fire damage every 0.65s based on your attack power. Extinguishes over 4 seconds.
                   </p>
                 </div>
+
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#38BDF8] space-y-1">
+                  <div className="font-display text-sm text-[#38BDF8] font-semibold flex items-center gap-1.5">
+                    <span>❄️</span> Freeze &amp; Shatter
+                  </div>
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Immobilizes the target completely. Hitting a frozen target triggers <strong className="text-white">Shatter</strong> (+60% damage + frost burst to adjacent foes).
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#FBBF24] space-y-1">
+                  <div className="font-display text-sm text-[#FBBF24] font-semibold flex items-center gap-1.5">
+                    <span>⚡</span> Shock &amp; Chain Lightning
+                  </div>
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Electrocutes the foe. The 3rd hit discharges a high-voltage lightning arc jumping to up to 3 nearby enemies.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#22C55E] space-y-1">
+                  <div className="font-display text-sm text-[#22C55E] font-semibold flex items-center gap-1.5">
+                    <span>☣️</span> Acid Poison &amp; Weaken
+                  </div>
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Corrosive venom ticks for 5 seconds and weakens afflicted enemies, reducing their attack damage by 30%.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#EF4444] space-y-1">
+                  <div className="font-display text-sm text-[#EF4444] font-semibold flex items-center gap-1.5">
+                    <span>🩸</span> Lacerate Bleed
+                  </div>
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Inflicts deep open wounds. Bleed damage doubles whenever the afflicted monster moves.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-[#13131A] border-l-2 border-[#EAB308] space-y-1">
+                  <div className="font-display text-sm text-[#EAB308] font-semibold flex items-center gap-1.5">
+                    <span>💫</span> Concussive Stun
+                  </div>
+                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                    Disorients and completely incapacitates monsters, preventing all attacks and movement.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-2 pt-1 border-b border-[#292837] pb-3">
+              <span className="text-xs text-[#8E8C9E] font-mono mr-2">Filter Codex:</span>
+              {(
+                [
+                  { id: 'all', label: 'All Relics (12)' },
+                  { id: 'status', label: 'Status Procs (6)' },
+                  { id: 'offensive', label: 'Offense' },
+                  { id: 'defensive', label: 'Defense' },
+                  { id: 'mobility', label: 'Mobility' },
+                  { id: 'coop', label: 'Co-op' },
+                ] as const
+              ).map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setRelicFilter(f.id);
+                  }}
+                  className={`px-3 py-1 text-xs font-mono transition-colors cursor-pointer ${
+                    relicFilter === f.id
+                      ? 'bg-[#D9AA52] text-[#14141B] font-semibold shadow-sm'
+                      : 'bg-[#20202B] text-[#A5A3B8] hover:text-white border border-[#2E2D3E]'
+                  }`}
+                >
+                  {f.label}
+                </button>
               ))}
+            </div>
+
+            {/* Relic Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {RELIC_CATALOG.filter((relic) => {
+                if (relicFilter === 'status') {
+                  return [
+                    'cinder_heart',
+                    'rimefrost_shard',
+                    'stormcaller_lodestone',
+                    'viper_crucible',
+                    'bloodletter_talisman',
+                    'thorned_aegis',
+                  ].includes(relic.id);
+                }
+                if (relicFilter === 'offensive') return relic.category === 'Offense';
+                if (relicFilter === 'defensive') return relic.category === 'Defense';
+                if (relicFilter === 'mobility') return relic.category === 'Mobility';
+                if (relicFilter === 'coop') return relic.category === 'Co-op';
+                return true;
+              }).map((relic) => {
+                const isStatusRelic = [
+                  'cinder_heart',
+                  'rimefrost_shard',
+                  'stormcaller_lodestone',
+                  'viper_crucible',
+                  'bloodletter_talisman',
+                  'thorned_aegis',
+                ].includes(relic.id);
+
+                return (
+                  <div
+                    key={relic.id}
+                    className="p-4 bg-[#20202B] border border-[#2F2E3E] hover:border-[#4B4961] transition-colors space-y-2 relative"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <h3
+                        style={{ color: relic.accent }}
+                        className="font-display text-base sm:text-lg font-semibold flex items-center gap-1.5"
+                      >
+                        {relic.name}
+                      </h3>
+                      <span className="text-[11px] text-[#9E9CAE] font-mono px-2 py-0.5 bg-[#171720] border border-[#2B2A3A]">
+                        {relic.category}
+                      </span>
+                    </div>
+
+                    {isStatusRelic && (
+                      <div className="text-[10px] font-mono tracking-wider text-[#FCD34D] uppercase">
+                        ⚡ Inflicts Status Affliction
+                      </div>
+                    )}
+
+                    <p className="text-xs sm:text-sm text-[#C7C5D5] leading-relaxed">
+                      {relic.summary}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}

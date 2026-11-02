@@ -4,19 +4,56 @@ export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
 
 export type BiomeId = 'courtyard' | 'catacombs' | 'ember';
 
+export interface HeroClassStats {
+  survivability: number; // 1-5
+  damage: number;        // 1-5
+  range: number;         // 1-5
+  mobility: number;      // 1-5
+  utility: number;       // 1-5
+}
+
+export interface CombatResistances {
+  physical: number;   // damage mitigation (e.g. 0.28 = 28%)
+  fire: number;       // reduces Burn tick damage & duration
+  frost: number;      // reduces Freeze duration & slow magnitude
+  lightning: number;  // reduces Shock duration & chain arc damage
+  poison: number;     // reduces Poison DoT & monster weaken magnitude
+  bleed: number;      // reduces Bleed tick damage & duration
+}
+
+export interface EnemyResistances {
+  physical: number;
+  fire: number;
+  frost: number;
+  lightning: number;
+  poison: number;
+  bleed: number;
+  tenacity: number;   // crowd control reduction (Freeze/Stun duration scaling)
+}
+
 export interface HeroClassDef {
   id: HeroClassId;
   name: string;
   title: string;
+  role: string;
+  roleBadge: 'TANK' | 'MARKSMAN' | 'CASTER' | 'SUPPORT';
   weapon: string;
+  weaponType: string;
+  passiveName: string;
+  passiveDesc: string;
   maxHp: number;
   speed: number;
   damage: number;
   attackCooldownMs: number;
   range: number;
   primaryColor: string;
+  secondaryColor: string;
   capeColor: string;
   accentColor: string;
+  glowColor: string;
+  lore: string;
+  stats: HeroClassStats;
+  resistances: CombatResistances;
   tacticalName: string;
   tacticalDesc: string;
   tacticalCooldownMs: number;
@@ -30,80 +67,120 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     id: 'vanguard',
     name: 'Vanguard',
     title: 'Ironcrest Bastion',
-    weapon: 'Greatsword & Kite Shield',
-    maxHp: 145,
+    role: 'Frontline Guardian & Juggernaut',
+    roleBadge: 'TANK',
+    weapon: 'Sunforged Claymore & Tower Greatshield',
+    weaponType: 'Heavy Cleave & Shield Wall',
+    passiveName: 'Iron Will',
+    passiveDesc: 'Absorbs 15% of all incoming damage. Striking stunned or burning foes restores +3 Shield.',
+    maxHp: 155,
     speed: 175,
-    damage: 26,
-    attackCooldownMs: 420,
-    range: 74,
-    primaryColor: '#8B9BB4',
-    capeColor: '#9E3333',
-    accentColor: '#E2B45A',
+    damage: 28,
+    attackCooldownMs: 400,
+    range: 78,
+    primaryColor: '#64748B',
+    secondaryColor: '#CBD5E1',
+    capeColor: '#991B1B',
+    accentColor: '#F59E0B',
+    glowColor: '#FBBF24',
+    lore: 'Sworn knights of the Sunken Bastion who bound their lifeblood into eternal steel. With unbroken wills and towering shields, they stand between ancient horrors and their comrades.',
+    stats: { survivability: 5, damage: 3, range: 1, mobility: 2, utility: 4 },
+    resistances: { physical: 0.28, fire: 0.15, frost: 0.15, lightning: 0.10, poison: 0.15, bleed: 0.30 },
     tacticalName: 'Bulwark Dash',
-    tacticalDesc: 'Charge forward, stunning foes in path and granting +28 Shield to nearby allies.',
+    tacticalDesc: 'Slam forward with tower shield, battering through monsters, stunning them for 1.6s and granting +28 Shield to nearby allies.',
     tacticalCooldownMs: 4800,
-    ultName: 'Aegis Ward',
-    ultDesc: 'Deploy a sanctuary barrier that intercepts enemy projectiles and bolsters party defense.',
+    ultName: 'Aegis Sanctuary',
+    ultDesc: 'Plant your colossal shield into the earth, raising a gleaming dome that deflects projectile barrages and boosts party defense.',
     ultCooldownMs: 13000,
   },
   ranger: {
     id: 'ranger',
     name: 'Ranger',
     title: 'Thornwood Marksman',
-    weapon: 'Ashwood Longbow',
-    maxHp: 105,
-    speed: 205,
-    damage: 21,
-    attackCooldownMs: 340,
-    range: 360,
-    primaryColor: '#4E7A56',
-    capeColor: '#2F4D38',
-    accentColor: '#D6A856',
+    role: 'Long-Range Sniper & Scout',
+    roleBadge: 'MARKSMAN',
+    weapon: 'Ashwood Recurve & Barbed Quiver',
+    weaponType: 'Piercing Ranged Bow',
+    passiveName: 'Eagle Keenness',
+    passiveDesc: 'Attacks deal +25% Critical damage to targets beyond 180 units. Slaying a foe grants a 2s burst of swiftness.',
+    maxHp: 110,
+    speed: 210,
+    damage: 24,
+    attackCooldownMs: 320,
+    range: 380,
+    primaryColor: '#2D5A3C',
+    secondaryColor: '#4ADE80',
+    capeColor: '#1A3826',
+    accentColor: '#FBBF24',
+    glowColor: '#34D399',
+    lore: 'Sole survivors of the blighted Thornwood groves, master trackers capable of loose-drawing three enchanted shafts in the blink of an eye. Their arrows never falter.',
+    stats: { survivability: 2, damage: 5, range: 5, mobility: 5, utility: 2 },
+    resistances: { physical: 0.10, fire: 0.10, frost: 0.25, lightning: 0.15, poison: 0.45, bleed: 0.20 },
     tacticalName: 'Frost Volley',
-    tacticalDesc: 'Loose a 5-arrow fan that pierces targets and slows enemy movement by 45%.',
+    tacticalDesc: 'Loose a 5-arrow crystalline fan that pierces foes, slowing enemy advance by 50% and chilling their attacks.',
     tacticalCooldownMs: 4200,
     ultName: 'Hunter Quarry',
-    ultDesc: 'Mark nearby elites and bosses so all co-op allies deal +35% bonus strike damage.',
+    ultDesc: 'Mark elites and bosses with radiant moonlight hunters-brand, exposing their weak points so all co-op allies deal +35% bonus strike damage.',
     ultCooldownMs: 11500,
   },
   arcanist: {
     id: 'arcanist',
     name: 'Arcanist',
     title: 'Astral Conduit',
-    weapon: 'Runebound Spire',
-    maxHp: 95,
-    speed: 185,
-    damage: 28,
-    attackCooldownMs: 440,
-    range: 330,
-    primaryColor: '#5B629E',
-    capeColor: '#3B3769',
-    accentColor: '#7CC6FE',
+    role: 'AoE Spellweaver & Cosmic Blaster',
+    roleBadge: 'CASTER',
+    weapon: 'Runebound Spire & Orbiting Astral Orbs',
+    weaponType: 'Cosmic Shards & Starlight',
+    passiveName: 'Astral Resonance',
+    passiveDesc: 'Basic attacks loose homing cosmic shards that pierce an additional enemy. Spells leave lingering star rifts.',
+    maxHp: 100,
+    speed: 188,
+    damage: 32,
+    attackCooldownMs: 420,
+    range: 340,
+    primaryColor: '#4338CA',
+    secondaryColor: '#818CF8',
+    capeColor: '#312E81',
+    accentColor: '#38BDF8',
+    glowColor: '#60A5FA',
+    lore: 'Scholars of the shattered celestial spires who channel raw starlight through crystalline conduits. They weave time and void to obliterate dungeon hordes from afar.',
+    stats: { survivability: 2, damage: 5, range: 4, mobility: 3, utility: 4 },
+    resistances: { physical: 0.05, fire: 0.25, frost: 0.35, lightning: 0.45, poison: 0.15, bleed: 0.10 },
     tacticalName: 'Astral Nova',
-    tacticalDesc: 'Unleash 8 piercing arcane shards outward, knocking back surrounding monsters.',
+    tacticalDesc: 'Unleash 8 piercing arcane shards in a starburst, knocking back surrounding monsters with void energy.',
     tacticalCooldownMs: 5000,
     ultName: 'Chrono Well',
-    ultDesc: 'Anchor a stasis field that snares enemies and accelerates ally skill cooldowns.',
+    ultDesc: 'Anchor a cosmic gravitational well that snares enemies, pulling them in while accelerating allied cooldowns by 50%.',
     ultCooldownMs: 13500,
   },
   cleric: {
     id: 'cleric',
     name: 'Cleric',
     title: 'Sunbrand Prelate',
-    weapon: 'Dawnstar Mace',
-    maxHp: 120,
-    speed: 182,
-    damage: 20,
-    attackCooldownMs: 390,
+    role: 'Radiant Healer & Divine Enchanter',
+    roleBadge: 'SUPPORT',
+    weapon: 'Dawnstar Flanged Mace & Reliquary',
+    weaponType: 'Radiant Smite & Holy Relic',
+    passiveName: 'Radiant Aura',
+    passiveDesc: 'Emits a sacred 120-range warmth that heals wounded party members for +4 HP every 2 seconds, and increases revive speed by 40%.',
+    maxHp: 128,
+    speed: 185,
+    damage: 22,
+    attackCooldownMs: 380,
     range: 290,
-    primaryColor: '#C8C2B8',
-    capeColor: '#B58938',
-    accentColor: '#F4D378',
+    primaryColor: '#E2E8F0',
+    secondaryColor: '#FDE047',
+    capeColor: '#854D0E',
+    accentColor: '#FACC15',
+    glowColor: '#FEF08A',
+    lore: 'Devotees of the Eternal Dawn whose sacred chants can mend the gravest wounds and turn undead to ash. A cornerstone of every surviving expedition into the depths.',
+    stats: { survivability: 4, damage: 3, range: 3, mobility: 2, utility: 5 },
+    resistances: { physical: 0.15, fire: 0.40, frost: 0.20, lightning: 0.15, poison: 0.35, bleed: 0.25 },
     tacticalName: 'Sanctified Pulse',
-    tacticalDesc: 'Restore +32 HP to yourself and nearby co-op allies while searing adjacent foes.',
+    tacticalDesc: 'Release a blinding wave of golden light, healing you and all nearby party members for +36 HP while searing adjacent undead.',
     tacticalCooldownMs: 5400,
     ultName: 'Solar Beacon',
-    ultDesc: 'Consecrate ground that heals allies every second and rapidly revives downed teammates.',
+    ultDesc: 'Consecrate holy ground with an avatar of the Sun that continuously heals all allies and instantly revives downed teammates who enter.',
     ultCooldownMs: 14000,
   },
 };
@@ -177,7 +254,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'runic_carapace',
     name: 'Runic Carapace',
     category: 'Defense',
-    summary: 'Gain +22 regenerating Shield upon entering each new room combat.',
+    summary: 'Gain +22 Shield upon entering new rooms, and passive +15% Physical Resistance & +20% Status/Elemental Resistances.',
     accent: '#6E85C9',
   },
   {
@@ -186,6 +263,48 @@ export const RELIC_CATALOG: RelicDef[] = [
     category: 'Offense',
     summary: 'Projectiles and waves pierce +1 extra enemy target.',
     accent: '#A988E6',
+  },
+  {
+    id: 'cinder_heart',
+    name: 'Cinder Heart',
+    category: 'Offense',
+    summary: 'Critical hits and tactical skills Ignite enemies with Burn DoT (ticks fiery damage every 0.8s for 4s).',
+    accent: '#F97316',
+  },
+  {
+    id: 'rimefrost_shard',
+    name: 'Rimefrost Shard',
+    category: 'Offense',
+    summary: 'Attacks have 25% chance to Chill. Striking a Chilled enemy Freezes them in solid ice; shattering deals +60% bonus damage.',
+    accent: '#38BDF8',
+  },
+  {
+    id: 'stormcaller_lodestone',
+    name: 'Stormcaller Lodestone',
+    category: 'Offense',
+    summary: 'Every 3rd strike inflicts Shock for 5s. Damaging a Shocked foe arcs lightning bolts to up to 3 nearby enemies.',
+    accent: '#FBBF24',
+  },
+  {
+    id: 'viper_crucible',
+    name: 'Viper Crucible',
+    category: 'Offense',
+    summary: 'Attacks apply virulent Poison for 6s, dealing continuous acid damage and reducing enemy damage output by 30%.',
+    accent: '#22C55E',
+  },
+  {
+    id: 'bloodletter_talisman',
+    name: 'Bloodletter Talisman',
+    category: 'Offense',
+    summary: 'Strikes lacerate targets with Bleed for 5s. Bleeding enemies take damage that doubles whenever they attempt to move.',
+    accent: '#DC2626',
+  },
+  {
+    id: 'thorned_aegis',
+    name: 'Thorned Aegis',
+    category: 'Defense',
+    summary: 'When your Shield absorbs enemy damage, discharge a concussive shockwave that Stuns adjacent attackers for 1.8s.',
+    accent: '#A855F7',
   },
 ];
 
@@ -279,14 +398,25 @@ export interface EnemyState {
   hp: number;
   maxHp: number;
   radius: number;
-  state: 'idle' | 'chase' | 'windup' | 'recover';
+  state: 'idle' | 'chase' | 'windup' | 'recover' | 'charge';
   windupMs: number;
   targetX: number;
   targetY: number;
   markedMs: number;
   slowedMs: number;
   stunnedMs: number;
+  burnedMs: number;
+  frozenMs: number;
+  shockedMs: number;
+  poisonedMs: number;
+  bleedingMs: number;
   elite: boolean;
+  resistances: EnemyResistances;
+  enraged?: boolean;
+  charging?: boolean;
+  chargeAngle?: number;
+  chargeTimerMs?: number;
+  summonWave?: number;
 }
 
 export interface ProjectileState {
@@ -380,6 +510,7 @@ export interface UserProfile {
   id: string;
   username: string;
   preferredClass: HeroClassId;
+  lockedClass: HeroClassId;
   runsCompleted: number;
   highestFloor: number;
   totalKills: number;

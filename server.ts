@@ -22,6 +22,7 @@ interface AccountRecord {
   username: string;
   usernameLower: string;
   passwordHash: string;
+  lockedClass: HeroClassId;
   preferredClass: HeroClassId;
   runsCompleted: number;
   highestFloor: number;
@@ -41,7 +42,8 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
   return {
     id: acc.id,
     username: acc.username,
-    preferredClass: acc.preferredClass,
+    preferredClass: acc.lockedClass,
+    lockedClass: acc.lockedClass,
     runsCompleted: acc.runsCompleted,
     highestFloor: acc.highestFloor,
     totalKills: acc.totalKills,
@@ -52,15 +54,20 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
 function createAccount(
   username: string,
   password: string,
-  preferredClass: HeroClassId = 'vanguard'
+  chosenClass: HeroClassId = 'vanguard'
 ): AccountRecord {
+  const validClass: HeroClassId =
+    chosenClass === 'ranger' || chosenClass === 'arcanist' || chosenClass === 'cleric'
+      ? chosenClass
+      : 'vanguard';
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
   const rec: AccountRecord = {
     id,
     username,
     usernameLower: username.toLowerCase(),
     passwordHash: hashPassword(password),
-    preferredClass,
+    lockedClass: validClass,
+    preferredClass: validClass,
     runsCompleted: 0,
     highestFloor: 0,
     totalKills: 0,
@@ -71,7 +78,7 @@ function createAccount(
   return rec;
 }
 
-// Seed wanderer account
+// Seed default wanderer account locked as vanguard
 createAccount('wanderer', 'beyond', 'vanguard');
 
 interface ConnectedClient {
@@ -318,8 +325,8 @@ async function startServer() {
 
       if (msg.type === 'room:create') {
         leaveCurrentRoom(client);
-        const heroClass: HeroClassId = msg.heroClass || acc.preferredClass || 'vanguard';
-        acc.preferredClass = heroClass;
+        // Player is strictly locked to their account's hero class
+        const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
         const difficulty: DifficultyTier =
           msg.difficulty === 'Heroic' || msg.difficulty === 'Abyssal'
             ? msg.difficulty
@@ -364,8 +371,8 @@ async function startServer() {
         }
 
         leaveCurrentRoom(client);
-        const heroClass: HeroClassId = msg.heroClass || acc.preferredClass || 'vanguard';
-        acc.preferredClass = heroClass;
+        // Player is strictly locked to their account's hero class
+        const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
         room.addOrReconnectPlayer(acc.id, acc.username, heroClass);
         client.roomId = room.roomId;
 
@@ -405,8 +412,11 @@ async function startServer() {
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
       } else if (msg.type === 'player:change_class') {
-        acc.preferredClass = msg.heroClass;
-        room.changeClass(acc.id, msg.heroClass);
+        // Classes are permanently locked per account
+        sendJson(ws, {
+          type: 'error',
+          message: `${acc.username}'s account is permanently bound to the ${acc.lockedClass.toUpperCase()} class.`,
+        });
       } else if (msg.type === 'player:ping') {
         room.addPing(acc.id, msg.label, msg.x, msg.y);
       } else if (msg.type === 'chat:send') {

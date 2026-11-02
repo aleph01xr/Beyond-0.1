@@ -4,6 +4,7 @@ import {
   type DifficultyTier,
   type DungeonMap,
   type EnemyKind,
+  type EnemyResistances,
   type EnemyState,
   type PropState,
   type RoomNode,
@@ -348,7 +349,7 @@ export function generateDungeonFloor(
         const ex = (room.x + 2 + rng() * (room.w - 4)) * TILE_SIZE;
         const ey = (room.y + 2 + rng() * (room.h - 4)) * TILE_SIZE;
         const elite = rng() < 0.16 + floor * 0.04;
-        enemies.push(makeEnemy(`en_${floor}_${enemySeq++}`, kind, room.id, ex, ey, hpScale, elite));
+        enemies.push(makeEnemy(`en_${floor}_${enemySeq++}`, kind, room.id, ex, ey, hpScale, elite, floor, biomeSpec.id));
       }
 
       if (rng() > 0.35) {
@@ -371,7 +372,9 @@ export function generateDungeonFloor(
         centerWorldX,
         centerWorldY,
         hpScale,
-        true
+        true,
+        floor,
+        biomeSpec.id
       );
       boss.name = bossName;
       enemies.push(boss);
@@ -384,7 +387,9 @@ export function generateDungeonFloor(
           centerWorldX - 86,
           centerWorldY - 56,
           hpScale,
-          false
+          false,
+          floor,
+          biomeSpec.id
         )
       );
       enemies.push(
@@ -395,7 +400,9 @@ export function generateDungeonFloor(
           centerWorldX + 86,
           centerWorldY + 56,
           hpScale,
-          false
+          false,
+          floor,
+          biomeSpec.id
         )
       );
 
@@ -432,14 +439,109 @@ export function generateDungeonFloor(
   };
 }
 
-function makeEnemy(
+function getEnemyResistances(
+  kind: EnemyKind,
+  elite: boolean,
+  floor: number,
+  biome?: BiomeId
+): EnemyResistances {
+  switch (kind) {
+    case 'slime':
+      return {
+        physical: 0.20,
+        fire: -0.15,
+        frost: 0.10,
+        lightning: 0.20,
+        poison: 0.60,
+        bleed: 0.90, // slimes cannot bleed
+        tenacity: 0.05,
+      };
+    case 'goblin':
+      return {
+        physical: elite ? 0.12 : 0.05,
+        fire: 0.05,
+        frost: 0.05,
+        lightning: 0.05,
+        poison: 0.20,
+        bleed: 0.10,
+        tenacity: elite ? 0.15 : 0.05,
+      };
+    case 'skeleton':
+      return {
+        physical: -0.10, // brittle bones take more blunt damage
+        fire: 0.10,
+        frost: 0.40,
+        lightning: 0.10,
+        poison: 0.95, // undead has no poison susceptibility
+        bleed: 0.95,  // cannot bleed
+        tenacity: elite ? 0.20 : 0.10,
+      };
+    case 'cultist':
+      return {
+        physical: 0.05,
+        fire: 0.25,
+        frost: 0.25,
+        lightning: 0.35,
+        poison: 0.25,
+        bleed: 0.10,
+        tenacity: elite ? 0.25 : 0.15,
+      };
+    case 'knight':
+      return {
+        physical: elite ? 0.42 : 0.32, // plate armor
+        fire: 0.15,
+        frost: 0.10,
+        lightning: -0.10, // metal conducts shock
+        poison: 0.20,
+        bleed: 0.30,
+        tenacity: elite ? 0.35 : 0.25,
+      };
+    case 'boss': {
+      if (biome === 'ember' || floor >= 3) {
+        return {
+          physical: 0.30,
+          fire: 0.75, // molten behemoth heavily resists fire
+          frost: -0.15, // quenched by frost
+          lightning: 0.25,
+          poison: 0.40,
+          bleed: 0.35,
+          tenacity: 0.65, // 65% CC duration reduction
+        };
+      } else if (biome === 'catacombs' || floor === 2) {
+        return {
+          physical: 0.22,
+          fire: -0.05,
+          frost: 0.65, // spectral arch-lich resists frost
+          lightning: 0.30,
+          poison: 0.85, // undead
+          bleed: 0.85,  // undead
+          tenacity: 0.60,
+        };
+      } else {
+        return {
+          physical: 0.25,
+          fire: 0.20,
+          frost: 0.25,
+          lightning: 0.20,
+          poison: 0.45,
+          bleed: 0.30,
+          tenacity: 0.55,
+        };
+      }
+    }
+  }
+}
+
+export function makeEnemy(
   id: string,
   kind: EnemyKind,
   roomId: number,
   x: number,
   y: number,
   hpScale: number,
-  elite: boolean
+  elite: boolean,
+  floor = 1,
+  biome: BiomeId = 'courtyard'
 ): EnemyState {
   const baseStats: Record<
     EnemyKind,
@@ -450,10 +552,10 @@ function makeEnemy(
     skeleton: { name: 'Bone Marksman', hp: 52, radius: 13 },
     cultist: { name: 'Void Acolyte', hp: 68, radius: 14 },
     knight: { name: 'Dread Halberdier', hp: 105, radius: 16 },
-    boss: { name: 'Warden Malakor', hp: 460, radius: 26 },
+    boss: { name: 'Warden Malakor', hp: 1350, radius: 28 },
   };
   const spec = baseStats[kind];
-  const eliteMult = kind === 'boss' ? 1 : elite ? 1.55 : 1;
+  const eliteMult = kind === 'boss' ? (1 + (floor - 1) * 0.6) : elite ? 1.55 : 1;
   const maxHp = Math.round(spec.hp * hpScale * eliteMult);
   return {
     id,
@@ -466,14 +568,23 @@ function makeEnemy(
     vy: 0,
     hp: maxHp,
     maxHp,
-    radius: kind === 'boss' ? 26 : elite ? spec.radius + 3 : spec.radius,
+    radius: kind === 'boss' ? 28 : elite ? spec.radius + 3 : spec.radius,
     state: 'idle',
-    windupMs: 800 + Math.floor(Math.random() * 600),
+    windupMs: kind === 'boss' ? 700 : 800 + Math.floor(Math.random() * 600),
     targetX: x,
     targetY: y,
     markedMs: 0,
     slowedMs: 0,
     stunnedMs: 0,
+    burnedMs: 0,
+    frozenMs: 0,
+    shockedMs: 0,
+    poisonedMs: 0,
+    bleedingMs: 0,
     elite,
+    resistances: getEnemyResistances(kind, elite, floor, biome),
+    enraged: false,
+    charging: false,
+    chargeTimerMs: 0,
   };
 }

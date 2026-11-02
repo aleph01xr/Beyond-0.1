@@ -1015,8 +1015,217 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (en.kind === 'boss') {
           ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillStyle = isCatacombs ? '#C084FC' : isEmber ? '#FDBA74' : '#FCA5A5';
-          ctx.fillText(en.name, ex, ey - en.radius - 21);
+          ctx.fillStyle = en.enraged
+            ? '#EF4444'
+            : isCatacombs
+              ? '#C084FC'
+              : isEmber
+                ? '#FDBA74'
+                : '#FCA5A5';
+          ctx.fillText(
+            en.enraged ? `🔥 ${en.name} [ENRAGED] 🔥` : en.name,
+            ex,
+            ey - en.radius - 21
+          );
+
+          // Enraged Fiery Pulsing Aura
+          if (en.enraged) {
+            ctx.save();
+            const pulse = Math.sin(now * 0.015) * 3.5;
+            ctx.strokeStyle = '#EF4444';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey, en.radius + 5 + pulse, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Rising rage fire embers
+            for (let f = 0; f < 5; f++) {
+              const fAngle = (f * Math.PI * 2) / 5 + now * 0.005;
+              const fx = ex + Math.cos(fAngle) * (en.radius + 3);
+              const fy = ey + Math.sin(fAngle) * (en.radius + 3) - Math.abs(Math.sin(now * 0.01 + f)) * 8;
+              ctx.fillStyle = f % 2 === 0 ? '#EF4444' : '#F97316';
+              ctx.beginPath();
+              ctx.arc(fx, fy, 3, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+
+          // Bull Rush Charge Speed Trails
+          if (en.charging) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            const cAng = en.chargeAngle ?? 0;
+            ctx.moveTo(ex - Math.cos(cAng) * 40, ey - Math.sin(cAng) * 40);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
+        // Active Status Badges beneath health bar
+        const activeStatuses: { icon: string; color: string }[] = [];
+        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: '🔥', color: '#F97316' });
+        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: '❄️', color: '#38BDF8' });
+        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: '⚡', color: '#FBBF24' });
+        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: '☣️', color: '#22C55E' });
+        if ((en.bleedingMs ?? 0) > 0) activeStatuses.push({ icon: '🩸', color: '#EF4444' });
+        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: '💫', color: '#EAB308' });
+
+        if (activeStatuses.length > 0) {
+          ctx.save();
+          const badgeSpacing = 11;
+          const totalW = activeStatuses.length * badgeSpacing;
+          const startX = ex - totalW / 2 + 5;
+          const badgeY = ey - en.radius - 7;
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          activeStatuses.forEach((st, idx) => {
+            const bx = startX + idx * badgeSpacing;
+            ctx.fillStyle = 'rgba(15, 15, 22, 0.75)';
+            ctx.fillRect(bx - 5, badgeY - 5, 10, 10);
+            ctx.fillText(st.icon, bx, badgeY);
+          });
+          ctx.restore();
+        }
+
+        // Visual Status Overlays & Auras
+        // 1. Frozen: Ice crystal encasement & frosted white shards
+        if ((en.frozenMs ?? 0) > 0) {
+          ctx.save();
+          const cr = en.radius + 3;
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+          ctx.strokeStyle = '#BAE6FD';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = (i * Math.PI) / 3;
+            const px = ex + Math.cos(a) * cr;
+            const py = ey + Math.sin(a) * cr;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+
+          // Internal ice crystal facets & glints
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(ex - cr * 0.45, ey - cr * 0.4);
+          ctx.lineTo(ex + cr * 0.15, ey + cr * 0.25);
+          ctx.moveTo(ex - cr * 0.1, ey - cr * 0.6);
+          ctx.lineTo(ex + cr * 0.45, ey - 0.1);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 2. Burned: Rising flickering flame embers & fiery aura
+        if ((en.burnedMs ?? 0) > 0) {
+          ctx.save();
+          // Fiery ambient aura
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.2)';
+          ctx.beginPath();
+          ctx.arc(ex, ey, en.radius + 2, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Floating ember particles
+          for (let i = 0; i < 4; i++) {
+            const seed = (en.id.charCodeAt(0) || 0) + i * 43;
+            const fTime = (now * 0.0035 + seed) % 1;
+            const fx = ex + Math.sin(now * 0.007 + i * 1.5) * (en.radius * 0.65);
+            const fy = ey + en.radius * 0.3 - fTime * (en.radius * 1.4);
+            const fSize = (1 - fTime) * 3.5 + 1;
+            ctx.fillStyle = i % 2 === 0 ? '#F97316' : '#EF4444';
+            ctx.beginPath();
+            ctx.arc(fx, fy, fSize, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        // 3. Shocked: Crackling electric arcs around body perimeter
+        if ((en.shockedMs ?? 0) > 0) {
+          ctx.save();
+          ctx.strokeStyle = Math.floor(now / 60) % 2 === 0 ? '#FBBF24' : '#67E8F9';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          const baseArc = (now * 0.012) % (Math.PI * 2);
+          for (let s = 0; s < 3; s++) {
+            const sa = baseArc + (s * Math.PI * 2) / 3;
+            const r1 = en.radius + 2;
+            const r2 = en.radius + 7 + Math.sin(now * 0.02 + s * 2) * 3;
+            const sx1 = ex + Math.cos(sa) * r1;
+            const sy1 = ey + Math.sin(sa) * r1;
+            const sxMid = ex + Math.cos(sa + 0.2) * (r1 + 4);
+            const syMid = ey + Math.sin(sa + 0.2) * (r1 + 4);
+            const sx2 = ex + Math.cos(sa - 0.1) * r2;
+            const sy2 = ey + Math.sin(sa - 0.1) * r2;
+            ctx.moveTo(sx1, sy1);
+            ctx.lineTo(sxMid, syMid);
+            ctx.lineTo(sx2, sy2);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 4. Poisoned: Acid mist & floating toxic bubbles
+        if ((en.poisonedMs ?? 0) > 0) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
+          ctx.beginPath();
+          ctx.arc(ex, ey, en.radius + 2, 0, Math.PI * 2);
+          ctx.fill();
+
+          for (let b = 0; b < 3; b++) {
+            const bTime = (now * 0.0028 + b * 0.33) % 1;
+            const bx = ex + Math.cos(b * 2.3 + now * 0.002) * (en.radius * 0.6);
+            const by = ey - bTime * (en.radius * 1.2);
+            ctx.fillStyle = 'rgba(74, 222, 128, 0.85)';
+            ctx.beginPath();
+            ctx.arc(bx, by, 1.8 + (1 - bTime) * 1.8, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        // 5. Bleeding: Crimson laceration blood drips
+        if ((en.bleedingMs ?? 0) > 0) {
+          ctx.save();
+          for (let d = 0; d < 3; d++) {
+            const dTime = (now * 0.004 + d * 0.34) % 1;
+            const dx = ex + (d - 1) * 6;
+            const dy = ey + en.radius * 0.2 + dTime * (en.radius * 0.9);
+            ctx.fillStyle = '#DC2626';
+            ctx.beginPath();
+            ctx.arc(dx, dy, 2.4 * (1 - dTime * 0.45), 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        // 6. Stunned: Dizzy celestial stars orbiting above head
+        if ((en.stunnedMs ?? 0) > 0) {
+          ctx.save();
+          const stunOrbit = now * 0.007;
+          for (let i = 0; i < 3; i++) {
+            const a = stunOrbit + (i * Math.PI * 2) / 3;
+            const starX = ex + Math.cos(a) * 11;
+            const starY = ey - en.radius - 8 + Math.sin(a) * 4;
+            ctx.fillStyle = i % 2 === 0 ? '#FBBF24' : '#A855F7';
+            ctx.beginPath();
+            ctx.moveTo(starX, starY - 3.5);
+            ctx.lineTo(starX + 2, starY);
+            ctx.lineTo(starX, starY + 3.5);
+            ctx.lineTo(starX - 2, starY);
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
         }
 
         // Auto-hit Target Lock Reticle
@@ -1099,50 +1308,308 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           continue;
         }
 
-        ctx.fillStyle = 'rgba(0,0,0,0.45)';
-        ctx.fillRect(hx - 10, hy + 11, 20, 5);
+        // Shadow beneath player
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(hx - 10, hy + 10, 20, 5);
 
-        ctx.fillStyle = def.capeColor;
-        ctx.fillRect(hx - 9, hy - 5 + bob, 18, 15);
-        ctx.fillStyle = def.primaryColor;
-        ctx.fillRect(hx - 8, hy - 6 + bob, 16, 15);
-        ctx.fillStyle = def.accentColor;
-        ctx.fillRect(hx - 8, hy + 3 + bob, 16, 3);
-        ctx.fillStyle = '#E8C39E';
-        ctx.fillRect(hx - 6, hy - 14 + bob, 12, 9);
-        ctx.fillStyle = def.primaryColor;
-        ctx.fillRect(hx - 7, hy - 17 + bob, 14, 5);
-
-        if (p.shield > 0) {
-          ctx.strokeStyle = 'rgba(147, 197, 253, 0.7)';
-          ctx.lineWidth = 2;
+        // Class-specific Ground VFX (e.g. Cleric holy aura)
+        if (p.heroClass === 'cleric') {
+          const haloPulse = Math.sin(now * 0.005) * 2;
+          ctx.strokeStyle = 'rgba(253, 224, 71, 0.4)';
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(hx, hy, 18, 0, Math.PI * 2);
+          ctx.ellipse(hx, hy + 11, 16 + haloPulse, 6, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
+        // Aim angle & facing direction
         const ang = p.id === playerId ? aimAngleRef.current : p.aimAngle;
-        const swingOffset = p.attackAnimMs > 0 ? Math.sin(p.attackAnimMs * 0.04) * 0.6 : 0;
-        const wx = hx + Math.cos(ang + swingOffset) * 16;
-        const wy = hy + Math.sin(ang + swingOffset) * 16;
-        ctx.strokeStyle = def.accentColor;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(hx, hy);
-        ctx.lineTo(wx, wy);
-        ctx.stroke();
+        const facingLeft = Math.cos(ang) < 0;
 
+        ctx.save();
+        ctx.translate(hx, hy);
+        ctx.scale(facingLeft ? -1 : 1, 1);
+
+        const swingOffset = p.attackAnimMs > 0 ? Math.sin(p.attackAnimMs * 0.04) * 0.8 : 0;
+
+        if (p.heroClass === 'vanguard') {
+          // ==========================================
+          // VANGUARD: Ironcrest Bastion (Heavy Knight)
+          // ==========================================
+          // Crimson battle cape fluttering behind
+          ctx.fillStyle = '#7F1D1D';
+          ctx.fillRect(-10, -5 + bob, 14, 15);
+          ctx.fillStyle = '#991B1B';
+          ctx.fillRect(-9, -4 + bob, 12, 13);
+
+          // Steel plate legs & sabatons
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(-7, 7 + bob, 5, 5);
+          ctx.fillRect(1, 7 + bob, 5, 5);
+          ctx.fillStyle = '#1E293B';
+          ctx.fillRect(-8, 10, 6, 2);
+          ctx.fillRect(1, 10, 6, 2);
+
+          // Polished Steel Cuirass & Golden Bastion Cross
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(-8, -6 + bob, 16, 14);
+          ctx.fillStyle = '#64748B';
+          ctx.fillRect(-7, -5 + bob, 14, 12);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-2, -4 + bob, 4, 10);
+          ctx.fillRect(-5, -2 + bob, 10, 3);
+
+          // Heavy Winged Pauldrons
+          ctx.fillStyle = '#94A3B8';
+          ctx.fillRect(-10, -8 + bob, 4, 5);
+          ctx.fillRect(6, -8 + bob, 4, 5);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-10, -9 + bob, 4, 1);
+          ctx.fillRect(6, -9 + bob, 4, 1);
+
+          // Steel Greathelm with cyan visor slit & waving red plume
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(-7, -19 + bob, 14, 12);
+          ctx.fillStyle = '#64748B';
+          ctx.fillRect(-6, -18 + bob, 12, 10);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillRect(-3, -14 + bob, 9, 3);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(-1, -14 + bob, 6, 2);
+          const plumeBob = Math.sin(now * 0.01) * 2;
+          ctx.fillStyle = '#DC2626';
+          ctx.fillRect(-3, -24 + bob, 4, 5);
+          ctx.fillRect(-5 + plumeBob, -22 + bob, 3, 3);
+
+          // Left Hand: Tower Kite Shield
+          ctx.fillStyle = '#1E293B';
+          ctx.fillRect(-13, -7 + bob, 5, 16);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(-12, -6 + bob, 3, 14);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-12, -2 + bob, 3, 6);
+
+          // Right Hand: Sunforged Claymore
+          ctx.save();
+          ctx.translate(6, 2 + bob);
+          ctx.rotate(0.3 + swingOffset);
+          ctx.fillStyle = '#CBD5E1';
+          ctx.fillRect(0, -18, 3, 20);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, -17, 1, 18);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-3, 0, 9, 2);
+          ctx.fillStyle = '#78350F';
+          ctx.fillRect(0, 2, 3, 4);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(0, 6, 3, 3);
+          ctx.restore();
+
+        } else if (p.heroClass === 'ranger') {
+          // ==========================================
+          // RANGER: Thornwood Marksman (Swift Scout)
+          // ==========================================
+          // Forest leaf-cut cloak
+          ctx.fillStyle = '#142E1F';
+          ctx.fillRect(-9, -5 + bob, 15, 15);
+          ctx.fillStyle = '#1E3A29';
+          ctx.fillRect(-8, -4 + bob, 13, 13);
+
+          // Quiver with feather-fletched arrows on back
+          ctx.fillStyle = '#78350F';
+          ctx.fillRect(-11, -12 + bob, 4, 13);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(-12, -16 + bob, 3, 4);
+          ctx.fillRect(-10, -17 + bob, 3, 5);
+
+          // Leather boots & legs
+          ctx.fillStyle = '#271E15';
+          ctx.fillRect(-6, 7 + bob, 5, 5);
+          ctx.fillRect(1, 7 + bob, 5, 5);
+
+          // Forest Green Brigandine & Bronze Buckles
+          ctx.fillStyle = '#2D5A3C';
+          ctx.fillRect(-7, -6 + bob, 14, 14);
+          ctx.fillStyle = '#3F7A52';
+          ctx.fillRect(-6, -5 + bob, 12, 11);
+          ctx.fillStyle = '#D97706';
+          ctx.fillRect(-6, -1 + bob, 12, 2);
+          ctx.fillStyle = '#34D399';
+          ctx.fillRect(-1, -3 + bob, 3, 3);
+
+          // Deep Archer Hood & Keen Emerald Eyes
+          ctx.fillStyle = '#1E3A29';
+          ctx.fillRect(-7, -19 + bob, 14, 12);
+          ctx.fillStyle = '#2D5A3C';
+          ctx.fillRect(-6, -18 + bob, 12, 10);
+          ctx.fillRect(-2, -21 + bob, 4, 3);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillRect(-4, -13 + bob, 9, 4);
+          ctx.fillStyle = '#34D399';
+          ctx.fillRect(0, -13 + bob, 3, 2);
+          ctx.fillRect(4, -13 + bob, 2, 2);
+
+          // Ashwood Recurve Bow in hand
+          ctx.save();
+          ctx.translate(8, 0 + bob);
+          ctx.rotate(swingOffset);
+          ctx.fillStyle = '#92400E';
+          ctx.fillRect(2, -14, 3, 26);
+          ctx.fillStyle = '#E2E8F0';
+          ctx.fillRect(5, -12, 1, 22);
+          ctx.fillStyle = '#78350F';
+          ctx.fillRect(-6, -1, 10, 2);
+          ctx.fillStyle = '#34D399';
+          ctx.fillRect(3, -2, 3, 3);
+          ctx.restore();
+
+        } else if (p.heroClass === 'arcanist') {
+          // ==========================================
+          // ARCANIST: Astral Conduit (Cosmic Caster)
+          // ==========================================
+          // Midnight indigo layered robes & cyan trim
+          ctx.fillStyle = '#1E1B4B';
+          ctx.fillRect(-9, -5 + bob, 18, 17);
+          ctx.fillStyle = '#312E81';
+          ctx.fillRect(-8, -4 + bob, 16, 15);
+          ctx.fillStyle = '#4338CA';
+          ctx.fillRect(-6, -3 + bob, 12, 13);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(-8, 9 + bob, 16, 2);
+          ctx.fillRect(-2, 0 + bob, 4, 3);
+
+          // Pointed Mystic Wizard Hat with curling tip
+          ctx.fillStyle = '#1E1B4B';
+          ctx.fillRect(-11, -14 + bob, 22, 3);
+          ctx.fillStyle = '#312E81';
+          ctx.fillRect(-7, -20 + bob, 14, 7);
+          ctx.fillStyle = '#4338CA';
+          ctx.fillRect(-4, -25 + bob, 8, 6);
+          ctx.fillStyle = '#818CF8';
+          ctx.fillRect(-2, -28 + bob, 4, 4);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(-7, -16 + bob, 14, 2);
+
+          // Mystic Face & Star Eyes
+          ctx.fillStyle = '#E2E8F0';
+          ctx.fillRect(-5, -12 + bob, 10, 5);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(-2, -11 + bob, 2, 2);
+          ctx.fillRect(2, -11 + bob, 2, 2);
+
+          // Runebound Spire Staff
+          ctx.save();
+          ctx.translate(9, -2 + bob);
+          ctx.rotate(swingOffset);
+          ctx.fillStyle = '#581C87';
+          ctx.fillRect(0, -16, 3, 30);
+          const crystalSpark = Math.sin(now * 0.01) * 2;
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(-1, -21 + crystalSpark, 5, 5);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, -20 + crystalSpark, 3, 3);
+          ctx.restore();
+
+          // Orbiting Astral Orb
+          const orbAngle = now * 0.005;
+          const ox = Math.cos(orbAngle) * 15;
+          const oy = Math.sin(orbAngle) * 7 + bob;
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
+          ctx.fillRect(ox - 2, oy - 2, 5, 5);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(ox - 1, oy - 1, 3, 3);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(ox, oy, 1, 1);
+
+        } else {
+          // ==========================================
+          // CLERIC: Sunbrand Prelate (Radiant Healer)
+          // ==========================================
+          // Floating Sunburst Halo behind head
+          const haloPulse = Math.sin(now * 0.006) * 1.5;
+          ctx.fillStyle = 'rgba(253, 224, 71, 0.35)';
+          ctx.fillRect(-11, -29 + bob + haloPulse, 22, 14);
+          ctx.fillStyle = '#FACC15';
+          ctx.fillRect(-9, -28 + bob + haloPulse, 18, 2);
+          ctx.fillRect(-11, -26 + bob + haloPulse, 2, 10);
+          ctx.fillRect(9, -26 + bob + haloPulse, 2, 10);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(-1, -31 + bob + haloPulse, 3, 3);
+          ctx.fillRect(-12, -28 + bob + haloPulse, 3, 3);
+          ctx.fillRect(10, -28 + bob + haloPulse, 3, 3);
+
+          // Ivory Ceremonial Tabard & Golden Sun Embroidery
+          ctx.fillStyle = '#F8FAFC';
+          ctx.fillRect(-8, -6 + bob, 16, 17);
+          ctx.fillStyle = '#F1F5F9';
+          ctx.fillRect(-7, -5 + bob, 14, 15);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-3, -2 + bob, 6, 6);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(-2, -1 + bob, 4, 4);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-7, 8 + bob, 14, 2);
+
+          // Amber Ceremonial Cloak
+          ctx.fillStyle = '#78350F';
+          ctx.fillRect(-9, -6 + bob, 3, 14);
+          ctx.fillRect(6, -6 + bob, 3, 14);
+
+          // Winged Sun Mitre / Cowl
+          ctx.fillStyle = '#F8FAFC';
+          ctx.fillRect(-7, -19 + bob, 14, 12);
+          ctx.fillStyle = '#FDE047';
+          ctx.fillRect(-8, -19 + bob, 16, 3);
+          ctx.fillRect(-2, -21 + bob, 4, 3);
+
+          // Face
+          ctx.fillStyle = '#FCD34D';
+          ctx.fillRect(-5, -13 + bob, 10, 5);
+          ctx.fillStyle = '#78350F';
+          ctx.fillRect(-2, -12 + bob, 2, 2);
+          ctx.fillRect(2, -12 + bob, 2, 2);
+
+          // Dawnstar Flanged War Mace
+          ctx.save();
+          ctx.translate(9, 0 + bob);
+          ctx.rotate(0.2 + swingOffset);
+          ctx.fillStyle = '#64748B';
+          ctx.fillRect(0, -12, 3, 24);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(-3, -19, 9, 8);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(-2, -18, 7, 6);
+          ctx.fillStyle = '#F59E0B';
+          ctx.fillRect(0, -21, 3, 3);
+          ctx.fillRect(-5, -17, 3, 3);
+          ctx.fillRect(5, -17, 3, 3);
+          ctx.restore();
+        }
+
+        ctx.restore();
+
+        // Protective Shield Bubble
+        if (p.shield > 0) {
+          ctx.strokeStyle = 'rgba(147, 197, 253, 0.75)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(hx, hy - 4, 20, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Username
         ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
         ctx.fillStyle = p.id === playerId ? '#FDE68A' : '#E2E8F0';
         ctx.textAlign = 'center';
-        ctx.fillText(p.username, hx, hy - 27);
+        ctx.fillText(p.username, hx, hy - 32);
 
-        const pBarW = 32;
+        // Health Bar
+        const pBarW = 34;
         const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
         ctx.fillStyle = '#181820';
-        ctx.fillRect(hx - pBarW / 2 - 1, hy - 23, pBarW + 2, 5);
+        ctx.fillRect(hx - pBarW / 2 - 1, hy - 27, pBarW + 2, 5);
         ctx.fillStyle = '#22C55E';
-        ctx.fillRect(hx - pBarW / 2, hy - 22, Math.round(pBarW * pHpRatio), 3);
+        ctx.fillRect(hx - pBarW / 2, hy - 26, Math.round(pBarW * pHpRatio), 3);
       }
 
       // Projectiles
@@ -1188,29 +1655,68 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.restore();
       }
 
-      // Floating Numbers
+      // Floating Numbers & Critical Hit Animations
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
         const age = now - ft.bornAt;
-        const duration = ft.kind === 'ping' ? 2600 : 950;
+        const duration = ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
         if (age >= duration) {
           floatingTexts.splice(i, 1);
           continue;
         }
         const t = age / duration;
-        const alpha = 1 - t * t;
-        const floatY = ft.y - t * (ft.kind === 'ping' ? 18 : 28);
+        const alpha = Math.max(0, 1 - t * t);
+        const floatY = ft.y - t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28);
+
         ctx.save();
         ctx.globalAlpha = alpha;
-        ctx.font =
-          ft.kind === 'crit' || ft.kind === 'ping'
-            ? '700 13px "JetBrains Mono", monospace'
-            : '600 12px "JetBrains Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#111219';
-        ctx.fillText(ft.text, ft.x + 1, floatY + 1);
-        ctx.fillStyle = ft.color;
-        ctx.fillText(ft.text, ft.x, floatY);
+
+        if (ft.kind === 'crit') {
+          // Explosive Scale Pop & Golden Glow for Critical Hits
+          const pop = t < 0.18 ? 0.6 + (t / 0.18) * 1.0 : Math.max(1, 1.6 - (t - 0.18) * 0.7);
+          ctx.translate(ft.x, floatY);
+          ctx.scale(pop, pop);
+
+          // Glowing badge background
+          ctx.fillStyle = 'rgba(220, 38, 38, 0.45)';
+          ctx.fillRect(-32, -12, 64, 16);
+          ctx.strokeStyle = '#F59E0B';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(-32, -12, 64, 16);
+
+          ctx.font = '800 13px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#111219';
+          ctx.fillText(`⚡ ${ft.text}!`, 1, 1);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillText(`⚡ ${ft.text}!`, 0, 0);
+        } else if (ft.kind === 'status') {
+          // Styled Status Badge
+          ctx.translate(ft.x, floatY);
+          ctx.font = '700 11px "JetBrains Mono", monospace';
+          const textW = ctx.measureText(ft.text).width;
+          ctx.fillStyle = 'rgba(17, 18, 25, 0.85)';
+          ctx.fillRect(-textW / 2 - 6, -11, textW + 12, 14);
+          ctx.strokeStyle = ft.color;
+          ctx.lineWidth = 1.2;
+          ctx.strokeRect(-textW / 2 - 6, -11, textW + 12, 14);
+
+          ctx.textAlign = 'center';
+          ctx.fillStyle = ft.color;
+          ctx.fillText(ft.text, 0, 0);
+        } else {
+          // Standard Damage, Heal, Gold, Ping
+          ctx.font =
+            ft.kind === 'ping'
+              ? '700 13px "JetBrains Mono", monospace'
+              : '600 12px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = '#111219';
+          ctx.fillText(ft.text, ft.x + 1, floatY + 1);
+          ctx.fillStyle = ft.color;
+          ctx.fillText(ft.text, ft.x, floatY);
+        }
+
         ctx.restore();
       }
 

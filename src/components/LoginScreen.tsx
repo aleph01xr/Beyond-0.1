@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
 import { HERO_CLASSES, type HeroClassId, type UserProfile } from '../shared/types.ts';
+import { PixelHeroPreview } from './PixelHeroPreview.tsx';
 
 const LOGIN_BG_SRC = '/src/assets/images/beyond_login_courtyard_1793596400177.jpg';
 
@@ -331,13 +332,18 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
             </button>
           </label>
 
-          {/* Starting Class Selector in Register Mode */}
+          {/* Soul Oath Class Selection in Register Mode (1 class locked per account) */}
           {mode === 'register' && (
-            <div className="space-y-1 pt-1">
-              <span className="block text-xs font-mono text-[#DCDAE8]">
-                Preferred Starting Hero:
-              </span>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-display text-white text-xs sm:text-sm font-semibold flex items-center gap-1.5">
+                  <span>🔒</span> Soul Oath (Locked to Account)
+                </span>
+                <span className="text-[11px] text-[#FBBF24] font-mono">
+                  Permanent Class Binding
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
                 {(Object.keys(HERO_CLASSES) as HeroClassId[]).map((cid) => {
                   const c = HERO_CLASSES[cid];
                   const active = preferredClass === cid;
@@ -349,17 +355,50 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
                         sfx.playUiClick();
                         setPreferredClass(cid);
                       }}
-                      className={`py-1.5 px-2 font-display text-xs sm:text-sm border-2 transition-colors cursor-pointer min-h-[40px] ${
+                      className={`p-2 text-left border-2 transition-all cursor-pointer flex items-center gap-2.5 ${
                         active
-                          ? 'bg-[#6F6D7C] border-[#ECEAF2] text-white'
-                          : 'bg-[#3B3942] border-[#2D2B34] text-[#B3B1BD] hover:text-white'
+                          ? 'bg-[#2E2B38] border-[#F59E0B] text-white shadow-md'
+                          : 'bg-[#201F29]/90 border-[#383648] text-[#B3B1BD] hover:border-[#5A5870]'
                       }`}
                     >
-                      {c.name}
+                      <PixelHeroPreview heroClass={cid} size={40} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-display text-xs sm:text-sm font-semibold text-white truncate">
+                            {c.name}
+                          </span>
+                          <span className="text-[9px] font-mono uppercase tracking-wider text-[#FCD34D] px-1 py-0.5 bg-[#171622] border border-[#3E3C50]">
+                            {c.roleBadge}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#9A98AA] font-mono truncate">
+                          {c.weapon}
+                        </p>
+                      </div>
                     </button>
                   );
                 })}
               </div>
+
+              {/* Selected Class Highlight Card */}
+              {(() => {
+                const cur = HERO_CLASSES[preferredClass];
+                return (
+                  <div className="p-2.5 bg-[#1C1B26] border border-[#3A384C] text-[11px] space-y-1">
+                    <div className="flex items-center justify-between text-white font-medium">
+                      <span>{cur.title}</span>
+                      <span className="text-[#A7F3D0] font-mono">HP {cur.maxHp} · DMG {cur.damage}</span>
+                    </div>
+                    <p className="text-[#B9B7C7] text-[10.5px] leading-snug">
+                      <span className="text-[#FDE047] font-semibold">{cur.passiveName}:</span> {cur.passiveDesc}
+                    </p>
+                  </div>
+                );
+              })()}
+
+              <p className="text-[10.5px] text-[#A5A3B5] text-center font-mono">
+                ⚠️ Each account is permanently bound to 1 class. To play another hero, create another adventurer account.
+              </p>
             </div>
           )}
 

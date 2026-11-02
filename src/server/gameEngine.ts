@@ -16,13 +16,14 @@ import {
   type PropState,
   type RoomSummary,
 } from '../shared/types.ts';
-import { generateDungeonFloor } from './dungeonGenerator.ts';
+import { generateDungeonFloor, makeEnemy } from './dungeonGenerator.ts';
 
 interface PlayerRuntime {
   state: PlayerState;
   input: PlayerInputState;
   attackCooldownMs: number;
   enteredRooms: Set<number>;
+  attackCount: number;
 }
 
 const MAX_FLOORS_FOR_VICTORY = 3;
@@ -50,6 +51,7 @@ export class GameRoom {
   private entitySeq = 1;
   private startedAt = Date.now();
   private zoneTickAccumMs = 0;
+  private statusDotAccumMs = 0;
   public onFloorClearedCallback?: (playerIds: string[], floor: number) => void;
   public onKillCallback?: (playerId: string) => void;
   public onReviveCallback?: (playerId: string) => void;
@@ -209,6 +211,7 @@ export class GameRoom {
       },
       attackCooldownMs: 0,
       enteredRooms: new Set<number>([0]),
+      attackCount: 0,
     });
 
     this.pushSystemChat(`${username} (${def.name}) joined the expedition.`);
@@ -616,8 +619,29 @@ export class GameRoom {
             !pr.state.downed &&
             Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
           ) {
-            this.damagePlayer(pr.state, 28 + this.floor * 5);
+            this.damagePlayer(pr.state, 30 + this.floor * 6, 'physical');
           }
+        }
+        // Spawn 4 outward shockwave debris orbs
+        const isEmber = this.map.biome === 'ember' || this.floor >= 3;
+        const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
+        const slamStyle = isEmber ? 'fireball' : isCatacombs ? 'voidorb' : 'bone';
+        for (let k = 0; k < 4; k++) {
+          const a = (k * Math.PI) / 2 + Math.PI / 4;
+          this.spawnProjectile({
+            ownerType: 'enemy',
+            ownerId: z.ownerId,
+            style: slamStyle,
+            x: z.x,
+            y: z.y,
+            vx: Math.cos(a) * 220,
+            vy: Math.sin(a) * 220,
+            angle: a,
+            radius: 7,
+            damage: 16 + this.floor * 3,
+            pierce: 1,
+            ttlMs: 1400,
+          });
         }
         this.zones.splice(i, 1);
         continue;
@@ -775,13 +799,60 @@ export class GameRoom {
         return;
       }
     }
+ 
+    this.statusDotAccumMs += dtMs;
+    const pulseDotNow = this.statusDotAccumMs >= 650;
+    if (pulseDotNow) this.statusDotAccumMs = 0;
 
-    for (const enemy of this.enemies) {
+    for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
+      const enemy = this.enemies[eIdx];
       enemy.markedMs = Math.max(0, enemy.markedMs - dtMs);
       enemy.slowedMs = Math.max(0, enemy.slowedMs - dtMs);
       enemy.stunnedMs = Math.max(0, enemy.stunnedMs - dtMs);
+      enemy.burnedMs = Math.max(0, enemy.burnedMs - dtMs);
+      enemy.frozenMs = Math.max(0, enemy.frozenMs - dtMs);
+      enemy.shockedMs = Math.max(0, enemy.shockedMs - dtMs);
+      enemy.poisonedMs = Math.max(0, enemy.poisonedMs - dtMs);
+      enemy.bleedingMs = Math.max(0, enemy.bleedingMs - dtMs);
 
-      if (enemy.stunnedMs > 0) {
+      // Periodic Status Damage (DoTs) with Resistances
+      if (pulseDotNow && enemy.hp > 0) {
+        const res = enemy.resistances || {
+          physical: 0,
+          fire: 0,
+          frost: 0,
+          lightning: 0,
+          poison: 0,
+          bleed: 0,
+          tenacity: 0,
+        };
+
+        if (enemy.burnedMs > 0) {
+          const rawBurn = 7 + this.floor;
+          const burnDmg = Math.max(1, Math.round(rawBurn * (1 - res.fire)));
+          enemy.hp -= burnDmg;
+          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `🔥 ${burnDmg}`, '#F97316');
+        }
+        if (enemy.poisonedMs > 0) {
+          const rawPoison = 5 + this.floor;
+          const poisonDmg = Math.max(1, Math.round(rawPoison * (1 - res.poison)));
+          enemy.hp -= poisonDmg;
+          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `🧪 ${poisonDmg}`, '#22C55E');
+        }
+        if (enemy.bleedingMs > 0) {
+          const moving = Math.hypot(enemy.vx, enemy.vy) > 8;
+          const rawBleed = (moving ? 14 : 7) + this.floor;
+          const bleedDmg = Math.max(1, Math.round(rawBleed * (1 - res.bleed)));
+          enemy.hp -= bleedDmg;
+          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `🩸 ${bleedDmg}`, '#DC2626');
+        }
+        if (enemy.hp <= 0) {
+          this.processEnemyDeath(enemy, null);
+          continue;
+        }
+      }
+
+      if (enemy.stunnedMs > 0 || enemy.frozenMs > 0) {
         enemy.vx = 0;
         enemy.vy = 0;
         continue;
@@ -824,7 +895,8 @@ export class GameRoom {
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
-          const baseHit = enemy.kind === 'knight' ? 19 : enemy.kind === 'goblin' ? 13 : 11;
+          let baseHit = enemy.kind === 'knight' ? 19 : enemy.kind === 'goblin' ? 13 : 11;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
           this.damagePlayer(nearest, baseHit + this.floor * 2);
           enemy.windupMs = enemy.kind === 'goblin' ? 850 : 1100;
         }
@@ -885,37 +957,93 @@ export class GameRoom {
           }
         }
       } else if (enemy.kind === 'boss') {
-        const spd = 76 * slowFactor;
-        if (nearestDist > 72) {
+        // Enrage transition when HP drops to <= 50%
+        if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
+          enemy.enraged = true;
+          this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 24, '⚔ ENRAGED! ⚔', '#EF4444');
+          this.pushSystemChat(`⚠️ ${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
+        }
+
+        // Minion Summon thresholds: at 70% and 35% HP
+        const hpRatio = enemy.hp / enemy.maxHp;
+        const curWave = enemy.summonWave || 0;
+        if (hpRatio <= 0.70 && curWave < 1) {
+          enemy.summonWave = 1;
+          this.summonBossAdds(enemy);
+        } else if (hpRatio <= 0.35 && curWave < 2) {
+          enemy.summonWave = 2;
+          this.summonBossAdds(enemy);
+        }
+
+        const isEnraged = !!enemy.enraged;
+        const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
+        const isEmber = this.map.biome === 'ember' || this.floor >= 3;
+        const baseSpd = isEnraged ? 142 : 110;
+        const spd = baseSpd * slowFactor;
+
+        // Bull rush charge execution
+        if (enemy.charging) {
+          enemy.chargeTimerMs = (enemy.chargeTimerMs || 0) - dtMs;
+          const chargeSpd = 310 * slowFactor;
+          const cAngle = enemy.chargeAngle ?? angle;
+          this.moveWithCollision(
+            enemy,
+            Math.cos(cAngle) * chargeSpd * dtSec,
+            Math.sin(cAngle) * chargeSpd * dtSec,
+            24
+          );
+          // Trample damage to nearby players
+          for (const pr of this.players.values()) {
+            if (!pr.state.downed && Math.hypot(pr.state.x - enemy.x, pr.state.y - enemy.y) <= enemy.radius + 18) {
+              this.damagePlayer(pr.state, 24 + this.floor * 4, 'physical');
+              this.emitEvent('damage', pr.state.x, pr.state.y - 14, 'TRAMPLED!', '#EF4444');
+            }
+          }
+          if ((enemy.chargeTimerMs || 0) <= 0) {
+            enemy.charging = false;
+            enemy.windupMs = isEnraged ? 550 : 850;
+          }
+          continue;
+        }
+
+        if (nearestDist > 68) {
           this.moveWithCollision(
             enemy,
             Math.cos(angle) * spd * dtSec,
             Math.sin(angle) * spd * dtSec,
-            20
+            22
           );
         }
-        if (enemy.windupMs <= 0) {
-          const pattern = Math.random();
-          const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
-          const isEmber = this.map.biome === 'ember' || this.floor >= 3;
 
-          if (pattern < 0.48) {
+        if (enemy.windupMs <= 0) {
+          const patternChoice = Math.random();
+
+          // 1. Charge attack (if player is distant)
+          if (nearestDist > 140 && patternChoice < 0.35) {
+            enemy.charging = true;
+            enemy.chargeAngle = angle;
+            enemy.chargeTimerMs = 580;
+            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'CHARGING!', '#F59E0B');
+            enemy.windupMs = isEnraged ? 700 : 950;
+          } else if (patternChoice < 0.70) {
+            // 2. Fast Ground Slam
             this.zones.push({
               id: this.nextId('zone'),
               kind: 'boss_slam',
               x: nearest.x,
               y: nearest.y,
-              radius: isEmber ? 88 : isCatacombs ? 82 : 76,
-              ttlMs: 1150,
-              maxTtlMs: 1150,
+              radius: isEmber ? 94 : isCatacombs ? 88 : 82,
+              ttlMs: isEnraged ? 700 : 850,
+              maxTtlMs: isEnraged ? 700 : 850,
               ownerId: enemy.id,
             });
-            enemy.windupMs = 2200;
+            enemy.windupMs = isEnraged ? 650 : 950;
           } else {
+            // 3. Bullet Hell Nova / Spread
             const offset = Math.random() * Math.PI;
-            const projCount = isEmber ? 10 : 8;
+            const projCount = isEmber ? (isEnraged ? 18 : 14) : isCatacombs ? (isEnraged ? 16 : 12) : (isEnraged ? 14 : 10);
             const projStyle = isCatacombs ? 'voidorb' : isEmber ? 'fireball' : 'bone';
-            const projSpeed = isCatacombs ? 220 : isEmber ? 230 : 210;
+            const projSpeed = (isCatacombs ? 245 : isEmber ? 260 : 230) * (isEnraged ? 1.2 : 1.0);
 
             for (let k = 0; k < projCount; k++) {
               const a = offset + (k * Math.PI * 2) / projCount;
@@ -929,12 +1057,33 @@ export class GameRoom {
                 vy: Math.sin(a) * projSpeed,
                 angle: a,
                 radius: isEmber ? 8 : 7,
-                damage: 17 + this.floor * 3,
+                damage: 18 + this.floor * 4,
                 pierce: 1,
-                ttlMs: 2200,
+                ttlMs: 2400,
               });
             }
-            enemy.windupMs = 2000;
+
+            // If enraged or floor >= 2, also fire 2 homing aimed shots directly at nearest player!
+            if (isEnraged || this.floor >= 2) {
+              for (let off = -0.16; off <= 0.16; off += 0.32) {
+                const aimA = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: projStyle,
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(aimA) * (projSpeed * 1.15),
+                  vy: Math.sin(aimA) * (projSpeed * 1.15),
+                  angle: aimA,
+                  radius: 8,
+                  damage: 22 + this.floor * 4,
+                  pierce: 1,
+                  ttlMs: 2000,
+                });
+              }
+            }
+            enemy.windupMs = isEnraged ? 750 : 1100;
           }
         }
       }
@@ -1171,6 +1320,31 @@ export class GameRoom {
     });
   }
 
+  private summonBossAdds(boss: EnemyState): void {
+    const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
+    const isEmber = this.map.biome === 'ember' || this.floor >= 3;
+    const minionKind = isEmber ? 'knight' : isCatacombs ? 'cultist' : 'skeleton';
+    this.emitEvent('status', boss.x, boss.y - boss.radius - 20, '⚠️ REINFORCEMENTS!', '#F59E0B');
+    this.pushSystemChat(`⚠️ ${boss.name} calls forth dungeon reinforcements!`);
+
+    for (let i = 0; i < 2; i++) {
+      const offsetX = i === 0 ? -65 : 65;
+      const offsetY = i === 0 ? 45 : -45;
+      const add = makeEnemy(
+        `add_${this.floor}_${Date.now()}_${i}`,
+        minionKind,
+        boss.roomId,
+        boss.x + offsetX,
+        boss.y + offsetY,
+        1.0,
+        true,
+        this.floor,
+        this.map.biome
+      );
+      this.enemies.push(add);
+    }
+  }
+
   private damageEnemy(
     enemy: EnemyState,
     rawAmount: number,
@@ -1178,14 +1352,126 @@ export class GameRoom {
     isCrit: boolean
   ): void {
     const idx = this.enemies.indexOf(enemy);
-    if (idx === -1) return;
+    if (idx === -1 || enemy.hp <= 0) return;
 
+    const res = enemy.resistances || {
+      physical: 0,
+      fire: 0,
+      frost: 0,
+      lightning: 0,
+      poison: 0,
+      bleed: 0,
+      tenacity: 0,
+    };
     const markBonus = enemy.markedMs > 0 ? 1.35 : 1.0;
-    const finalDmg = Math.max(1, Math.round(rawAmount * markBonus));
+    // Physical Resistance mitigates direct attacks
+    const physRes = Math.min(0.75, Math.max(-0.5, res.physical));
+    let finalDmg = Math.max(1, Math.round(rawAmount * (1 - physRes) * markBonus));
+
+    // Freeze Shatter Mechanics
+    let shattered = false;
+    if (enemy.frozenMs > 0) {
+      enemy.frozenMs = 0;
+      finalDmg = Math.round(finalDmg * 1.6);
+      shattered = true;
+      this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 20, '❄ SHATTER!', '#38BDF8');
+
+      // AoE Frost Shatter wave to adjacent enemies
+      for (const other of this.enemies) {
+        if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 85) {
+          const aoeDmg = Math.round(finalDmg * 0.4);
+          other.hp -= aoeDmg;
+          other.slowedMs = Math.max(other.slowedMs, 2500);
+          this.emitEvent('damage', other.x, other.y - 10, `${aoeDmg}`, '#7DD3FC');
+          if (other.hp <= 0) {
+            this.processEnemyDeath(other, attacker);
+          }
+        }
+      }
+    }
+
     enemy.hp -= finalDmg;
 
     if (attacker) {
       attacker.damageDealt += finalDmg;
+
+      // Status Relic Procs with Resistances & Tenacity:
+      // 1. Cinder Heart: Ignite Burn
+      if (attacker.relics.includes('cinder_heart') && (isCrit || rawAmount >= 24)) {
+        if (enemy.burnedMs <= 0) {
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 14, 'IGNITED!', '#F97316');
+        }
+        const burnDuration = Math.round(4500 * (1 - res.fire * 0.4));
+        enemy.burnedMs = burnDuration;
+      }
+
+      // 2. Rimefrost Shard: Chill & Freeze
+      if (attacker.relics.includes('rimefrost_shard')) {
+        const frostTenacity = Math.max(res.frost, res.tenacity);
+        if (enemy.slowedMs > 0 && enemy.frozenMs <= 0 && !shattered) {
+          const freezeDuration = Math.round(2400 * (1 - frostTenacity));
+          if (freezeDuration >= 600) {
+            enemy.frozenMs = freezeDuration;
+            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 16, 'FROZEN!', '#38BDF8');
+          } else {
+            enemy.slowedMs = Math.max(enemy.slowedMs, 3500);
+            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 14, 'TENACIOUS!', '#94A3B8');
+          }
+        } else if (Math.random() < 0.35) {
+          const slowDuration = Math.round(3500 * (1 - frostTenacity * 0.5));
+          enemy.slowedMs = Math.max(enemy.slowedMs, slowDuration);
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 14, 'CHILLED', '#7DD3FC');
+        }
+      }
+
+      // 3. Stormcaller Lodestone: Shock & Chain Lightning
+      if (attacker.relics.includes('stormcaller_lodestone')) {
+        const pr = this.players.get(attacker.id);
+        if (pr) {
+          pr.attackCount = (pr.attackCount || 0) + 1;
+          if (pr.attackCount % 3 === 0) {
+            const shockDuration = Math.round(5000 * (1 - res.lightning * 0.4));
+            enemy.shockedMs = shockDuration;
+            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 16, 'SHOCKED!', '#FBBF24');
+          }
+        }
+      }
+
+      // 4. Viper Crucible: Poison & Weaken
+      if (attacker.relics.includes('viper_crucible')) {
+        if (enemy.poisonedMs <= 0) {
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 14, 'POISONED', '#22C55E');
+        }
+        const poisonDuration = Math.round(6000 * (1 - res.poison * 0.4));
+        enemy.poisonedMs = poisonDuration;
+      }
+
+      // 5. Bloodletter Talisman: Bleed
+      if (attacker.relics.includes('bloodletter_talisman')) {
+        if (enemy.bleedingMs <= 0) {
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 14, 'BLEED', '#DC2626');
+        }
+        const bleedDuration = Math.round(5000 * (1 - res.bleed * 0.4));
+        enemy.bleedingMs = bleedDuration;
+      }
+    }
+
+    // Shocked chain lightning discharge
+    if (enemy.shockedMs > 0 && finalDmg > 6) {
+      let arcs = 3;
+      for (const other of this.enemies) {
+        if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 130) {
+          const otherRes = other.resistances ? other.resistances.lightning : 0;
+          const arcDmg = Math.max(1, Math.round(finalDmg * 0.45 * (1 - otherRes)));
+          other.hp -= arcDmg;
+          this.emitEvent('damage', other.x, other.y - 12, `⚡ ${arcDmg}`, '#FBBF24');
+          arcs--;
+          if (other.hp <= 0) {
+            this.processEnemyDeath(other, attacker);
+          }
+          if (arcs <= 0) break;
+        }
+      }
     }
 
     this.emitEvent(
@@ -1197,39 +1483,46 @@ export class GameRoom {
     );
 
     if (enemy.hp <= 0) {
-      this.enemies.splice(idx, 1);
-      if (attacker) {
-        attacker.kills += 1;
-        if (this.onKillCallback) this.onKillCallback(attacker.id);
-        if (attacker.relics.includes('crimson_fang')) {
-          attacker.hp = Math.min(attacker.maxHp, attacker.hp + 5);
-        }
-      }
+      this.processEnemyDeath(enemy, attacker);
+    }
+  }
 
-      if (Math.random() < 0.55 || enemy.kind === 'boss') {
-        this.props.push({
-          id: this.nextId('prop'),
-          kind: 'coin',
-          x: enemy.x,
-          y: enemy.y,
-          opened: false,
-          value: enemy.kind === 'boss' ? 75 : enemy.elite ? 18 : 8,
-        });
-      } else if (Math.random() < 0.14) {
-        this.props.push({
-          id: this.nextId('prop'),
-          kind: 'potion',
-          x: enemy.x,
-          y: enemy.y,
-          opened: false,
-          value: 1,
-        });
-      }
+  private processEnemyDeath(enemy: EnemyState, attacker: PlayerState | null): void {
+    const idx = this.enemies.indexOf(enemy);
+    if (idx === -1) return;
+    this.enemies.splice(idx, 1);
 
-      const xpGain = enemy.kind === 'boss' ? 95 : enemy.elite ? 28 : 16;
-      for (const ally of this.players.values()) {
-        this.grantXp(ally.state, xpGain);
+    if (attacker) {
+      attacker.kills += 1;
+      if (this.onKillCallback) this.onKillCallback(attacker.id);
+      if (attacker.relics.includes('crimson_fang')) {
+        attacker.hp = Math.min(attacker.maxHp, attacker.hp + 5);
       }
+    }
+
+    if (Math.random() < 0.55 || enemy.kind === 'boss') {
+      this.props.push({
+        id: this.nextId('prop'),
+        kind: 'coin',
+        x: enemy.x,
+        y: enemy.y,
+        opened: false,
+        value: enemy.kind === 'boss' ? 75 : enemy.elite ? 18 : 8,
+      });
+    } else if (Math.random() < 0.14) {
+      this.props.push({
+        id: this.nextId('prop'),
+        kind: 'potion',
+        x: enemy.x,
+        y: enemy.y,
+        opened: false,
+        value: 1,
+      });
+    }
+
+    const xpGain = enemy.kind === 'boss' ? 95 : enemy.elite ? 28 : 16;
+    for (const ally of this.players.values()) {
+      this.grantXp(ally.state, xpGain);
     }
   }
 
@@ -1245,23 +1538,72 @@ export class GameRoom {
     }
   }
 
-  private damagePlayer(p: PlayerState, rawDamage: number): void {
+  private damagePlayer(
+    p: PlayerState,
+    rawDamage: number,
+    damageType: 'physical' | 'elemental' = 'physical'
+  ): void {
     if (p.downed) return;
+
+    const classDef = HERO_CLASSES[p.heroClass];
+    const res = classDef?.resistances || {
+      physical: 0,
+      fire: 0,
+      frost: 0,
+      lightning: 0,
+      poison: 0,
+      bleed: 0,
+    };
+
+    let resist =
+      damageType === 'elemental'
+        ? (res.fire + res.frost + res.lightning) / 3
+        : res.physical;
+
+    if (p.relics.includes('runic_carapace')) {
+      resist += damageType === 'physical' ? 0.15 : 0.20;
+    }
+    if (p.relics.includes('thorned_aegis') && damageType === 'physical') {
+      resist += 0.10;
+    }
+    resist = Math.min(0.75, Math.max(0, resist));
+
+    let dmg = Math.max(1, Math.round(rawDamage * (1 - resist)));
 
     const inAegis = this.zones.some(
       (z) => z.kind === 'aegis_dome' && Math.hypot(p.x - z.x, p.y - z.y) <= z.radius
     );
-    let dmg = inAegis ? Math.max(1, Math.round(rawDamage * 0.65)) : rawDamage;
+    if (inAegis) dmg = Math.max(1, Math.round(dmg * 0.65));
 
     if (p.shield > 0) {
       const absorbed = Math.min(p.shield, dmg);
       p.shield -= absorbed;
       dmg -= absorbed;
+
+      // Thorned Aegis: Stun retaliation shockwave with Tenacity respect
+      if (absorbed > 0 && p.relics.includes('thorned_aegis')) {
+        this.emitEvent('status', p.x, p.y - 24, 'THORNED RETALIATION', '#A855F7');
+        for (const enemy of this.enemies) {
+          if (enemy.hp > 0 && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 125) {
+            const tenacity = enemy.resistances ? enemy.resistances.tenacity : 0;
+            const stunDur = Math.round(1800 * (1 - tenacity));
+            if (stunDur >= 500) {
+              enemy.stunnedMs = stunDur;
+              this.emitEvent('status', enemy.x, enemy.y - 16, 'STUNNED!', '#A855F7');
+            } else {
+              this.emitEvent('status', enemy.x, enemy.y - 16, 'TENACIOUS!', '#FBBF24');
+            }
+          }
+        }
+      }
     }
 
     if (dmg > 0) {
       p.hp = Math.max(0, p.hp - dmg);
       this.emitEvent('damage', p.x, p.y - 18, `-${dmg}`, '#F87171');
+      if (resist >= 0.25) {
+        this.emitEvent('status', p.x + 16, p.y - 26, 'ARMORED', '#94A3B8');
+      }
     }
 
     if (p.hp <= 0) {

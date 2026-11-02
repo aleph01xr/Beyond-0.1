@@ -339,11 +339,17 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 <span className={`font-display text-xs sm:text-sm font-semibold truncate ${theme.titleColor}`}>
                   {boss.name}
                 </span>
-                <span
-                  className={`text-[9px] px-1 py-0.2 border font-mono tracking-wider shrink-0 hidden sm:inline ${theme.badgeColor}`}
-                >
-                  {theme.badge}
-                </span>
+                {boss.enraged ? (
+                  <span className="text-[9px] px-1.5 py-0.2 bg-[#7F1D1D] text-[#FECACA] border border-[#DC2626] font-mono tracking-wider animate-pulse">
+                    🔥 ENRAGED
+                  </span>
+                ) : (
+                  <span
+                    className={`text-[9px] px-1 py-0.2 border font-mono tracking-wider shrink-0 hidden sm:inline ${theme.badgeColor}`}
+                  >
+                    {theme.badge}
+                  </span>
+                )}
               </div>
               <span className="text-[#FECACA] text-[11px] sm:text-xs shrink-0 font-medium">
                 HP {boss.hp}/{boss.maxHp}
@@ -354,6 +360,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 style={{ width: `${hpPct}%` }}
                 className={`h-full ${theme.barFill} transition-all duration-150`}
               />
+            </div>
+            {/* Boss Resistances & Tenacity */}
+            <div className="flex items-center justify-between text-[9px] font-mono text-[#D4D2E0] mt-1 pt-0.5 border-t border-white/10">
+              <span className="text-[#C084FC]">Tenacity {Math.round((boss.resistances?.tenacity ?? 0.55) * 100)}%</span>
+              <span className="text-[#CBD5E1]">Armor {Math.round((boss.resistances?.physical ?? 0.25) * 100)}%</span>
+              <span className="text-[#FBBF24]">Floor {snapshot.floor} Guardian</span>
             </div>
           </div>
         );
@@ -654,34 +666,76 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               </button>
             </div>
 
-            <div className="space-y-1.5">
-              <span className="block text-xs font-medium text-[#D4D2DC]">
-                Switch Hero Class
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                {(Object.keys(HERO_CLASSES) as HeroClassId[]).map((cid) => {
-                  const c = HERO_CLASSES[cid];
-                  const active = me?.heroClass === cid;
-                  return (
-                    <button
-                      key={cid}
-                      type="button"
-                      onClick={() => {
-                        sfx.playUiClick();
-                        onChangeClass(cid);
-                      }}
-                      className={`py-2 px-3 font-display text-xs sm:text-sm border cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center ${
-                        active
-                          ? 'bg-[#6F6D7C] border-white text-white'
-                          : 'bg-[#3B3942] border-[#2B2933] text-[#C5C3D0] hover:text-white'
-                      }`}
-                    >
-                      {c.name}
-                    </button>
-                  );
-                })}
+            {/* Account Class Locked Soul Oath */}
+            <div className="p-3.5 bg-[#201F2B] border border-[#3A384C] space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-display text-white font-semibold flex items-center gap-1.5">
+                  <span>🔒</span> Soul Oath (Class Locked)
+                </span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-[#FCD34D] px-1.5 py-0.5 bg-[#171622] border border-[#3E3C50]">
+                  {myDef.roleBadge}
+                </span>
               </div>
+              <p className="text-xs text-[#E2E0EE]">
+                Bonded as <strong className="text-white">{myDef.name}</strong> · {myDef.title}
+              </p>
+              <p className="text-[11px] text-[#A6A4B6] leading-relaxed">
+                <span className="text-[#FBBF24] font-semibold">{myDef.passiveName}:</span> {myDef.passiveDesc}
+              </p>
+              <p className="text-[10.5px] text-[#787687] font-mono pt-0.5">
+                Each account is permanently locked to 1 class.
+              </p>
             </div>
+
+            {/* Active Character Resistances */}
+            {(() => {
+              const baseRes = myDef.resistances;
+              const hasCarapace = me?.relics.includes('runic_carapace');
+              const hasThorned = me?.relics.includes('thorned_aegis');
+              const phys = Math.round((baseRes.physical + (hasCarapace ? 0.15 : 0) + (hasThorned ? 0.10 : 0)) * 100);
+              const fire = Math.round((baseRes.fire + (hasCarapace ? 0.20 : 0)) * 100);
+              const frost = Math.round((baseRes.frost + (hasCarapace ? 0.20 : 0)) * 100);
+              const shock = Math.round((baseRes.lightning + (hasCarapace ? 0.20 : 0)) * 100);
+              const poison = Math.round((baseRes.poison + (hasCarapace ? 0.20 : 0)) * 100);
+              const bleed = Math.round((baseRes.bleed + (hasCarapace ? 0.20 : 0)) * 100);
+
+              return (
+                <div className="p-3 bg-[#201F2B] border border-[#3A384C] space-y-2">
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
+                      <span>🛡️</span> Active Resistances
+                    </span>
+                    <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 text-[10.5px] font-mono text-center">
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#94A3B8]">Physical</div>
+                      <div className="text-white font-bold">+{phys}%</div>
+                    </div>
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#F97316]">🔥 Fire</div>
+                      <div className="text-white font-bold">+{fire}%</div>
+                    </div>
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#38BDF8]">❄️ Frost</div>
+                      <div className="text-white font-bold">+{frost}%</div>
+                    </div>
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#FBBF24]">⚡ Shock</div>
+                      <div className="text-white font-bold">+{shock}%</div>
+                    </div>
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#22C55E]">☣️ Poison</div>
+                      <div className="text-white font-bold">+{poison}%</div>
+                    </div>
+                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
+                      <div className="text-[#EF4444]">🩸 Bleed</div>
+                      <div className="text-white font-bold">+{bleed}%</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="flex flex-col gap-2 pt-2">
               <button
