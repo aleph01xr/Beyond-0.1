@@ -1,0 +1,803 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { sfx } from '../client/sound.ts';
+import {
+  HERO_CLASSES,
+  RELIC_CATALOG,
+  type ChatMessage,
+  type DungeonMap,
+  type GameSnapshot,
+  type HeroClassId,
+  type PlayerInputState,
+} from '../shared/types.ts';
+import { GameCanvas } from './GameCanvas.tsx';
+import {
+  TouchControls,
+  loadSavedTouchSettings,
+  saveTouchSettings,
+  type TouchSettings,
+} from './TouchControls.tsx';
+import { TouchSettingsModal } from './TouchSettingsModal.tsx';
+
+interface DungeonRunViewProps {
+  playerId: string;
+  map: DungeonMap;
+  snapshot: GameSnapshot;
+  latestSnapshotRef: React.MutableRefObject<GameSnapshot | null>;
+  chatMessages: ChatMessage[];
+  onSendInput: (input: PlayerInputState) => void;
+  onTriggerAction: (
+    action: 'tactical' | 'ult' | 'potion' | 'interact',
+    aimAngle: number
+  ) => void;
+  onSelectRelic: (relicId: string) => void;
+  onChangeClass: (heroClass: HeroClassId) => void;
+  onSendPing: (label: string, x: number, y: number) => void;
+  onSendChat: (text: string) => void;
+  onRestartRun: () => void;
+  onLeaveRoom: () => void;
+}
+
+export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
+  playerId,
+  map,
+  snapshot,
+  latestSnapshotRef,
+  chatMessages,
+  onSendInput,
+  onTriggerAction,
+  onSelectRelic,
+  onChangeClass,
+  onSendPing,
+  onSendChat,
+  onRestartRun,
+  onLeaveRoom,
+}) => {
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatFocused, setChatFocused] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
+
+  // Touch settings & visibility
+  const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
+  const [touchSettingsOpen, setTouchSettingsOpen] = useState(false);
+  const [forceTouchGamepad, setForceTouchGamepad] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('beyond_force_touch') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Detect touch device or allow explicit toggle
+  const [isTouchDevice, setIsTouchDevice] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  });
+
+  useEffect(() => {
+    const checkTouch = () => {
+      if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+        setIsTouchDevice(true);
+      }
+    };
+    window.addEventListener('touchstart', checkTouch, { once: true });
+    return () => window.removeEventListener('touchstart', checkTouch);
+  }, []);
+
+  const handleUpdateTouchSettings = (newSettings: TouchSettings) => {
+    setTouchSettings(newSettings);
+    saveTouchSettings(newSettings);
+  };
+
+  const handleToggleForceGamepad = (forced: boolean) => {
+    setForceTouchGamepad(forced);
+    try {
+      localStorage.setItem('beyond_force_touch', String(forced));
+    } catch {
+      // ignore
+    }
+  };
+
+  const me =
+    snapshot.players.find((p) => p.id === playerId) || snapshot.players[0];
+  const boss = snapshot.enemies.find((e) => e.kind === 'boss');
+
+  // Check if player is near any chest, shrine, or descent portal
+  const nearInteractable = Boolean(
+    me &&
+      (snapshot.props.some(
+        (pr) => !pr.opened && Math.hypot(pr.x - me.x, pr.y - me.y) <= 64
+      ) ||
+        (snapshot.bossDefeated &&
+          Math.hypot(map.portalPos.x - me.x, map.portalPos.y - me.y) <= 68))
+  );
+
+  const handleCopyCode = () => {
+    sfx.playUiClick();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(snapshot.roomId).catch(() => {});
+    }
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 1800);
+  };
+
+  const handleChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatDraft.trim()) return;
+    onSendChat(chatDraft.trim());
+    setChatDraft('');
+  };
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
+  const myDef = me ? HERO_CLASSES[me.heroClass] : HERO_CLASSES.vanguard;
+  const tacSec = me ? Math.ceil(me.skillCooldownMs / 1000) : 0;
+  const ultSec = me ? Math.ceil(me.ultCooldownMs / 1000) : 0;
+
+  // Unified input state ref - prevents keyboard and touch inputs from clobbering each other
+  const unifiedInputRef = useRef<PlayerInputState>({
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    attack: false,
+    aimAngle: 0,
+    stickX: 0,
+    stickY: 0,
+  });
+
+  // Touch gamepad handlers
+  const handleStickMove = (stickX: number, stickY: number, aimAngle?: number) => {
+    const cur = unifiedInputRef.current;
+    cur.stickX = stickX;
+    cur.stickY = stickY;
+    cur.up = stickY < -0.25;
+    cur.down = stickY > 0.25;
+    cur.left = stickX < -0.25;
+    cur.right = stickX > 0.25;
+    if (typeof aimAngle === 'number') {
+      cur.aimAngle = aimAngle;
+    }
+    onSendInput({ ...cur });
+  };
+
+  const handleAttackPress = (pressed: boolean, aimAngle?: number) => {
+    const cur = unifiedInputRef.current;
+    cur.attack = pressed;
+    if (typeof aimAngle === 'number') {
+      cur.aimAngle = aimAngle;
+    }
+    onSendInput({ ...cur });
+  };
+
+  // Keyboard input handler from GameCanvas
+  const handleKeyboardInput = (keys: {
+    up: boolean;
+    down: boolean;
+    left: boolean;
+    right: boolean;
+    attack: boolean;
+    aimAngle: number;
+  }) => {
+    const cur = unifiedInputRef.current;
+    const stickMagnitude = Math.hypot(cur.stickX || 0, cur.stickY || 0);
+    // If touch joystick is not currently held, keyboard controls the movement
+    if (stickMagnitude < 0.1) {
+      cur.up = keys.up;
+      cur.down = keys.down;
+      cur.left = keys.left;
+      cur.right = keys.right;
+      cur.stickX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+      cur.stickY = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+    }
+    cur.attack = keys.attack;
+    cur.aimAngle = keys.aimAngle;
+    onSendInput({ ...cur });
+  };
+
+  return (
+    <div className="relative w-screen h-screen overflow-hidden select-none bg-[#111219] touch-none">
+      {/* 60 FPS Pixel-Art Canvas */}
+      <GameCanvas
+        playerId={playerId}
+        map={map}
+        latestSnapshotRef={latestSnapshotRef}
+        onSendKeyboardInput={handleKeyboardInput}
+        onTriggerAction={onTriggerAction}
+        onSendPing={onSendPing}
+        chatFocused={chatFocused}
+      />
+
+      {/* Top Header HUD */}
+      <header className="pointer-events-none fixed top-0 inset-x-0 z-10 flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-b from-[#111219]/90 to-transparent">
+        {/* Left: Floor, Biome, Seed */}
+        <div className="pointer-events-auto flex items-center gap-2 text-xs sm:text-sm font-mono tabular-nums text-[#D4D2E0]">
+          <span className="font-display text-sm sm:text-base text-white font-semibold whitespace-nowrap truncate max-w-[150px] sm:max-w-none">
+            Floor {snapshot.floor}: {map.biomeTitle.split(' ')[0]}
+          </span>
+          <span aria-hidden="true" className="text-[#78768A]">
+            ·
+          </span>
+          <span className="hidden sm:inline">{snapshot.difficulty}</span>
+          <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">
+            ·
+          </span>
+          <span>{formatTime(snapshot.elapsedSec)}</span>
+        </div>
+
+        {/* Right: Room Code, Chat & Menu */}
+        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5">
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            title="Copy Party Code"
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] font-mono text-xs text-[#F3F2F8] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+          >
+            {copiedCode ? 'Copied!' : snapshot.roomId}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              setChatOpen((v) => !v);
+            }}
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#6E6C88] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+          >
+            Chat ({chatMessages.length})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              setTouchSettingsOpen(true);
+            }}
+            title="Configure Joystick & Touch Controls"
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1"
+          >
+            <span className="text-[#F4D378] text-[11px]">⚙️</span>
+            <span>Touch</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const nextMuted = sfx.toggleMute();
+              setIsMuted(nextMuted);
+              if (!nextMuted) sfx.playUiClick('confirm');
+            }}
+            title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+            aria-label={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1"
+          >
+            <span>{isMuted ? '🔇' : '🔊'}</span>
+            <span className="hidden sm:inline">{isMuted ? 'Muted' : 'SFX'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              setPauseOpen((v) => !v);
+            }}
+            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#6E6C88] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+          >
+            Menu
+          </button>
+        </div>
+      </header>
+
+      {/* Boss Health Bar */}
+      {boss && (() => {
+        const isCatacombs = map.biome === 'catacombs' || snapshot.floor === 2;
+        const isEmber = map.biome === 'ember' || snapshot.floor >= 3;
+        const hpPct = Math.max(0, Math.min(100, (boss.hp / Math.max(1, boss.maxHp)) * 100));
+
+        const theme = isCatacombs
+          ? {
+              border: 'border-[#7C3AED]',
+              bg: 'bg-[#221338]/95',
+              barTrack: 'bg-[#281742]',
+              barFill: 'bg-gradient-to-r from-[#7C3AED] via-[#A855F7] to-[#22D3EE]',
+              titleColor: 'text-[#DDD6FE]',
+              badge: 'ANCIENT ARCHLICH',
+              badgeColor: 'text-[#67E8F9] border-[#0891B2]',
+            }
+          : isEmber
+            ? {
+                border: 'border-[#EA580C]',
+                bg: 'bg-[#2B1410]/95',
+                barTrack: 'bg-[#3A1810]',
+                barFill: 'bg-gradient-to-r from-[#DC2626] via-[#EA580C] to-[#FACC15]',
+                titleColor: 'text-[#FED7AA]',
+                badge: 'CINDER SOVEREIGN',
+                badgeColor: 'text-[#FEF08A] border-[#D97706]',
+              }
+            : {
+                border: 'border-[#6E2932]',
+                bg: 'bg-[#191822]/95',
+                barTrack: 'bg-[#2A171B]',
+                barFill: 'bg-[#DC2626]',
+                titleColor: 'text-[#FCA5A5]',
+                badge: 'WARDEN KNIGHT',
+                badgeColor: 'text-[#FDE68A] border-[#B45309]',
+              };
+
+        return (
+          <div
+            className={`pointer-events-none fixed top-12 sm:top-14 left-1/2 -translate-x-1/2 z-10 w-[min(410px,92vw)] ${theme.bg} border ${theme.border} px-3 py-1.5 sm:px-4 sm:py-2 shadow-2xl backdrop-blur-xs`}
+          >
+            <div className="flex items-center justify-between gap-2 text-xs font-mono tabular-nums mb-1">
+              <div className="flex items-center gap-1.5 truncate">
+                <span className={`font-display text-xs sm:text-sm font-semibold truncate ${theme.titleColor}`}>
+                  {boss.name}
+                </span>
+                <span
+                  className={`text-[9px] px-1 py-0.2 border font-mono tracking-wider shrink-0 hidden sm:inline ${theme.badgeColor}`}
+                >
+                  {theme.badge}
+                </span>
+              </div>
+              <span className="text-[#FECACA] text-[11px] sm:text-xs shrink-0 font-medium">
+                HP {boss.hp}/{boss.maxHp}
+              </span>
+            </div>
+            <div className={`w-full h-2 sm:h-2.5 ${theme.barTrack} overflow-hidden`}>
+              <div
+                style={{ width: `${hpPct}%` }}
+                className={`h-full ${theme.barFill} transition-all duration-150`}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Left Co-op Party Stack */}
+      <aside className="pointer-events-none fixed top-14 sm:top-16 left-3 sm:left-5 z-10 space-y-1.5 sm:space-y-2 w-44 sm:w-56">
+        {snapshot.players.map((p) => {
+          const cDef = HERO_CLASSES[p.heroClass];
+          const hpPct = Math.max(0, Math.min(100, (p.hp / Math.max(1, p.maxHp)) * 100));
+          return (
+            <div
+              key={p.id}
+              className="bg-[#1A1A24]/90 border border-[#323044] px-2.5 py-1.5 sm:px-3 sm:py-2 space-y-1"
+            >
+              <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs">
+                <span className="font-display text-xs sm:text-sm text-white truncate">
+                  {p.username} {p.id === playerId ? '(You)' : ''}
+                </span>
+                <span className="font-mono text-[10px] text-[#B3B1C4] tabular-nums whitespace-nowrap">
+                  {cDef.name}
+                </span>
+              </div>
+
+              <div className="w-full h-1.5 sm:h-2 bg-[#2B2A38] overflow-hidden">
+                <div
+                  style={{ width: `${hpPct}%` }}
+                  className={`h-full ${
+                    p.downed
+                      ? 'bg-[#64748B]'
+                      : hpPct <= 30
+                        ? 'bg-[#EF4444]'
+                        : 'bg-[#22C55E]'
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono tabular-nums text-[#C9C7D8]">
+                <span>
+                  HP {p.hp}/{p.maxHp}
+                  {p.shield > 0 ? ` (+${p.shield})` : ''}
+                </span>
+                <span>{p.downed ? 'DOWN' : `${Math.round(hpPct)}%`}</span>
+              </div>
+            </div>
+          );
+        })}
+      </aside>
+
+      {/* MOBILE ON-SCREEN TOUCH GAMEPAD (Virtual Joystick + Action Cluster) */}
+      {me && (isTouchDevice || forceTouchGamepad) && (
+        <TouchControls
+          player={me}
+          enemies={snapshot.enemies}
+          nearInteractable={nearInteractable}
+          onStickMove={handleStickMove}
+          onAttackPress={handleAttackPress}
+          onTriggerAction={onTriggerAction}
+          onSendPing={onSendPing}
+          settings={touchSettings}
+          onOpenSettings={() => setTouchSettingsOpen(true)}
+        />
+      )}
+
+      {/* DESKTOP KEYBOARD / MOUSE ACTION BAR (Visible when touch gamepad is not active or on wide screens) */}
+      {me && !(isTouchDevice || forceTouchGamepad) && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-10 hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-[#1B1B26]/95 border border-[#38364C]">
+          <div className="px-3 py-1.5 bg-[#252433] border border-[#3C3A52] text-left min-w-[100px]">
+            <div className="text-[10px] font-mono text-[#9E9CAE]">[LMB / Space]</div>
+            <div className="font-display text-sm text-white whitespace-nowrap">
+              Attack
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onTriggerAction('tactical', me.aimAngle)}
+            className={`px-3 py-1.5 border text-left min-w-[120px] transition-colors cursor-pointer ${
+              tacSec > 0
+                ? 'bg-[#1D1C28] border-[#2E2D3E] text-[#7D7B8E]'
+                : 'bg-[#282738] border-[#595678] hover:border-[#D9AA52] text-white'
+            }`}
+          >
+            <div className="flex justify-between text-[10px] font-mono tabular-nums">
+              <span>[Q / RMB]</span>
+              <span>{tacSec > 0 ? `${tacSec}s` : 'READY'}</span>
+            </div>
+            <div className="font-display text-sm whitespace-nowrap">
+              {myDef.tacticalName}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTriggerAction('ult', me.aimAngle)}
+            className={`px-3 py-1.5 border text-left min-w-[120px] transition-colors cursor-pointer ${
+              ultSec > 0
+                ? 'bg-[#1D1C28] border-[#2E2D3E] text-[#7D7B8E]'
+                : 'bg-[#2C2836] border-[#8A6D3B] hover:border-[#F4D378] text-[#FDE68A]'
+            }`}
+          >
+            <div className="flex justify-between text-[10px] font-mono tabular-nums">
+              <span>[R / Shift]</span>
+              <span>{ultSec > 0 ? `${ultSec}s` : 'READY'}</span>
+            </div>
+            <div className="font-display text-sm whitespace-nowrap">
+              {myDef.ultName}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playHeal();
+              onTriggerAction('potion', me.aimAngle);
+            }}
+            className="px-3 py-1.5 bg-[#281E24] border border-[#6E3642] hover:border-[#F87171] text-left cursor-pointer"
+          >
+            <div className="text-[10px] font-mono tabular-nums text-[#FCA5A5]">
+              [H] Flasks: {me.potions}
+            </div>
+            <div className="font-display text-sm text-white whitespace-nowrap">
+              Heal
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              onTriggerAction('interact', me.aimAngle);
+            }}
+            className="px-3 py-1.5 bg-[#232832] border border-[#44566C] hover:border-[#93C5FD] text-left cursor-pointer"
+          >
+            <div className="text-[10px] font-mono text-[#BAE6FD]">[E] Action</div>
+            <div className="font-display text-sm text-white whitespace-nowrap">
+              Interact
+            </div>
+          </button>
+
+          <div className="px-3 py-1 font-mono text-xs tabular-nums text-[#E5E3F0]">
+            <div className="text-[#F4D378]">{me.gold} Gold</div>
+            <div className="text-[#A5A3B8]">{me.relics.length} Relics</div>
+          </div>
+        </div>
+      )}
+
+      {/* Party Chat Drawer */}
+      {chatOpen && (
+        <section className="fixed bottom-24 right-4 sm:right-6 z-30 w-72 sm:w-80 bg-[#1B1B26]/96 border border-[#38364C] flex flex-col shadow-2xl">
+          <div className="px-3 py-2 border-b border-[#2D2C3D] flex items-center justify-between">
+            <span className="font-display text-sm text-white">Party Chat</span>
+            <button
+              type="button"
+              onClick={() => setChatOpen(false)}
+              className="text-xs text-[#9E9CAE] hover:text-white cursor-pointer min-h-[36px] flex items-center px-2"
+            >
+              Close
+            </button>
+          </div>
+          <div className="h-40 overflow-y-auto p-2.5 space-y-1.5 text-xs">
+            {chatMessages.map((m) => (
+              <div key={m.id} className="leading-snug">
+                <span
+                  className={`font-semibold ${
+                    m.system ? 'text-[#D9AA52]' : 'text-[#93C5FD]'
+                  }`}
+                >
+                  {m.sender}:
+                </span>{' '}
+                <span className="text-[#E6E4EE]">{m.text}</span>
+              </div>
+            ))}
+          </div>
+          <form
+            onSubmit={handleChatSubmit}
+            className="p-2 border-t border-[#2D2C3D] flex gap-1.5"
+          >
+            <input
+              type="text"
+              value={chatDraft}
+              onFocus={() => setChatFocused(true)}
+              onBlur={() => setChatFocused(false)}
+              onChange={(e) => setChatDraft(e.target.value)}
+              placeholder="Party message..."
+              maxLength={140}
+              className="flex-1 px-2.5 py-1.5 bg-[#13131B] border border-[#323044] text-xs text-white focus:outline-none focus:border-[#D9AA52]"
+            />
+            <button
+              type="submit"
+              className="px-3 py-1.5 bg-[#313044] hover:bg-[#413F59] text-xs font-semibold text-white cursor-pointer whitespace-nowrap min-h-[36px]"
+            >
+              Send
+            </button>
+          </form>
+        </section>
+      )}
+
+      {/* Relic Draft Modal */}
+      {me && me.pendingRelicChoices.length > 0 && snapshot.status === 'playing' && (
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="stone-panel max-w-xl w-full p-5 sm:p-7 space-y-5 my-auto">
+            <div className="text-center space-y-1">
+              <h2 className="font-display text-xl sm:text-2xl text-white">
+                Choose an Ancient Relic
+              </h2>
+              <p className="text-xs sm:text-sm text-[#D0CEDB]">
+                Select one permanent boon for your party expedition.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {me.pendingRelicChoices.map((rid) => {
+                const relic = RELIC_CATALOG.find((r) => r.id === rid);
+                if (!relic) return null;
+                return (
+                  <button
+                    key={rid}
+                    type="button"
+                    onClick={() => {
+                      sfx.playRelicChime();
+                      onSelectRelic(rid);
+                    }}
+                    className="p-3.5 bg-[#3B3944] hover:bg-[#474553] border-2 border-[#2B2933] hover:border-[#F4D378] text-left flex flex-col justify-between gap-3 transition-colors cursor-pointer min-h-[110px]"
+                  >
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-mono text-[#BDBBC9]">
+                        {relic.category}
+                      </div>
+                      <div
+                        style={{ color: relic.accent }}
+                        className="font-display text-base font-semibold"
+                      >
+                        {relic.name}
+                      </div>
+                      <p className="text-xs text-[#E8E6F2] leading-relaxed">
+                        {relic.summary}
+                      </p>
+                    </div>
+                    <span className="font-display text-xs text-white underline">
+                      Claim
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Menu / Settings */}
+      {pauseOpen && snapshot.status === 'playing' && (
+        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4">
+          <div className="stone-panel max-w-md w-full p-5 sm:p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-xl text-white">Expedition Menu</h2>
+              <button
+                type="button"
+                onClick={() => setPauseOpen(false)}
+                className="text-xs text-[#D4D2DC] hover:text-white cursor-pointer min-h-[36px] flex items-center px-2"
+              >
+                Resume
+              </button>
+            </div>
+
+            {/* Touchpad Toggle for testing or preference */}
+            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
+              <span className="text-xs text-[#E2E0EC]">Touch Gamepad:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick('toggle');
+                  setIsTouchDevice((v) => !v);
+                }}
+                className="px-3 py-1 bg-[#474554] border border-[#5E5C6E] text-xs font-mono text-white cursor-pointer min-h-[36px]"
+              >
+                {isTouchDevice ? 'ENABLED' : 'DISABLED'}
+              </button>
+            </div>
+
+            {/* Audio SFX Toggle */}
+            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
+              <span className="text-xs text-[#E2E0EC]">Sound Effects (SFX):</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const nextMuted = sfx.toggleMute();
+                  setIsMuted(nextMuted);
+                  if (!nextMuted) sfx.playUiClick('confirm');
+                }}
+                className={`px-3 py-1 border text-xs font-mono cursor-pointer min-h-[36px] flex items-center gap-1.5 ${
+                  isMuted
+                    ? 'bg-[#3D2528] border-[#8C3A44] text-[#FECACA]'
+                    : 'bg-[#293B33] border-[#4E8B67] text-[#D1FAE5]'
+                }`}
+              >
+                <span>{isMuted ? '🔇 MUTED' : '🔊 ACTIVE'}</span>
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="block text-xs font-medium text-[#D4D2DC]">
+                Switch Hero Class
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.keys(HERO_CLASSES) as HeroClassId[]).map((cid) => {
+                  const c = HERO_CLASSES[cid];
+                  const active = me?.heroClass === cid;
+                  return (
+                    <button
+                      key={cid}
+                      type="button"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        onChangeClass(cid);
+                      }}
+                      className={`py-2 px-3 font-display text-xs sm:text-sm border cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center ${
+                        active
+                          ? 'bg-[#6F6D7C] border-white text-white'
+                          : 'bg-[#3B3942] border-[#2B2933] text-[#C5C3D0] hover:text-white'
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  setTouchSettingsOpen(true);
+                }}
+                className="py-2.5 bg-[#292837] hover:bg-[#363548] border border-[#49475D] font-display text-sm text-[#F3F2F8] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5"
+              >
+                <span>⚙️</span>
+                <span>Touch Controls Setup</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  setPauseOpen(false);
+                }}
+                className="stone-button py-2.5 font-display text-sm text-white cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
+              >
+                Return to Combat
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  onLeaveRoom();
+                }}
+                className="py-2 bg-[#3D2429] hover:bg-[#522E35] border border-[#8E3B46] font-display text-sm text-[#FECACA] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
+              >
+                Leave Party
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Victory / Defeat Modal */}
+      {(snapshot.status === 'victory' || snapshot.status === 'defeat') && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="stone-panel max-w-lg w-full p-5 sm:p-7 space-y-5 my-auto">
+            <div className="text-center space-y-1">
+              <h2
+                className={`font-display text-2xl sm:text-3xl font-bold ${
+                  snapshot.status === 'victory'
+                    ? 'text-[#FDE68A]'
+                    : 'text-[#FCA5A5]'
+                }`}
+              >
+                {snapshot.status === 'victory'
+                  ? 'Victory — Beyond Reclaimed!'
+                  : 'Expedition Fallen'}
+              </h2>
+              <p className="text-xs sm:text-sm text-[#D6D4E2] font-mono tabular-nums">
+                Floor {snapshot.floor} · {snapshot.difficulty} · Seed {snapshot.seed} · {formatTime(snapshot.elapsedSec)}
+              </p>
+            </div>
+
+            <div className="divide-y divide-[#43414E] border border-[#353442] bg-[#3B3942]">
+              {snapshot.players.map((p) => (
+                <div
+                  key={p.id}
+                  className="px-3 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-2 text-xs sm:text-sm font-mono tabular-nums"
+                >
+                  <div className="truncate">
+                    <span className="font-display text-sm sm:text-base text-white">
+                      {p.username}
+                    </span>{' '}
+                    <span className="text-[#B8B6C6]">
+                      · Lv.{p.level} {HERO_CLASSES[p.heroClass].name}
+                    </span>
+                  </div>
+                  <div className="text-[#E6E4F0] whitespace-nowrap text-right">
+                    {p.kills} Kills · {p.revives} Revives
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  onRestartRun();
+                }}
+                className="stone-button px-5 py-2 font-display text-base text-white cursor-pointer whitespace-nowrap min-h-[44px] flex items-center"
+              >
+                Play Again
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  onLeaveRoom();
+                }}
+                className="px-4 py-2 bg-[#3B3942] hover:bg-[#494752] border-2 border-[#2D2B34] font-display text-sm text-[#E6E4F0] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center"
+              >
+                Return to Sanctuary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Touch Controls Setup Modal */}
+      {touchSettingsOpen && (
+        <TouchSettingsModal
+          settings={touchSettings}
+          forceTouchGamepad={forceTouchGamepad}
+          onUpdateSettings={handleUpdateTouchSettings}
+          onToggleForceGamepad={handleToggleForceGamepad}
+          onClose={() => setTouchSettingsOpen(false)}
+        />
+      )}
+    </div>
+  );
+};

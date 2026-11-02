@@ -1,0 +1,6 @@
+{
+  "name": "Beyond — Co-op Roguelike RPG",
+  "description": "A pixel-art multiplayer roguelike dungeon crawler featuring procedurally generated floors, distinct hero classes, relic synergies, and real-time co-op combat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
