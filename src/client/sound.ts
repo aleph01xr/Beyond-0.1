@@ -17,6 +17,13 @@ class RetroAudioEngine {
   private muted = false;
   private masterVolume = 0.85;
 
+  private ambientGain: GainNode | null = null;
+  private ambientSource: AudioBufferSourceNode | null = null;
+  private ambientFilter: BiquadFilterNode | null = null;
+  private ambientActive = false;
+  private ambientOscillators: OscillatorNode[] = [];
+  private musicInterval: number | null = null;
+
   constructor() {
     try {
       const saved = localStorage.getItem('beyond_sfx_muted');
@@ -584,6 +591,253 @@ class RetroAudioEngine {
       osc.start(t);
       osc.stop(t + 0.26);
     });
+  }
+
+  /**
+   * Start low-volume background tavern ambience: crackling fireplace hearth & soft tavern crowd murmurs.
+   */
+  public startTavernAmbience(forceUnmute = false): void {
+    if (forceUnmute) {
+      this.muted = false;
+      try {
+        localStorage.setItem('beyond_sfx_muted', 'false');
+      } catch {
+        // ignore
+      }
+    }
+    if (this.muted) return;
+
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    if (this.ambientActive) return;
+    this.ambientActive = true;
+    const now = ctx.currentTime;
+
+    // Main ambient loop gain with smooth fade in
+    this.ambientGain = ctx.createGain();
+    this.ambientGain.gain.setValueAtTime(0.001, now);
+    this.ambientGain.gain.linearRampToValueAtTime(0.18, now + 0.6);
+    const dest = this.getDestination();
+    if (dest) this.ambientGain.connect(dest);
+
+    // 1. Fireplace Hearth Crackle & Wood Pop Sparks (5-second procedural loop)
+    const sampleRate = ctx.sampleRate;
+    const bufferSize = sampleRate * 5;
+    const buffer = ctx.createBuffer(1, bufferSize, sampleRate);
+    const channelData = buffer.getChannelData(0);
+
+    let lastOut = 0.0;
+    for (let i = 0; i < bufferSize; i++) {
+      // Warm brown noise integration for deep hearth fire rumble
+      const white = Math.random() * 2 - 1;
+      lastOut = (lastOut + 0.03 * white) / 1.03;
+
+      // Crisp wood popping and crackling spark bursts
+      let crackle = 0;
+      const rand = Math.random();
+      if (rand < 0.0018) {
+        crackle = (Math.random() * 2 - 1) * 0.95;
+      } else if (rand < 0.007) {
+        crackle = (Math.random() * 2 - 1) * 0.45;
+      }
+
+      channelData[i] = lastOut * 0.45 + crackle;
+    }
+
+    this.ambientSource = ctx.createBufferSource();
+    this.ambientSource.buffer = buffer;
+    this.ambientSource.loop = true;
+
+    // Cozy Lowpass Filter (580Hz cut-off for crisp, warm hearth crackle)
+    this.ambientFilter = ctx.createBiquadFilter();
+    this.ambientFilter.type = 'lowpass';
+    this.ambientFilter.frequency.setValueAtTime(580, now);
+
+    this.ambientSource.connect(this.ambientFilter);
+    this.ambientFilter.connect(this.ambientGain);
+    this.ambientSource.start(now);
+
+    // 2. Low-volume Distant Tavern Crowd Murmur Chord
+    const chord = [130.81, 164.81, 196.00, 246.94]; // C3, E3, G3, B3
+    this.ambientOscillators = [];
+    chord.forEach((freq, idx) => {
+      if (!ctx || !this.ambientGain) return;
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+
+      // Gentle LFO pitch wobble to emulate distant chatter
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      lfo.frequency.setValueAtTime(0.18 + idx * 0.12, now);
+      lfoGain.gain.setValueAtTime(2.2, now);
+      lfo.connect(osc.frequency);
+      lfo.start(now);
+
+      oscGain.gain.setValueAtTime(0.006, now);
+      osc.connect(oscGain);
+      oscGain.connect(this.ambientGain);
+      osc.start(now);
+
+      this.ambientOscillators.push(osc, lfo);
+    });
+
+    // 3. Jaunty Medieval Tavern Lute & Flute Folk Music Loop
+    this.startTavernMusic();
+  }
+
+  /**
+   * Synthesize soothing 8-bar fantasy tavern harp & lute music with acoustic hall filtering.
+   */
+  public startTavernMusic(): void {
+    if (this.musicInterval !== null) return;
+
+    // Rich Pentatonic Chord Progressions (Am7 -> Fmaj7 -> Cmaj7 -> G6)
+    const acousticChords = [
+      [220.0, 261.63, 329.63, 392.0],   // Am7 (A3, C4, E4, G4)
+      [174.61, 220.0, 261.63, 329.63],  // Fmaj7 (F3, A3, C4, E4)
+      [130.81, 164.81, 196.0, 246.94],  // Cmaj7 (C3, E3, G3, B3)
+      [196.0, 246.94, 293.66, 349.23],  // G6 (G3, B3, D4, F4)
+    ];
+
+    // Soothing Lyrical Fantasy Melody (6 seconds per phrase)
+    const melodyPhrases = [
+      [
+        { note: 440.0, dur: 0.6, delay: 0.0 },   // A4
+        { note: 523.25, dur: 0.5, delay: 0.6 },  // C5
+        { note: 659.25, dur: 0.9, delay: 1.1 },  // E5
+        { note: 587.33, dur: 0.5, delay: 2.0 },  // D5
+        { note: 523.25, dur: 0.8, delay: 2.5 },  // C5
+        { note: 440.0, dur: 1.1, delay: 3.3 },   // A4
+        { note: 392.0, dur: 0.6, delay: 4.4 },   // G4
+        { note: 440.0, dur: 1.0, delay: 5.0 },   // A4
+      ],
+      [
+        { note: 659.25, dur: 0.7, delay: 0.0 },  // E5
+        { note: 698.46, dur: 0.5, delay: 0.7 },  // F5
+        { note: 659.25, dur: 0.8, delay: 1.2 },  // E5
+        { note: 587.33, dur: 0.6, delay: 2.0 },  // D5
+        { note: 523.25, dur: 0.9, delay: 2.6 },  // C5
+        { note: 493.88, dur: 0.6, delay: 3.5 },  // B4
+        { note: 440.0, dur: 0.8, delay: 4.1 },   // A4
+        { note: 523.25, dur: 1.0, delay: 4.9 },  // C5
+      ],
+    ];
+
+    let phraseIdx = 0;
+    const playTavernBar = () => {
+      if (!this.ambientActive || this.muted) return;
+      const ctx = this.ensureContext();
+      if (!ctx || ctx.state === 'suspended') return;
+      const now = ctx.currentTime;
+
+      // Acoustic Reverb Bus Filter (Lowpass at 750Hz removes digital harshness)
+      const busFilter = ctx.createBiquadFilter();
+      busFilter.type = 'lowpass';
+      busFilter.frequency.setValueAtTime(750, now);
+
+      const busGain = ctx.createGain();
+      busGain.gain.setValueAtTime(0.065, now);
+
+      const dest = this.getDestination() || ctx.destination;
+      busFilter.connect(busGain);
+      busGain.connect(dest);
+
+      // Plucked Acoustic Lute Arpeggio (Warm Triangle + Soft Attack)
+      const chord = acousticChords[phraseIdx % acousticChords.length];
+      const melody = melodyPhrases[phraseIdx % melodyPhrases.length];
+      phraseIdx++;
+
+      chord.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const noteGain = ctx.createGain();
+        osc.type = 'triangle';
+        const t = now + idx * 0.28;
+        osc.frequency.setValueAtTime(freq, t);
+
+        // Soft acoustic string envelope
+        noteGain.gain.setValueAtTime(0.001, t);
+        noteGain.gain.linearRampToValueAtTime(0.35, t + 0.06);
+        noteGain.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
+
+        osc.connect(noteGain);
+        noteGain.connect(busFilter);
+        osc.start(t);
+        osc.stop(t + 1.85);
+      });
+
+      // Lyrical Flute / Whistle Melody
+      melody.forEach((m) => {
+        const osc = ctx.createOscillator();
+        const noteGain = ctx.createGain();
+        osc.type = 'sine';
+        const t = now + m.delay;
+        osc.frequency.setValueAtTime(m.note, t);
+
+        // Gentle breath vibrato
+        const vib = ctx.createOscillator();
+        const vibGain = ctx.createGain();
+        vib.frequency.setValueAtTime(4.8, t);
+        vibGain.gain.setValueAtTime(3.5, t);
+        vib.connect(osc.frequency);
+        vib.start(t);
+        vib.stop(t + m.dur);
+
+        noteGain.gain.setValueAtTime(0.001, t);
+        noteGain.gain.linearRampToValueAtTime(0.28, t + 0.08);
+        noteGain.gain.exponentialRampToValueAtTime(0.001, t + m.dur + 0.1);
+
+        osc.connect(noteGain);
+        noteGain.connect(busFilter);
+        osc.start(t);
+        osc.stop(t + m.dur + 0.15);
+      });
+    };
+
+    playTavernBar();
+    this.musicInterval = window.setInterval(playTavernBar, 6000);
+  }
+
+  /**
+   * Smoothly fade out and stop tavern ambience and music.
+   */
+  public stopTavernAmbience(): void {
+    if (this.musicInterval !== null) {
+      clearInterval(this.musicInterval);
+      this.musicInterval = null;
+    }
+
+    if (!this.ambientActive) return;
+    this.ambientActive = false;
+    if (this.ambientGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.ambientGain.gain.setValueAtTime(this.ambientGain.gain.value, now);
+      this.ambientGain.gain.linearRampToValueAtTime(0.001, now + 0.8);
+      setTimeout(() => {
+        if (this.ambientSource) {
+          try {
+            this.ambientSource.stop();
+          } catch {
+            // ignore
+          }
+          this.ambientSource = null;
+        }
+        for (const osc of this.ambientOscillators) {
+          try {
+            osc.stop();
+          } catch {
+            // ignore
+          }
+        }
+        this.ambientOscillators = [];
+        this.ambientGain = null;
+      }, 850);
+    }
   }
 }
 

@@ -8,6 +8,7 @@ import {
   type RoomSummary,
   type UserProfile,
 } from '../shared/types.ts';
+import { PixelHeroPreview } from './PixelHeroPreview.tsx';
 
 interface SanctuaryLobbyProps {
   user: UserProfile;
@@ -28,8 +29,6 @@ interface SanctuaryLobbyProps {
 
 type LobbyTab = 'expeditions' | 'classes' | 'codex' | 'controls';
 
-import { PixelHeroPreview } from './PixelHeroPreview.tsx';
-
 export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   user,
   rooms,
@@ -48,6 +47,24 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [muted, setMuted] = useState(() => sfx.isMuted());
   const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
+
+  useEffect(() => {
+    sfx.startTavernAmbience();
+
+    const handleFirstUserGesture = () => {
+      sfx.unlockAudio();
+      sfx.startTavernAmbience();
+    };
+
+    window.addEventListener('pointerdown', handleFirstUserGesture, { once: true });
+    window.addEventListener('keydown', handleFirstUserGesture, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstUserGesture);
+      window.removeEventListener('keydown', handleFirstUserGesture);
+      sfx.stopTavernAmbience();
+    };
+  }, []);
 
   const handleQuickStart = () => {
     sfx.playUiClick();
@@ -82,6 +99,11 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
     if (!joinCode.trim()) return;
     sfx.playUiClick();
     onJoinRoom(joinCode.trim().toUpperCase(), selectedClass);
+  };
+
+  const handleEnterTavern = () => {
+    sfx.playUiClick();
+    onJoinRoom('TAVERN-HUB', selectedClass);
   };
 
   const currentClassDef = HERO_CLASSES[selectedClass];
@@ -129,7 +151,14 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
           ))}
         </nav>
 
-        <div className="flex items-center shrink-0">
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={handleEnterTavern}
+            className="px-3.5 py-1.5 sm:px-4 sm:py-2 bg-[#2D231C] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-display text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center gap-1.5"
+          >
+            <span>🍻</span> Tavern Hub
+          </button>
           <button
             type="button"
             onClick={handleQuickStart}
@@ -169,12 +198,19 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             <button
               type="button"
               onClick={() => {
-                const next = sfx.toggleMute();
-                setMuted(next);
+                sfx.unlockAudio();
+                if (muted) {
+                  sfx.startTavernAmbience(true);
+                  setMuted(false);
+                } else {
+                  sfx.stopTavernAmbience();
+                  sfx.toggleMute();
+                  setMuted(true);
+                }
               }}
-              className="px-3 py-1.5 bg-[#23222E] border border-[#353445] hover:border-[#57556D] text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center"
+              className="px-3.5 py-1.5 bg-[#2B2119] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
             >
-              Audio: {muted ? 'Muted' : 'On'}
+              <span>🔥</span> Hearth Ambience: {muted ? 'Off' : 'On'}
             </button>
             <button
               type="button"
@@ -200,7 +236,33 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
         {/* TAB 1: EXPEDITIONS */}
         {activeTab === 'expeditions' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="space-y-8">
+            {/* Tavern Banner Card */}
+            <div className="p-6 sm:p-7 bg-gradient-to-r from-[#2A231C] via-[#22202B] to-[#1D1C26] border-2 border-[#D9AA52] flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden">
+              <div className="absolute -right-6 -bottom-6 opacity-10 text-9xl pointer-events-none select-none font-display">
+                🍺
+              </div>
+              <div className="space-y-2 text-center md:text-left z-10">
+                <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs font-semibold">
+                  <span>🍻</span> Multiplayer Social Hub
+                </div>
+                <h2 className="font-display text-2xl sm:text-3xl font-bold text-white">
+                  Sanctuary Tavern & Training Ground
+                </h2>
+                <p className="text-xs sm:text-sm text-[#BDBACF] max-w-3xl leading-relaxed">
+                  Step inside the warm hearth of the Tavern! Meet fellow adventurers, chat in real-time, interact with NPCs (Innkeeper Bram, Barkeep Lena, Veteran Jorah), and test your skills and weapons against training dummies.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleEnterTavern}
+                className="stone-button px-6 py-3.5 font-display text-base text-white whitespace-nowrap shrink-0 cursor-pointer min-h-[50px] flex items-center justify-center z-10 shadow-lg"
+              >
+                Enter Tavern Hub
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             {/* Active Parties */}
             <section className="lg:col-span-7 space-y-6">
               <div className="flex flex-wrap items-end justify-between gap-4">
@@ -432,6 +494,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               </form>
             </section>
           </div>
+         </div>
         )}
 
         {/* TAB 2: HERO SANCTUM & CODEX */}

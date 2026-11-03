@@ -88,6 +88,30 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     return () => window.removeEventListener('touchstart', checkTouch);
   }, []);
 
+  // Tavern Ambience & Medieval Music when playing inside Floor 0 (Tavern Hub)
+  useEffect(() => {
+    const isTavernFloor = map.floor === 0 || snapshot.floor === 0;
+    if (isTavernFloor) {
+      sfx.unlockAudio();
+      sfx.startTavernAmbience();
+
+      const handleTavernClick = () => {
+        sfx.unlockAudio();
+        sfx.startTavernAmbience();
+      };
+      window.addEventListener('pointerdown', handleTavernClick, { once: true });
+      window.addEventListener('keydown', handleTavernClick, { once: true });
+
+      return () => {
+        window.removeEventListener('pointerdown', handleTavernClick);
+        window.removeEventListener('keydown', handleTavernClick);
+        sfx.stopTavernAmbience();
+      };
+    } else {
+      sfx.stopTavernAmbience();
+    }
+  }, [map.floor, snapshot.floor]);
+
   const handleUpdateTouchSettings = (newSettings: TouchSettings) => {
     setTouchSettings(newSettings);
     saveTouchSettings(newSettings);
@@ -792,6 +816,45 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Animated CSS Sprite NPC Dialogue Banner */}
+      {(() => {
+        const speakingNpc = snapshot.npcs?.find((n) => (n.speakingMs ?? 0) > 0);
+        if (!speakingNpc) return null;
+        const isBram = speakingNpc.id === 'npc_bram';
+        const isLena = speakingNpc.id === 'npc_lena';
+        const avatarEmoji = isBram ? '🍺' : isLena ? '🍻' : '⚔️';
+        const roleLabel = isBram
+          ? 'Innkeeper & Host'
+          : isLena
+            ? 'Meadmaster & Strategist'
+            : 'Mercenary Commander';
+
+        return (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 bg-[#1B1A24]/95 border-2 border-[#D9AA52] shadow-2xl flex items-start gap-4 transition-all">
+            <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded bg-[#2D231C] border border-[#D9AA52] flex items-center justify-center text-2xl sm:text-3xl relative overflow-hidden shadow-inner">
+              <span className="animate-bounce">{avatarEmoji}</span>
+              <span className="absolute bottom-0 inset-x-0 h-1.5 bg-[#FCD34D] animate-ping" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-display font-bold text-sm sm:text-base text-[#FCD34D] flex items-center gap-1.5">
+                  {speakingNpc.name}
+                  <span className="text-xs font-mono text-[#BDBACF] font-normal">
+                    · {roleLabel}
+                  </span>
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 bg-[#D9AA52]/20 text-[#FDE68A] border border-[#D9AA52]/40 animate-pulse">
+                  SPEAKING
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-[#F1F5F9] font-sans leading-relaxed italic">
+                "{speakingNpc.dialogue}"
+              </p>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Victory / Defeat Modal */}
       {(snapshot.status === 'victory' || snapshot.status === 'defeat') && (

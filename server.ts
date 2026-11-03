@@ -243,7 +243,9 @@ function sendJson(ws: WebSocket, msg: ServerMessage): void {
 }
 
 function broadcastRoomList(): void {
-  const summaries = Array.from(rooms.values()).map((r) => r.getSummary());
+  const summaries = Array.from(rooms.values())
+    .filter((r) => r.roomId !== 'TAVERN-HUB')
+    .map((r) => r.getSummary());
   const payload: ServerMessage = {
     type: 'lobby:rooms',
     rooms: summaries,
@@ -329,6 +331,15 @@ function leaveCurrentRoom(client: ConnectedClient): void {
 
 async function startServer() {
   await initStorage();
+
+  const tavernRoom = new GameRoom({
+    roomId: 'TAVERN-HUB',
+    name: 'Sanctuary Tavern & Social Hub',
+    hostName: 'Innkeeper',
+    difficulty: 'Normal',
+    seed: 777,
+  });
+  rooms.set('TAVERN-HUB', tavernRoom);
 
   const app = express();
   app.use(express.json());
@@ -602,7 +613,17 @@ async function startServer() {
 
       if (msg.type === 'room:join') {
         const normalizedCode = msg.roomId.trim().toUpperCase();
-        const room = rooms.get(normalizedCode);
+        let room = rooms.get(normalizedCode);
+        if (!room && normalizedCode === 'TAVERN-HUB') {
+          room = new GameRoom({
+            roomId: 'TAVERN-HUB',
+            name: 'Sanctuary Tavern & Social Hub',
+            hostName: 'Innkeeper',
+            difficulty: 'Normal',
+            seed: 777,
+          });
+          rooms.set('TAVERN-HUB', room);
+        }
         if (!room) {
           sendJson(ws, {
             type: 'error',

@@ -1,9 +1,27 @@
 import React, { useEffect, useRef } from 'react';
+import { drawEnhancedProjectile, ParticleManager } from '../client/canvasEffects.ts';
+import {
+  drawDungeonPortal,
+  drawDungeonProp,
+  drawMysticShrine,
+  drawNpc,
+  drawRelicVault,
+  drawTavernDecorations,
+  drawTrainingDummy,
+} from '../client/dungeonDecorations.ts';
+import {
+  drawCultistSprite,
+  drawGoblinSprite,
+  drawKnightSprite,
+  drawSkeletonSprite,
+  drawSlimeSprite,
+} from '../client/enemySprites.ts';
 import { sfx } from '../client/sound.ts';
 import {
   HERO_CLASSES,
   TILE_SIZE,
   type DungeonMap,
+  type EnemyKind,
   type FloatingEvent,
   type GameSnapshot,
   type PlayerInputState,
@@ -72,8 +90,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
 
-    const palette =
-      map.biome === 'courtyard'
+    const isTavern = map.floor === 0;
+
+    const palette = isTavern
+      ? {
+          voidBg: '#1A0F0A',
+          floorA: '#5C3A21',
+          floorB: '#4E3019',
+          moss: '#734A2C',
+          wallTop: '#5A3824',
+          wallFace: '#382216',
+          pillar: '#4A2C1A',
+        }
+      : map.biome === 'courtyard'
         ? {
             voidBg: '#12131A',
             floorA: '#3A3E4A',
@@ -114,42 +143,136 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const py = ty * TILE_SIZE;
         const hash = ((tx * 73856093) ^ (ty * 19349663)) >>> 0;
 
-        if (code === 1 || code === 5) {
-          ctx.fillStyle = (tx + ty) % 2 === 0 ? palette.floorA : palette.floorB;
-          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+        if (isTavern) {
+          if (code === 1) {
+            // Polished Oak Wooden Planks
+            ctx.fillStyle = (ty % 2 === 0) ? '#5C3A21' : '#52331C';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
 
-          ctx.fillStyle = 'rgba(0,0,0,0.16)';
-          ctx.fillRect(px, py + TILE_SIZE - 2, TILE_SIZE, 2);
-          ctx.fillRect(px + TILE_SIZE - 2, py, 2, TILE_SIZE);
+            // Horizontal plank division lines
+            ctx.fillStyle = '#382011';
+            ctx.fillRect(px, py + 15, TILE_SIZE, 1);
+            ctx.fillRect(px, py + 31, TILE_SIZE, 1);
 
-          if (hash % 11 === 0) {
-            ctx.fillStyle = palette.moss;
-            ctx.fillRect(px + 4, py + 4, 8, 6);
-            ctx.fillRect(px + 8, py + 8, 6, 4);
-          } else if (hash % 7 === 0) {
-            ctx.fillStyle = 'rgba(255,255,255,0.05)';
-            ctx.fillRect(px + 6, py + 6, 10, 4);
+            // Staggered vertical plank joints
+            const jointOffset = (ty % 2 === 0) ? 12 : 24;
+            ctx.fillRect(px + jointOffset, py, 1, 15);
+            ctx.fillRect(px + ((jointOffset + 16) % 32), py + 16, 1, 16);
+
+            // Wood grain highlights
+            ctx.fillStyle = '#734A2C';
+            ctx.fillRect(px + 4, py + 4, 12, 1);
+            ctx.fillRect(px + 18, py + 20, 8, 1);
+
+            // Brass nails at plank ends
+            ctx.fillStyle = '#967246';
+            ctx.fillRect(px + jointOffset - 2, py + 2, 1.5, 1.5);
+            ctx.fillRect(px + jointOffset - 2, py + 13, 1.5, 1.5);
+          } else if (code === 4) {
+            // Royal Red Velvet Woven Carpet
+            ctx.fillStyle = '#8B1D1D';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+
+            // Diamond weave texture
+            ctx.fillStyle = '#6B1212';
+            ctx.fillRect(px + 4, py + 4, 8, 8);
+            ctx.fillRect(px + 20, py + 20, 8, 8);
+            ctx.fillRect(px + 20, py + 4, 8, 8);
+            ctx.fillRect(px + 4, py + 20, 8, 8);
+
+            // Gold fringe & border
+            ctx.fillStyle = '#D97706';
+            if (ty === 14) ctx.fillRect(px, py, TILE_SIZE, 3);
+            if (ty === 21) ctx.fillRect(px, py + 29, TILE_SIZE, 3);
+            if (tx === 14) ctx.fillRect(px, py, 3, TILE_SIZE);
+            if (tx === 28) ctx.fillRect(px + 29, py, 3, TILE_SIZE);
+          } else if (code === 5) {
+            // Fireplace Cobblestone Hearth Floor
+            ctx.fillStyle = '#484441';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+
+            // Flagstone seams
+            ctx.fillStyle = '#2C2927';
+            ctx.fillRect(px, py + 15, TILE_SIZE, 2);
+            ctx.fillRect(px + 15, py, 2, TILE_SIZE);
+
+            // Warm hearth ember specks
+            ctx.fillStyle = '#D97706';
+            if (hash % 5 === 0) ctx.fillRect(px + 6, py + 6, 2, 2);
+            if (hash % 3 === 0) ctx.fillRect(px + 22, py + 18, 2, 2);
+          } else if (code === 6) {
+            // Training Grounds Sand & Dirt Ring
+            ctx.fillStyle = '#755437';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = '#8C6544';
+            if (hash % 4 === 0) ctx.fillRect(px + 4, py + 8, 4, 4);
+            if (hash % 7 === 0) ctx.fillRect(px + 18, py + 20, 5, 3);
+          } else if (code === 2) {
+            // Timber-Framed Oak Wall
+            ctx.fillStyle = '#382216';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = '#5A3824';
+            ctx.fillRect(px, py, TILE_SIZE, 8);
+            ctx.fillStyle = '#24140B';
+            ctx.fillRect(px, py + 24, TILE_SIZE, 8);
+            ctx.fillStyle = '#D97706';
+            if (hash % 6 === 0) {
+              // Brass wall sconce mounting
+              ctx.fillRect(px + 14, py + 12, 4, 6);
+              ctx.fillStyle = '#FBBF24';
+              ctx.fillRect(px + 13, py + 8, 6, 4);
+            }
+          } else if (code === 3) {
+            // Heavy Oak Support Post with Iron Straps
+            ctx.fillStyle = '#5C3A21';
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = '#4A2C1A';
+            ctx.fillRect(px + 4, py + 2, TILE_SIZE - 8, TILE_SIZE - 4);
+            // Iron bracket
+            ctx.fillStyle = '#1E242B';
+            ctx.fillRect(px + 2, py + 12, TILE_SIZE - 4, 6);
+            ctx.fillStyle = '#64748B';
+            ctx.fillRect(px + 6, py + 14, 2, 2);
+            ctx.fillRect(px + 24, py + 14, 2, 2);
           }
-        } else if (code === 2) {
-          ctx.fillStyle = palette.wallFace;
-          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-          ctx.fillStyle = palette.wallTop;
-          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE - 8);
-          ctx.fillStyle = 'rgba(255,255,255,0.12)';
-          ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, 3);
-          ctx.fillStyle = 'rgba(0,0,0,0.35)';
-          ctx.fillRect(px, py + TILE_SIZE - 3, TILE_SIZE, 3);
-        } else if (code === 3) {
-          ctx.fillStyle = palette.floorA;
-          ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
-          ctx.fillStyle = 'rgba(0,0,0,0.35)';
-          ctx.fillRect(px + 3, py + 22, TILE_SIZE - 6, 8);
-          ctx.fillStyle = palette.wallFace;
-          ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 8);
-          ctx.fillStyle = palette.pillar;
-          ctx.fillRect(px + 4, py + 2, TILE_SIZE - 8, 16);
-          ctx.fillStyle = 'rgba(255,255,255,0.18)';
-          ctx.fillRect(px + 6, py + 4, TILE_SIZE - 12, 3);
+        } else {
+          if (code === 1 || code === 5) {
+            ctx.fillStyle = (tx + ty) % 2 === 0 ? palette.floorA : palette.floorB;
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+
+            ctx.fillStyle = 'rgba(0,0,0,0.16)';
+            ctx.fillRect(px, py + TILE_SIZE - 2, TILE_SIZE, 2);
+            ctx.fillRect(px + TILE_SIZE - 2, py, 2, TILE_SIZE);
+
+            if (hash % 11 === 0) {
+              ctx.fillStyle = palette.moss;
+              ctx.fillRect(px + 4, py + 4, 8, 6);
+              ctx.fillRect(px + 8, py + 8, 6, 4);
+            } else if (hash % 7 === 0) {
+              ctx.fillStyle = 'rgba(255,255,255,0.05)';
+              ctx.fillRect(px + 6, py + 6, 10, 4);
+            }
+          } else if (code === 2) {
+            ctx.fillStyle = palette.wallFace;
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = palette.wallTop;
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE - 8);
+            ctx.fillStyle = 'rgba(255,255,255,0.12)';
+            ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, 3);
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.fillRect(px, py + TILE_SIZE - 3, TILE_SIZE, 3);
+          } else if (code === 3) {
+            ctx.fillStyle = palette.floorA;
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.fillRect(px + 3, py + 22, TILE_SIZE - 6, 8);
+            ctx.fillStyle = palette.wallFace;
+            ctx.fillRect(px + 4, py + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+            ctx.fillStyle = palette.pillar;
+            ctx.fillRect(px + 4, py + 2, TILE_SIZE - 8, 16);
+            ctx.fillStyle = 'rgba(255,255,255,0.18)';
+            ctx.fillRect(px + 6, py + 4, TILE_SIZE - 12, 3);
+          }
         }
       }
     }
@@ -295,8 +418,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const smoothedPlayers = new Map<string, SmoothedPos>();
     const smoothedEnemies = new Map<string, SmoothedPos>();
+    const prevEnemiesMap = new Map<string, { hp: number; kind: EnemyKind; x: number; y: number }>();
     const floatingTexts: ActiveFloatingText[] = [];
     const seenEventIds = new Set<string>();
+    const particleManager = new ParticleManager();
+    let screenShake = 0;
     let lastMyAttackAnim = 0;
     let lastPlayerHp: number | null = null;
     let lastPlayerShield: number | null = null;
@@ -334,13 +460,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           floatingTexts.push({ ...ev, bornAt: now });
           if (ev.kind === 'gold') sfx.playCoin();
           else if (ev.kind === 'heal') sfx.playHeal();
-          else if (ev.kind === 'damage') sfx.playEnemyHit(false);
-          else if (ev.kind === 'crit') sfx.playEnemyHit(true);
-          else if (ev.text.includes('Relic')) sfx.playRelicChime();
+          else if (ev.kind === 'damage') {
+            sfx.playEnemyHit(false);
+            particleManager.spawnHitSparks(ev.x, ev.y, ev.color || '#EF4444', 6, now, false);
+            screenShake = Math.min(5, screenShake + 1.2);
+          } else if (ev.kind === 'crit') {
+            sfx.playEnemyHit(true);
+            particleManager.spawnHitSparks(ev.x, ev.y, '#FBBF24', 12, now, true);
+            screenShake = Math.min(8, screenShake + 3.0);
+          } else if (ev.text.includes('Relic')) {
+            sfx.playRelicChime();
+          }
         }
       }
       if (seenEventIds.size > 600) {
         seenEventIds.clear();
+      }
+
+      // Check for defeated enemies to spawn death dissipation bursts
+      for (const en of snap.enemies) {
+        const prev = prevEnemiesMap.get(en.id);
+        if (prev && prev.hp > 0 && en.hp <= 0) {
+          particleManager.spawnEnemyDeathBurst(en.x, en.y, en.kind, now);
+        }
+      }
+      for (const [id, prev] of prevEnemiesMap.entries()) {
+        if (!snap.enemies.some((e) => e.id === id) && prev.hp > 0) {
+          particleManager.spawnEnemyDeathBurst(prev.x, prev.y, prev.kind, now);
+        }
+      }
+      prevEnemiesMap.clear();
+      for (const en of snap.enemies) {
+        prevEnemiesMap.set(en.id, { hp: en.hp, kind: en.kind, x: en.x, y: en.y });
       }
 
       // Smooth & Predict Players (Extrapolate along velocity + gently pull toward authoritative server pos)
@@ -413,8 +564,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      const camX = Math.round(cameraRef.current.x - cw / 2);
-      const camY = Math.round(cameraRef.current.y - ch / 2);
+      let camX = Math.round(cameraRef.current.x - cw / 2);
+      let camY = Math.round(cameraRef.current.y - ch / 2);
+
+      if (screenShake > 0.05) {
+        const shakeAngle = Math.random() * Math.PI * 2;
+        camX += Math.round(Math.cos(shakeAngle) * screenShake);
+        camY += Math.round(Math.sin(shakeAngle) * screenShake);
+        screenShake *= Math.pow(0.84, dtSec * 60);
+      } else {
+        screenShake = 0;
+      }
 
       ctx.save();
       ctx.translate(-camX, -camY);
@@ -423,37 +583,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.drawImage(mapLayerRef.current, 0, 0);
       }
 
-      // Portal
-      const px = map.portalPos.x;
-      const py = map.portalPos.y;
-      if (snap.bossDefeated) {
-        const pulse = 22 + Math.sin(now * 0.006) * 4;
-        const grad = ctx.createRadialGradient(px, py, 4, px, py, pulse + 14);
-        grad.addColorStop(0, 'rgba(186, 230, 253, 0.95)');
-        grad.addColorStop(0.5, 'rgba(56, 189, 248, 0.55)');
-        grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(px, py, pulse + 14, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#E0F2FE';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(px, py, 16, now * 0.003, now * 0.003 + Math.PI * 1.4);
-        ctx.stroke();
-
-        ctx.font = '600 11px "JetBrains Mono", monospace';
-        ctx.fillStyle = '#E0F2FE';
-        ctx.textAlign = 'center';
-        ctx.fillText('[E] Descent Portal', px, py - 26);
-      } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(px, py, 18, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      // Grand Descent Portal
+      drawDungeonPortal(ctx, map.portalPos.x, map.portalPos.y, snap.bossDefeated, now, map.biome);
+      particleManager.spawnPortalWisps(map.portalPos.x, map.portalPos.y, snap.bossDefeated, now);
 
       // Torches
       const flicker = 0.88 + Math.sin(now * 0.009) * 0.12;
@@ -566,61 +698,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // Props
+      // Custom Pixel Art Tavern Architecture, Fireplace, Tables, Bar & Casks
+      if (map.floor === 0) {
+        drawTavernDecorations(ctx, now);
+      }
+
+      // Props, Relic Vault, Mystic Shrine & Pickups
       for (const prop of snap.props) {
         if (prop.opened && (prop.kind === 'crate' || prop.kind === 'coin' || prop.kind === 'potion')) {
           continue;
         }
-        const x = Math.round(prop.x);
-        const y = Math.round(prop.y);
-
-        if (prop.kind === 'crate') {
-          ctx.fillStyle = '#7C5338';
-          ctx.fillRect(x - 10, y - 10, 20, 20);
-          ctx.fillStyle = '#9E6B49';
-          ctx.fillRect(x - 8, y - 8, 16, 4);
-          ctx.fillRect(x - 8, y + 4, 16, 4);
-        } else if (prop.kind === 'chest') {
-          ctx.fillStyle = prop.opened ? '#4B3B32' : '#8C5832';
-          ctx.fillRect(x - 12, y - 9, 24, 18);
-          ctx.fillStyle = '#E2B45A';
-          ctx.fillRect(x - 12, y - 2, 24, 3);
-          ctx.fillRect(x - 2, y - 4, 4, 6);
-        } else if (prop.kind === 'relic_chest') {
-          ctx.fillStyle = prop.opened ? '#3E3A4F' : '#58427C';
-          ctx.fillRect(x - 14, y - 11, 28, 22);
-          ctx.fillStyle = '#F4D378';
-          ctx.fillRect(x - 14, y - 3, 28, 4);
-          ctx.fillRect(x - 3, y - 6, 6, 8);
-          if (!prop.opened) {
-            ctx.font = '600 10px "JetBrains Mono", monospace';
-            ctx.fillStyle = '#FDE68A';
-            ctx.textAlign = 'center';
-            ctx.fillText('[E] Relic Vault', x, y - 17);
-          }
+        if (prop.kind === 'relic_chest') {
+          drawRelicVault(ctx, prop, now);
+          particleManager.spawnVaultGleam(prop.x, prop.y, !prop.opened, now);
         } else if (prop.kind === 'shrine') {
-          ctx.fillStyle = '#6B7280';
-          ctx.fillRect(x - 12, y - 6, 24, 18);
-          ctx.fillStyle = prop.opened ? '#475569' : '#6EE7B7';
-          ctx.fillRect(x - 6, y - 18, 12, 12);
-          if (!prop.opened) {
-            ctx.font = '600 10px "JetBrains Mono", monospace';
-            ctx.fillStyle = '#A7F3D0';
-            ctx.textAlign = 'center';
-            ctx.fillText('[E] Shrine', x, y - 24);
-          }
-        } else if (prop.kind === 'coin') {
-          const bob = Math.sin(now * 0.008 + x) * 2;
-          ctx.fillStyle = '#FACC15';
-          ctx.fillRect(x - 5, y - 5 + bob, 10, 10);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(x - 2, y - 3 + bob, 3, 5);
-        } else if (prop.kind === 'potion') {
-          const bob = Math.sin(now * 0.006 + y) * 2;
-          ctx.fillStyle = '#DC2626';
-          ctx.fillRect(x - 6, y - 4 + bob, 12, 11);
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(x - 3, y - 8 + bob, 6, 4);
+          drawMysticShrine(ctx, prop, now);
+          particleManager.spawnShrineMotes(prop.x, prop.y, !prop.opened, now);
+        } else {
+          drawDungeonProp(ctx, prop, now);
+        }
+      }
+
+      // NPCs & Training Dummies (Tavern Social Hub)
+      if (snap.npcs) {
+        for (const npc of snap.npcs) {
+          drawNpc(ctx, npc, now);
+        }
+      }
+      if (snap.trainingDummies) {
+        for (const dummy of snap.trainingDummies) {
+          drawTrainingDummy(ctx, dummy, now);
         }
       }
 
@@ -647,47 +754,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const ey = Math.round(pos.y);
         const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex * 0.1) * 2 : 0;
 
-        ctx.fillStyle = 'rgba(0,0,0,0.42)';
-        ctx.fillRect(ex - en.radius + 2, ey + en.radius - 3, (en.radius - 2) * 2, 5);
-
         if (en.kind === 'slime') {
-          ctx.fillStyle = en.slowedMs > 0 ? '#38BDF8' : '#4ADE80';
-          ctx.fillRect(ex - 12, ey - 8 + walkBob, 24, 18);
-          ctx.fillStyle = '#86EFAC';
-          ctx.fillRect(ex - 8, ey - 11 + walkBob, 16, 4);
-          ctx.fillStyle = '#14532D';
-          ctx.fillRect(ex - 6, ey - 2 + walkBob, 3, 3);
-          ctx.fillRect(ex + 3, ey - 2 + walkBob, 3, 3);
+          drawSlimeSprite(ctx, en, ex, ey, now, map.biome);
         } else if (en.kind === 'goblin') {
-          ctx.fillStyle = '#65A30D';
-          ctx.fillRect(ex - 9, ey - 12 + walkBob, 18, 20);
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(ex - 9, ey + walkBob, 18, 9);
-          ctx.fillStyle = '#EF4444';
-          ctx.fillRect(ex - 5, ey - 8 + walkBob, 3, 3);
-          ctx.fillRect(ex + 2, ey - 8 + walkBob, 3, 3);
+          drawGoblinSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'skeleton') {
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(ex - 8, ey - 13 + walkBob, 16, 22);
-          ctx.fillStyle = '#1E293B';
-          ctx.fillRect(ex - 5, ey - 9 + walkBob, 3, 3);
-          ctx.fillRect(ex + 2, ey - 9 + walkBob, 3, 3);
-          ctx.fillStyle = '#B45309';
-          ctx.fillRect(ex + 9, ey - 10 + walkBob, 3, 16);
+          drawSkeletonSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'cultist') {
-          ctx.fillStyle = '#6D28D9';
-          ctx.fillRect(ex - 10, ey - 14 + walkBob, 20, 24);
-          ctx.fillStyle = '#C084FC';
-          ctx.fillRect(ex - 5, ey - 9 + walkBob, 3, 3);
-          ctx.fillRect(ex + 2, ey - 9 + walkBob, 3, 3);
+          drawCultistSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'knight') {
-          ctx.fillStyle = '#64748B';
-          ctx.fillRect(ex - 12, ey - 15 + walkBob, 24, 26);
-          ctx.fillStyle = '#991B1B';
-          ctx.fillRect(ex - 4, ey - 19 + walkBob, 8, 4);
-          ctx.fillStyle = '#0F172A';
-          ctx.fillRect(ex - 7, ey - 9 + walkBob, 14, 3);
+          drawKnightSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'boss') {
+          // Boss shadow
+          ctx.fillStyle = 'rgba(0,0,0,0.48)';
+          ctx.fillRect(ex - en.radius + 2, ey + en.radius - 3, (en.radius - 2) * 2, 6);
           const isCatacombs = map.biome === 'catacombs' || map.floor === 2;
           const isEmber = map.biome === 'ember' || map.floor >= 3;
 
@@ -1597,76 +1677,75 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.stroke();
         }
 
-        // Username
-        ctx.font = '600 11px "Plus Jakarta Sans", sans-serif';
-        ctx.fillStyle = p.id === playerId ? '#FDE68A' : '#E2E8F0';
+        // Player Name Tag & Class Role Badge
+        const isLocalPlayer = p.id === playerId;
+        const roleIcon =
+          p.heroClass === 'vanguard'
+            ? '⚔️'
+            : p.heroClass === 'ranger'
+              ? '🏹'
+              : p.heroClass === 'arcanist'
+                ? '🔮'
+                : '✨';
+        const displayLabel = `${roleIcon} ${p.username}`;
+
+        ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(p.username, hx, hy - 32);
+        const labelWidth = ctx.measureText(displayLabel).width;
 
-        // Health Bar
-        const pBarW = 34;
-        const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
-        ctx.fillStyle = '#181820';
-        ctx.fillRect(hx - pBarW / 2 - 1, hy - 27, pBarW + 2, 5);
-        ctx.fillStyle = '#22C55E';
-        ctx.fillRect(hx - pBarW / 2, hy - 26, Math.round(pBarW * pHpRatio), 3);
-      }
+        // Name Tag Translucent Badge
+        const badgeY = hy - 38;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fillRect(hx - labelWidth / 2 - 6, badgeY - 11, labelWidth + 12, 17);
 
-      // Projectiles
-      for (const proj of snap.projectiles) {
-        ctx.save();
-        ctx.translate(proj.x, proj.y);
-        ctx.rotate(proj.angle);
+        // Border: Gold for Local Player, Azure Blue for Allies
+        ctx.strokeStyle = isLocalPlayer ? '#F59E0B' : '#0284C7';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(hx - labelWidth / 2 - 6, badgeY - 11, labelWidth + 12, 17);
 
-        if (proj.style === 'slash') {
-          ctx.strokeStyle = '#FDE68A';
-          ctx.lineWidth = 4;
+        // Gold Marker Arrow for Local Player
+        if (isLocalPlayer) {
+          ctx.fillStyle = '#F59E0B';
           ctx.beginPath();
-          ctx.arc(0, 0, 18, -0.85, 0.85);
-          ctx.stroke();
-        } else if (proj.style === 'arrow') {
-          ctx.fillStyle = '#E2B45A';
-          ctx.fillRect(-8, -2, 16, 4);
-          ctx.fillStyle = '#F8FAFC';
-          ctx.fillRect(5, -3, 5, 6);
-        } else if (proj.style === 'arcane') {
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-6, -6, 12, 12);
-          ctx.fillStyle = '#E0F2FE';
-          ctx.fillRect(-3, -3, 6, 6);
-        } else if (proj.style === 'radiant') {
-          ctx.fillStyle = '#FACC15';
-          ctx.fillRect(-6, -4, 12, 8);
-          ctx.fillStyle = '#FEF9C3';
-          ctx.fillRect(-2, -2, 6, 4);
-        } else if (proj.style === 'bone') {
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(-6, -2, 12, 4);
-        } else if (proj.style === 'voidorb') {
-          ctx.fillStyle = '#A855F7';
-          ctx.fillRect(-6, -6, 12, 12);
-        } else {
-          ctx.fillStyle = '#F97316';
-          ctx.fillRect(-7, -7, 14, 14);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(-3, -3, 6, 6);
+          ctx.moveTo(hx, badgeY - 13);
+          ctx.lineTo(hx - 4, badgeY - 17);
+          ctx.lineTo(hx + 4, badgeY - 17);
+          ctx.closePath();
+          ctx.fill();
         }
 
-        ctx.restore();
+        // Name text
+        ctx.fillStyle = isLocalPlayer ? '#FCD34D' : '#7DD3FC';
+        ctx.fillText(displayLabel, hx, badgeY + 1);
+
+        // Health Bar
+        const pBarW = 36;
+        const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
+        ctx.fillStyle = '#0F172A';
+        ctx.fillRect(hx - pBarW / 2 - 1, hy - 18, pBarW + 2, 5);
+        ctx.fillStyle = isLocalPlayer ? '#22C55E' : '#38BDF8';
+        ctx.fillRect(hx - pBarW / 2, hy - 17, Math.round(pBarW * pHpRatio), 3);
       }
 
-      // Floating Numbers & Critical Hit Animations
+      // Enhanced Projectiles & Combat Trails
+      for (const proj of snap.projectiles) {
+        drawEnhancedProjectile(ctx, proj, now);
+        particleManager.spawnProjectileWake(proj, now);
+      }
+
+      // Floating Numbers, Critical Hit Animations & Speech Bubbles
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
         const age = now - ft.bornAt;
-        const duration = ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
+        const isDialogue = ft.text.startsWith('"');
+        const duration = isDialogue ? 5500 : ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
         if (age >= duration) {
           floatingTexts.splice(i, 1);
           continue;
         }
         const t = age / duration;
-        const alpha = Math.max(0, 1 - t * t);
-        const floatY = ft.y - t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28);
+        const alpha = Math.max(0, 1 - Math.pow(t, 4)); // 100% opacity for most of the 5.5s duration
+        const floatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
 
         ctx.save();
         ctx.globalAlpha = alpha;
@@ -1691,19 +1770,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = '#FEF08A';
           ctx.fillText(`⚡ ${ft.text}!`, 0, 0);
         } else if (ft.kind === 'status') {
-          // Styled Status Badge
+          // Styled Status / Speech Badge
           ctx.translate(ft.x, floatY);
-          ctx.font = '700 11px "JetBrains Mono", monospace';
+          ctx.font = isDialogue
+            ? '600 12px "Plus Jakarta Sans", sans-serif'
+            : '700 11px "JetBrains Mono", monospace';
           const textW = ctx.measureText(ft.text).width;
-          ctx.fillStyle = 'rgba(17, 18, 25, 0.85)';
-          ctx.fillRect(-textW / 2 - 6, -11, textW + 12, 14);
-          ctx.strokeStyle = ft.color;
-          ctx.lineWidth = 1.2;
-          ctx.strokeRect(-textW / 2 - 6, -11, textW + 12, 14);
+
+          // Translucent Speech/Status box
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+          ctx.fillRect(-textW / 2 - 8, -13, textW + 16, 20);
+          ctx.strokeStyle = isDialogue ? '#FCD34D' : ft.color;
+          ctx.lineWidth = 1.4;
+          ctx.strokeRect(-textW / 2 - 8, -13, textW + 16, 20);
+
+          if (isDialogue) {
+            // Speech tail pointer
+            ctx.fillStyle = '#FCD34D';
+            ctx.beginPath();
+            ctx.moveTo(0, 7);
+            ctx.lineTo(-4, 11);
+            ctx.lineTo(4, 11);
+            ctx.closePath();
+            ctx.fill();
+          }
 
           ctx.textAlign = 'center';
-          ctx.fillStyle = ft.color;
-          ctx.fillText(ft.text, 0, 0);
+          ctx.fillStyle = isDialogue ? '#FDE68A' : ft.color;
+          ctx.fillText(ft.text, 0, 1);
         } else {
           // Standard Damage, Heal, Gold, Ping
           ctx.font =
@@ -1719,6 +1813,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         ctx.restore();
       }
+
+      // Update and render combat particles in world coordinates
+      particleManager.updateAndDraw(ctx, now, dtSec);
 
       ctx.restore();
 

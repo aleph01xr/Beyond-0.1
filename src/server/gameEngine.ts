@@ -10,13 +10,15 @@ import {
   type FloatingEvent,
   type GameSnapshot,
   type HeroClassId,
+  type NpcState,
   type PlayerInputState,
   type PlayerState,
   type ProjectileState,
   type PropState,
   type RoomSummary,
+  type TrainingDummyState,
 } from '../shared/types.ts';
-import { generateDungeonFloor, makeEnemy } from './dungeonGenerator.ts';
+import { generateDungeonFloor, generateTavernFloor, makeEnemy } from './dungeonGenerator.ts';
 
 interface PlayerRuntime {
   state: PlayerState;
@@ -34,7 +36,7 @@ export class GameRoom {
   public hostName: string;
   public readonly difficulty: DifficultyTier;
   public readonly baseSeed: number;
-  public readonly maxPlayers = 4;
+  public readonly maxPlayers: number;
 
   public status: 'playing' | 'victory' | 'defeat' = 'playing';
   public floor = 1;
@@ -43,6 +45,8 @@ export class GameRoom {
   public projectiles: ProjectileState[] = [];
   public props: PropState[] = [];
   public zones: FieldZoneState[] = [];
+  public npcs: NpcState[] = [];
+  public trainingDummies: TrainingDummyState[] = [];
   public pendingEvents: FloatingEvent[] = [];
   public chat: ChatMessage[] = [];
   public spawnPoint = { x: 256, y: 256 };
@@ -67,11 +71,13 @@ export class GameRoom {
     this.name = opts.name;
     this.hostName = opts.hostName;
     this.difficulty = opts.difficulty;
+    this.maxPlayers = opts.roomId === 'TAVERN-HUB' ? 50 : 4;
     this.baseSeed =
       opts.seed && opts.seed > 0
         ? Math.floor(opts.seed)
         : Math.floor(100000 + Math.random() * 899999);
-    this.loadFloor(1, 1);
+    const startFloor = opts.roomId === 'TAVERN-HUB' ? 0 : 1;
+    this.loadFloor(startFloor, 1);
   }
 
   private nextId(prefix: string): string {
@@ -80,18 +86,32 @@ export class GameRoom {
 
   private loadFloor(floorNum: number, partySize: number): void {
     this.floor = floorNum;
-    const generated = generateDungeonFloor(
-      floorNum,
-      this.baseSeed,
-      this.difficulty,
-      Math.max(1, partySize)
-    );
-    this.map = generated.map;
-    this.enemies = generated.enemies;
-    this.props = generated.props;
-    this.projectiles = [];
-    this.zones = [];
-    this.spawnPoint = generated.spawnPoint;
+    if (floorNum === 0) {
+      const tav = generateTavernFloor();
+      this.map = tav.map;
+      this.enemies = tav.enemies;
+      this.props = tav.props;
+      this.npcs = tav.npcs;
+      this.trainingDummies = tav.trainingDummies;
+      this.projectiles = [];
+      this.zones = [];
+      this.spawnPoint = tav.spawnPoint;
+    } else {
+      const generated = generateDungeonFloor(
+        floorNum,
+        this.baseSeed,
+        this.difficulty,
+        Math.max(1, partySize)
+      );
+      this.map = generated.map;
+      this.enemies = generated.enemies;
+      this.props = generated.props;
+      this.npcs = [];
+      this.trainingDummies = [];
+      this.projectiles = [];
+      this.zones = [];
+      this.spawnPoint = generated.spawnPoint;
+    }
 
     let idx = 0;
     for (const pr of this.players.values()) {
@@ -353,6 +373,69 @@ export class GameRoom {
     }
 
     if (action === 'interact') {
+      // 1. NPC Conversations
+      for (const npc of this.npcs) {
+        const dist = Math.hypot(npc.x - p.x, npc.y - p.y);
+        if (dist <= 68) {
+          const heroClassName = HERO_CLASSES[p.heroClass]?.name || 'Adventurer';
+
+          let lines: string[] = [];
+          if (npc.id === 'npc_bram') {
+            lines = [
+              `Welcome to The Rusty Tankard, ${p.username}! Pull up a stool by the hearth and warm your hands.`,
+              'I have seen hundreds of adventurers cross my doorstep. The secret to surviving Beyond is party coordination.',
+              'Rest your legs! Lena just brewed a fresh pot of hearty venison stew over the fireplace.',
+              'Look out for Warden Malakor on Floor 1! His tower shield can crush an unwary warrior in a single blow.',
+              'Don\'t forget to break every crate and barrel you see down below—relics and gold lie hidden everywhere!',
+              'If your party falls in battle, a Cleric\'s Solar Beacon or another ally can revive you before time runs out.',
+            ];
+          } else if (npc.id === 'npc_lena') {
+            const classTip =
+              p.heroClass === 'vanguard'
+                ? 'A Vanguard in heavy plate! Stand in the frontlines and pop your Shield to absorb boss slams.'
+                : p.heroClass === 'ranger'
+                  ? 'A Ranger from the Thornwood! Keep your distance and mark targets with Hunter Quarry for big crits.'
+                  : p.heroClass === 'arcanist'
+                    ? 'An Arcanist! Cast Chrono Well in narrow choke points to slow down swarming monster waves.'
+                    : 'A Sunbrand Prelate! Keep your Solar Beacon ready when the party\'s health drops low.';
+
+            lines = [
+              `Ah, ${p.username}! Care for a mug of our signature honeyed mead or a glass of spiced cider?`,
+              classTip,
+              'Floor 2 is the Sunken Crypt. Archlich Vaelor casts necrotic soul frost that freezes anyone standing still.',
+              'Floor 3 is Cindervault—a searing inferno! Equip Cinder Heart and Runic Carapace relics if you find them.',
+              'Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!',
+            ];
+          } else {
+            const combatTip =
+              p.heroClass === 'vanguard'
+                ? 'Vanguard, your Shield Bash stuns elites for 1.7s! Use it to interrupt heavy boss attacks.'
+                : p.heroClass === 'ranger'
+                  ? 'Ranger, your Frost Volley pierces up to 5 foes at once. Keep kiting to control the room.'
+                  : p.heroClass === 'arcanist'
+                    ? 'Arcanist, your Astral Nova releases an 8-way starburst that clears enemies surrounding you.'
+                    : 'Cleric, your Dawnstar Smite heals nearby allies while damaging surrounding foes simultaneously.';
+
+            lines = [
+              `Halt, ${p.username}! Keep your guard high and your weapon polished. Indecision gets heroes killed.`,
+              combatTip,
+              'When an enemy glows orange, they are winding up a heavy attack. Step out of the danger zone immediately!',
+              'Relic synergies are key! Combining Stormcaller Lodestone with Viper Crucible inflicts Shock and Poison at once.',
+              'Step into my training ring over there and test your DPS against my straw dummies anytime.',
+            ];
+          }
+
+          npc.speechIndex = ((npc.speechIndex ?? -1) + 1) % lines.length;
+          const spoken = lines[npc.speechIndex];
+          npc.dialogue = spoken;
+          npc.speakingMs = 5000;
+
+          this.emitEvent('status', npc.x, npc.y - 28, `"${spoken}"`, '#FDE68A');
+          this.pushSystemChat(`💬 ${npc.name}: "${spoken}"`);
+          return {};
+        }
+      }
+
       for (const prop of this.props) {
         if (prop.opened) continue;
         const dist = Math.hypot(prop.x - p.x, prop.y - p.y);
@@ -609,6 +692,12 @@ export class GameRoom {
     const pulseZonesNow = this.zoneTickAccumMs >= 500;
     if (pulseZonesNow) this.zoneTickAccumMs = 0;
 
+    for (const npc of this.npcs) {
+      if (npc.speakingMs && npc.speakingMs > 0) {
+        npc.speakingMs = Math.max(0, npc.speakingMs - dtMs);
+      }
+    }
+
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i];
       z.ttlMs -= dtMs;
@@ -860,17 +949,39 @@ export class GameRoom {
 
       let nearest: PlayerState | null = null;
       let nearestDist = Infinity;
+      const enemyRoom = this.findRoomContaining(enemy.x, enemy.y);
+      const isBoss = enemy.kind === 'boss';
+      const isRanged = enemy.kind === 'skeleton' || enemy.kind === 'cultist';
+      const isAlerted = enemy.markedMs > 0 || enemy.hp < enemy.maxHp;
+
       for (const pr of this.players.values()) {
         if (pr.state.downed || !pr.state.connected) continue;
         const d = Math.hypot(pr.state.x - enemy.x, pr.state.y - enemy.y);
+
+        // Sensible detection ranges (reduced from blind 350px to natural room & line-of-sight scopes)
+        const playerRoom = this.findRoomContaining(pr.state.x, pr.state.y);
+        const inSameRoom = !!(enemyRoom && playerRoom && enemyRoom.id === playerRoom.id);
+
+        let maxDetectDist = isBoss ? 380 : inSameRoom ? (isRanged ? 220 : 190) : (isRanged ? 175 : 145);
+        if (isAlerted) maxDetectDist += 45;
+
+        // Skip if outside detection range
+        if (d > maxDetectDist) continue;
+
+        // If not in the same room, line of sight is strictly required (cannot detect through solid walls)
+        if (!inSameRoom && !isBoss && !isAlerted) {
+          if (!this.hasLineOfSight(enemy.x, enemy.y, pr.state.x, pr.state.y)) {
+            continue;
+          }
+        }
+
         if (d < nearestDist) {
           nearestDist = d;
           nearest = pr.state;
         }
       }
 
-      const aggroRadius = enemy.kind === 'boss' ? 430 : 350;
-      if (!nearest || nearestDist > aggroRadius) {
+      if (!nearest) {
         enemy.state = 'idle';
         enemy.vx = 0;
         enemy.vy = 0;
@@ -881,7 +992,46 @@ export class GameRoom {
       const slowFactor = enemy.slowedMs > 0 ? 0.55 : 1.0;
       const dx = nearest.x - enemy.x;
       const dy = nearest.y - enemy.y;
-      const angle = Math.atan2(dy, dx);
+      const directAngle = Math.atan2(dy, dx);
+      const angle = directAngle;
+
+      // Smart obstacle steering: If moving directly toward target hits a wall/corner,
+      // steer 38° to the side so the enemy glides smoothly around doorframes & pillars
+      let moveAngle = directAngle;
+      const stepProbe = enemy.radius + 6;
+      if (this.collidesCircle(enemy.x + Math.cos(directAngle) * stepProbe, enemy.y + Math.sin(directAngle) * stepProbe, enemy.radius - 2)) {
+        const leftAng = directAngle + 0.65;
+        const rightAng = directAngle - 0.65;
+        const leftClear = !this.collidesCircle(enemy.x + Math.cos(leftAng) * stepProbe, enemy.y + Math.sin(leftAng) * stepProbe, enemy.radius - 2);
+        const rightClear = !this.collidesCircle(enemy.x + Math.cos(rightAng) * stepProbe, enemy.y + Math.sin(rightAng) * stepProbe, enemy.radius - 2);
+        if (leftClear && !rightClear) {
+          moveAngle = leftAng;
+        } else if (rightClear && !leftClear) {
+          moveAngle = rightAng;
+        } else if (leftClear && rightClear) {
+          moveAngle = (enemy.id.charCodeAt(0) % 2 === 0) ? leftAng : rightAng;
+        }
+      }
+
+      // Soft crowd separation: nudge away from other nearby enemies so they don't jam in doorways
+      for (let oIdx = eIdx - 1; oIdx >= Math.max(0, eIdx - 6); oIdx--) {
+        const other = this.enemies[oIdx];
+        if (other.hp <= 0) continue;
+        const edx = enemy.x - other.x;
+        const edy = enemy.y - other.y;
+        const minDist = enemy.radius + other.radius + 2;
+        const distSq = edx * edx + edy * edy;
+        if (distSq > 0 && distSq < minDist * minDist) {
+          const dist = Math.sqrt(distSq);
+          const push = (minDist - dist) * 0.4;
+          const nx = (edx / dist) * push;
+          const ny = (edy / dist) * push;
+          if (!this.collidesCircle(enemy.x + nx, enemy.y + ny, enemy.radius - 2)) {
+            enemy.x += nx;
+            enemy.y += ny;
+          }
+        }
+      }
 
       enemy.windupMs -= dtMs;
 
@@ -890,8 +1040,8 @@ export class GameRoom {
           enemy.kind === 'goblin' ? 128 : enemy.kind === 'knight' ? 96 : 86;
         const spd = baseSpd * slowFactor;
         if (nearestDist > enemy.radius + 14) {
-          enemy.vx = Math.cos(angle) * spd;
-          enemy.vy = Math.sin(angle) * spd;
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
@@ -905,15 +1055,15 @@ export class GameRoom {
         if (nearestDist < 120) {
           this.moveWithCollision(
             enemy,
-            -Math.cos(angle) * spd * dtSec,
-            -Math.sin(angle) * spd * dtSec,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
             enemy.radius - 2
           );
         } else if (nearestDist > 215) {
           this.moveWithCollision(
             enemy,
-            Math.cos(angle) * spd * dtSec,
-            Math.sin(angle) * spd * dtSec,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
             enemy.radius - 2
           );
         }
@@ -1328,14 +1478,18 @@ export class GameRoom {
     this.pushSystemChat(`⚠️ ${boss.name} calls forth dungeon reinforcements!`);
 
     for (let i = 0; i < 2; i++) {
-      const offsetX = i === 0 ? -65 : 65;
-      const offsetY = i === 0 ? 45 : -45;
+      let addX = boss.x + (i === 0 ? -50 : 50);
+      let addY = boss.y + (i === 0 ? 35 : -35);
+      if (this.collidesCircle(addX, addY, 14)) {
+        addX = boss.x + (i === 0 ? -24 : 24);
+        addY = boss.y;
+      }
       const add = makeEnemy(
         `add_${this.floor}_${Date.now()}_${i}`,
         minionKind,
         boss.roomId,
-        boss.x + offsetX,
-        boss.y + offsetY,
+        addX,
+        addY,
         1.0,
         true,
         this.floor,
@@ -1657,6 +1811,22 @@ export class GameRoom {
     );
   }
 
+  private hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= TILE_SIZE) return true;
+    const steps = Math.ceil(dist / 14);
+    const stepX = dx / steps;
+    const stepY = dy / steps;
+    for (let i = 1; i < steps; i++) {
+      if (this.isWallAtWorld(x1 + stepX * i, y1 + stepY * i)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private isWallAtWorld(wx: number, wy: number): boolean {
     const tx = Math.floor(wx / TILE_SIZE);
     const ty = Math.floor(wy / TILE_SIZE);
@@ -1668,6 +1838,7 @@ export class GameRoom {
   }
 
   private collidesCircle(wx: number, wy: number, radius: number): boolean {
+    if (this.isWallAtWorld(wx, wy)) return true;
     // 8 perimeter points for smooth circular collision sliding
     const step = Math.PI / 4;
     for (let i = 0; i < 8; i++) {
@@ -1685,12 +1856,49 @@ export class GameRoom {
     dy: number,
     radius: number
   ): void {
-    // Separate X and Y movements to allow wall sliding
-    if (dx !== 0 && !this.collidesCircle(entity.x + dx, entity.y, radius)) {
-      entity.x += dx;
+    // 1. Stuck Recovery: If entity is currently overlapping or embedded in a wall tile,
+    // immediately probe surrounding directions and push out towards open floor
+    if (this.collidesCircle(entity.x, entity.y, radius * 0.75)) {
+      let escapeX = 0;
+      let escapeY = 0;
+      const probeDist = radius + 8;
+      for (let i = 0; i < 8; i++) {
+        const a = (i * Math.PI) / 4;
+        const testX = entity.x + Math.cos(a) * probeDist;
+        const testY = entity.y + Math.sin(a) * probeDist;
+        if (!this.isWallAtWorld(testX, testY)) {
+          escapeX += Math.cos(a);
+          escapeY += Math.sin(a);
+        }
+      }
+      if (escapeX !== 0 || escapeY !== 0) {
+        const len = Math.hypot(escapeX, escapeY);
+        entity.x += (escapeX / len) * 4;
+        entity.y += (escapeY / len) * 4;
+      }
     }
-    if (dy !== 0 && !this.collidesCircle(entity.x, entity.y + dy, radius)) {
-      entity.y += dy;
+
+    // 2. Direct full step
+    const targetX = entity.x + dx;
+    const targetY = entity.y + dy;
+    if (!this.collidesCircle(targetX, targetY, radius)) {
+      entity.x = targetX;
+      entity.y = targetY;
+      return;
+    }
+
+    // 3. Wall Sliding: try X movement alone with half-step fallback
+    if (dx !== 0 && !this.collidesCircle(targetX, entity.y, radius)) {
+      entity.x = targetX;
+    } else if (dx !== 0 && !this.collidesCircle(entity.x + dx * 0.5, entity.y, radius)) {
+      entity.x += dx * 0.5;
+    }
+
+    // 4. Wall Sliding: try Y movement alone with half-step fallback
+    if (dy !== 0 && !this.collidesCircle(entity.x, targetY, radius)) {
+      entity.y = targetY;
+    } else if (dy !== 0 && !this.collidesCircle(entity.x, entity.y + dy * 0.5, radius)) {
+      entity.y += dy * 0.5;
     }
   }
 
@@ -1728,6 +1936,8 @@ export class GameRoom {
       projectiles: this.projectiles,
       props: this.props,
       zones: this.zones,
+      npcs: this.npcs,
+      trainingDummies: this.trainingDummies,
       events,
       roomClearedFlags: this.map.rooms.map((r) => ({
         id: r.id,

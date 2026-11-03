@@ -487,6 +487,26 @@ export interface RoomSummary {
   status: 'playing' | 'victory' | 'defeat';
 }
 
+export interface NpcState {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  dialogue: string;
+  spriteKind: string;
+  speechIndex?: number;
+  speakingMs?: number;
+}
+
+export interface TrainingDummyState {
+  id: string;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  hitAnimMs: number;
+}
+
 export interface GameSnapshot {
   roomId: string;
   roomName: string;
@@ -502,6 +522,8 @@ export interface GameSnapshot {
   projectiles: ProjectileState[];
   props: PropState[];
   zones: FieldZoneState[];
+  npcs: NpcState[];
+  trainingDummies: TrainingDummyState[];
   events: FloatingEvent[];
   roomClearedFlags: { id: number; cleared: boolean; discovered: boolean }[];
 }

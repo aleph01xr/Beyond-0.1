@@ -6,8 +6,10 @@ import {
   type EnemyKind,
   type EnemyResistances,
   type EnemyState,
+  type NpcState,
   type PropState,
   type RoomNode,
+  type TrainingDummyState,
 } from '../shared/types.ts';
 
 export function mulberry32(seed: number): () => number {
@@ -346,8 +348,20 @@ export function generateDungeonFloor(
 
       for (let i = 0; i < enemyCount; i++) {
         const kind = pool[Math.floor(rng() * pool.length)];
-        const ex = (room.x + 2 + rng() * (room.w - 4)) * TILE_SIZE;
-        const ey = (room.y + 2 + rng() * (room.h - 4)) * TILE_SIZE;
+        // Find safe open floor tile clear of pillars (tile 3) and perimeter walls
+        let spawnTx = Math.floor(room.cx);
+        let spawnTy = Math.floor(room.cy);
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const candTx = Math.floor(room.x + 2 + rng() * (room.w - 4));
+          const candTy = Math.floor(room.y + 2 + rng() * (room.h - 4));
+          if (getTile(candTx, candTy) === 1) {
+            spawnTx = candTx;
+            spawnTy = candTy;
+            break;
+          }
+        }
+        const ex = spawnTx * TILE_SIZE + TILE_SIZE / 2;
+        const ey = spawnTy * TILE_SIZE + TILE_SIZE / 2;
         const elite = rng() < 0.16 + floor * 0.04;
         enemies.push(makeEnemy(`en_${floor}_${enemySeq++}`, kind, room.id, ex, ey, hpScale, elite, floor, biomeSpec.id));
       }
@@ -586,5 +600,195 @@ export function makeEnemy(
     enraged: false,
     charging: false,
     chargeTimerMs: 0,
+  };
+}
+
+export function generateTavernFloor(): {
+  map: DungeonMap;
+  enemies: EnemyState[];
+  props: PropState[];
+  npcs: NpcState[];
+  trainingDummies: TrainingDummyState[];
+  spawnPoint: { x: number; y: number };
+} {
+  const width = 48;
+  const height = 34;
+  const tiles = new Array<number>(width * height).fill(0);
+
+  // 1. Base Wooden Floor (code 1)
+  for (let y = 3; y < height - 3; y++) {
+    for (let x = 3; x < width - 3; x++) {
+      tiles[y * width + x] = 1;
+    }
+  }
+
+  // 2. Outer Timber Walls (code 2)
+  for (let x = 3; x < width - 3; x++) {
+    tiles[3 * width + x] = 2;
+    tiles[(height - 4) * width + x] = 2;
+  }
+  for (let y = 3; y < height - 3; y++) {
+    tiles[y * width + 3] = 2;
+    tiles[y * width + (width - 4)] = 2;
+  }
+
+  // Entrance doorway opening on West wall
+  tiles[15 * width + 3] = 1;
+  tiles[16 * width + 3] = 1;
+
+  // 3. Fireplace Hearth Stone Floor (code 5) & Chimney Wall
+  for (let y = 4; y <= 6; y++) {
+    for (let x = 20; x <= 26; x++) {
+      tiles[y * width + x] = 5;
+    }
+  }
+  // Fireplace stone mantle frame (code 2 for wall collision)
+  tiles[3 * width + 21] = 2;
+  tiles[3 * width + 22] = 2;
+  tiles[3 * width + 24] = 2;
+  tiles[3 * width + 25] = 2;
+
+  // 4. L-Shaped Oak Bar Counter (code 2 for solid collision)
+  for (let x = 11; x <= 22; x++) {
+    tiles[8 * width + x] = 2;
+  }
+  for (let y = 8; y <= 11; y++) {
+    tiles[y * width + 22] = 2;
+  }
+
+  // 5. Central Royal Velvet Rug (code 4)
+  for (let y = 14; y <= 21; y++) {
+    for (let x = 14; x <= 28; x++) {
+      tiles[y * width + x] = 4;
+    }
+  }
+
+  // 6. Training Grounds Arena Dirt Ring (code 6) & Wooden Fencing
+  for (let y = 12; y <= 28; y++) {
+    for (let x = 33; x <= 43; x++) {
+      tiles[y * width + x] = 6;
+    }
+  }
+  // Fence pillars (code 3)
+  for (let y = 12; y <= 28; y += 4) {
+    tiles[y * width + 32] = 3;
+  }
+  // Gate gap at y=18..19
+  tiles[18 * width + 32] = 6;
+  tiles[19 * width + 32] = 6;
+
+  // Structural Heavy Timber Support Pillars (code 3)
+  const pillars = [
+    { x: 10, y: 14 },
+    { x: 10, y: 24 },
+    { x: 30, y: 14 },
+    { x: 30, y: 24 },
+  ];
+  for (const p of pillars) {
+    tiles[p.y * width + p.x] = 3;
+  }
+
+  const rooms: RoomNode[] = [
+    {
+      id: 0,
+      x: 3,
+      y: 3,
+      w: width - 6,
+      h: height - 6,
+      cx: Math.floor(width / 2),
+      cy: Math.floor(height / 2),
+      type: 'start',
+      cleared: true,
+      discovered: true,
+    },
+  ];
+
+  const torches = [
+    { x: 5 * TILE_SIZE, y: 5 * TILE_SIZE },
+    { x: 19 * TILE_SIZE, y: 4 * TILE_SIZE },
+    { x: 27 * TILE_SIZE, y: 4 * TILE_SIZE },
+    { x: 31 * TILE_SIZE, y: 5 * TILE_SIZE },
+    { x: 5 * TILE_SIZE, y: 28 * TILE_SIZE },
+    { x: 30 * TILE_SIZE, y: 28 * TILE_SIZE },
+    { x: 43 * TILE_SIZE, y: 13 * TILE_SIZE },
+    { x: 43 * TILE_SIZE, y: 27 * TILE_SIZE },
+  ];
+
+  const props: PropState[] = [
+    { id: 'prop_tav_1', kind: 'crate', x: 6 * TILE_SIZE, y: 5 * TILE_SIZE, opened: false, value: 10 },
+    { id: 'prop_tav_2', kind: 'crate', x: 7 * TILE_SIZE, y: 5 * TILE_SIZE, opened: false, value: 10 },
+    { id: 'prop_tav_3', kind: 'chest', x: 42 * TILE_SIZE, y: 5 * TILE_SIZE, opened: false, value: 50 },
+  ];
+
+  const npcs: NpcState[] = [
+    {
+      id: 'npc_lena',
+      name: 'Barkeep Lena',
+      x: 16.5 * TILE_SIZE,
+      y: 6.2 * TILE_SIZE,
+      dialogue: 'Welcome to the Rusty Tankard! Care for a glass of honeyed mead?',
+      spriteKind: 'barkeep',
+    },
+    {
+      id: 'npc_bram',
+      name: 'Innkeeper Bram',
+      x: 8.5 * TILE_SIZE,
+      y: 13.5 * TILE_SIZE,
+      dialogue: 'Greetings, adventurer! Rest by our warm hearth fireplace.',
+      spriteKind: 'innkeeper',
+    },
+    {
+      id: 'npc_jorah',
+      name: 'Veteran Jorah',
+      x: 31 * TILE_SIZE,
+      y: 18.5 * TILE_SIZE,
+      dialogue: 'Test your steel against the training dummies in my arena!',
+      spriteKind: 'veteran',
+    },
+  ];
+
+  const trainingDummies: TrainingDummyState[] = [
+    {
+      id: 'dummy_1',
+      x: 38 * TILE_SIZE,
+      y: 16 * TILE_SIZE,
+      hp: 9999,
+      maxHp: 9999,
+      hitAnimMs: 0,
+    },
+    {
+      id: 'dummy_2',
+      x: 38 * TILE_SIZE,
+      y: 24 * TILE_SIZE,
+      hp: 9999,
+      maxHp: 9999,
+      hitAnimMs: 0,
+    },
+  ];
+
+  const map: DungeonMap = {
+    floor: 0,
+    seed: 99999,
+    biome: 'courtyard',
+    biomeTitle: 'The Rusty Tankard Tavern',
+    width,
+    height,
+    tiles,
+    rooms,
+    torches,
+    portalPos: { x: 42 * TILE_SIZE, y: 9 * TILE_SIZE },
+    portalActive: true,
+  };
+
+  return {
+    map,
+    enemies: [],
+    props,
+    npcs,
+    trainingDummies,
+    spawnPoint: {
+      x: 21 * TILE_SIZE,
+      y: 18 * TILE_SIZE,
+    },
   };
 }
