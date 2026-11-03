@@ -538,7 +538,8 @@ export type ClientMessage =
   | { type: 'player:change_class'; heroClass: HeroClassId }
   | { type: 'player:ping'; label: string; x: number; y: number }
   | { type: 'chat:send'; text: string }
-  | { type: 'room:restart' };
+  | { type: 'room:restart' }
+  | { type: 'ping'; t: number };
 
 export type ServerMessage =
   | { type: 'lobby:rooms'; rooms: RoomSummary[]; onlineCount: number }
@@ -547,4 +548,5 @@ export type ServerMessage =
   | { type: 'room:tick'; snapshot: GameSnapshot }
   | { type: 'chat:message'; message: ChatMessage }
   | { type: 'room:left' }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'pong'; t: number };

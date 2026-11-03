@@ -314,6 +314,11 @@ async function startServer() {
         return;
       }
 
+      if (msg.type === 'ping') {
+        sendJson(ws, { type: 'pong', t: msg.t });
+        return;
+      }
+
       if (msg.type === 'lobby:subscribe') {
         sendJson(ws, {
           type: 'lobby:rooms',

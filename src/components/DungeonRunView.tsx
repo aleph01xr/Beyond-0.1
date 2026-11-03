@@ -35,6 +35,7 @@ interface DungeonRunViewProps {
   onSendChat: (text: string) => void;
   onRestartRun: () => void;
   onLeaveRoom: () => void;
+  pingMs?: number;
 }
 
 export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
@@ -51,6 +52,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onSendChat,
   onRestartRun,
   onLeaveRoom,
+  pingMs = 18,
 }) => {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
@@ -231,8 +233,25 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <span>{formatTime(snapshot.elapsedSec)}</span>
         </div>
 
-        {/* Right: Room Code, Chat & Menu */}
+        {/* Right: Room Code, Ping, Chat & Menu */}
         <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5">
+          {/* Latency / Ping Monitor */}
+          <div
+            className="pointer-events-auto hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] font-mono text-xs text-[#E6E4EE] min-h-[36px]"
+            title="Connection Latency (Ping)"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                pingMs < 80
+                  ? 'bg-emerald-400'
+                  : pingMs < 180
+                    ? 'bg-amber-400'
+                    : 'bg-rose-500 animate-pulse'
+              }`}
+            />
+            <span>{pingMs}ms</span>
+          </div>
+
           <button
             type="button"
             onClick={handleCopyCode}

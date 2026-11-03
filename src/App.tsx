@@ -39,6 +39,7 @@ export function App() {
   const [dungeonMap, setDungeonMap] = useState<DungeonMap | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [pingMs, setPingMs] = useState<number>(18);
 
   const latestSnapshotRef = useRef<GameSnapshot | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -166,6 +167,8 @@ export function App() {
             .catch(() => {});
         } else if (msg.type === 'error') {
           setErrorBanner(msg.message);
+        } else if (msg.type === 'pong') {
+          setPingMs(Math.max(1, Math.round(performance.now() - msg.t)));
         }
       };
 
@@ -178,8 +181,21 @@ export function App() {
 
     connect();
 
+    const pingInterval = window.setInterval(() => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: 'ping',
+            t: performance.now(),
+          } satisfies ClientMessage)
+        );
+      }
+    }, 3000);
+
     return () => {
       disposed = true;
+      window.clearInterval(pingInterval);
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (wsRef.current) {
         wsRef.current.close();
@@ -321,6 +337,7 @@ export function App() {
         onSendChat={handleSendChat}
         onRestartRun={handleRestartRun}
         onLeaveRoom={handleLeaveRoom}
+        pingMs={pingMs}
       />
     );
   }
