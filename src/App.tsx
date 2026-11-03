@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DungeonRunView } from './components/DungeonRunView.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { SanctuaryLobby } from './components/SanctuaryLobby.tsx';
+import { getApiEndpoint, getWsUrl } from './client/apiConfig.ts';
 import type {
   ChatMessage,
   ClientMessage,
@@ -58,7 +59,7 @@ export function App() {
   useEffect(() => {
     if (!token || user) return;
     let cancelled = false;
-    fetch('/api/auth/me', {
+    fetch(getApiEndpoint('/api/auth/me'), {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(async (res) => {
@@ -95,10 +96,7 @@ export function App() {
 
     const connect = () => {
       if (disposed) return;
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/ws?token=${encodeURIComponent(
-        token
-      )}`;
+      const wsUrl = getWsUrl(token);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -157,7 +155,7 @@ export function App() {
           setDungeonMap(null);
           setScreen('LOBBY');
           // Refresh user career stats
-          fetch('/api/auth/me', {
+          fetch(getApiEndpoint('/api/auth/me'), {
             headers: { Authorization: `Bearer ${token}` },
           })
             .then((r) => (r.ok ? r.json() : null))

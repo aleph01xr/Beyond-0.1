@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import pg from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameRoom } from './src/server/gameEngine.ts';
 import type {
@@ -28,11 +29,24 @@ interface AccountRecord {
   highestFloor: number;
   totalKills: number;
   totalRevives: number;
+  gold?: number;
 }
 
 const accountsByLower = new Map<string, AccountRecord>();
 const accountsById = new Map<string, AccountRecord>();
 const sessionsByToken = new Map<string, string>();
+
+const DATA_DIR = path.resolve(__dirname, 'data');
+const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
+
+const { Pool } = pg;
+let dbPool: pg.Pool | null = null;
+if (process.env.DATABASE_URL) {
+  dbPool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+  });
+}
 
 function hashPassword(pw: string): string {
   return crypto.createHash('sha256').update(`beyond_salt_${pw}`).digest('hex');
@@ -49,6 +63,131 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
     totalKills: acc.totalKills,
     totalRevives: acc.totalRevives,
   };
+}
+
+function saveAccountsToFile(): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const list = Array.from(accountsById.values());
+    fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(list, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to save accounts to file:', err);
+  }
+}
+
+async function persistAccount(acc: AccountRecord): Promise<void> {
+  // Always update in-memory maps for 60fps real-time access
+  accountsByLower.set(acc.usernameLower, acc);
+  accountsById.set(acc.id, acc);
+
+  // Auto-backup to disk file
+  saveAccountsToFile();
+
+  // If PostgreSQL is configured, persist to database with ON CONFLICT upsert
+  if (dbPool) {
+    try {
+      await dbPool.query(
+        `INSERT INTO accounts (
+          id, username, username_lower, password_hash, locked_class, preferred_class,
+          runs_completed, highest_floor, total_kills, total_revives, gold, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        ON CONFLICT (username_lower) DO UPDATE SET
+          password_hash = EXCLUDED.password_hash,
+          locked_class = EXCLUDED.locked_class,
+          preferred_class = EXCLUDED.preferred_class,
+          runs_completed = EXCLUDED.runs_completed,
+          highest_floor = EXCLUDED.highest_floor,
+          total_kills = EXCLUDED.total_kills,
+          total_revives = EXCLUDED.total_revives,
+          gold = EXCLUDED.gold,
+          updated_at = NOW();`,
+        [
+          acc.id,
+          acc.username,
+          acc.usernameLower,
+          acc.passwordHash,
+          acc.lockedClass,
+          acc.preferredClass,
+          acc.runsCompleted,
+          acc.highestFloor,
+          acc.totalKills,
+          acc.totalRevives,
+          acc.gold ?? 0,
+        ]
+      );
+    } catch (err) {
+      console.error(`Postgres persist error for ${acc.username}:`, err);
+    }
+  }
+}
+
+async function initStorage(): Promise<void> {
+  if (dbPool) {
+    try {
+      await dbPool.query(`
+        CREATE TABLE IF NOT EXISTS accounts (
+          id VARCHAR(64) PRIMARY KEY,
+          username VARCHAR(32) NOT NULL,
+          username_lower VARCHAR(32) UNIQUE NOT NULL,
+          password_hash VARCHAR(128) NOT NULL,
+          locked_class VARCHAR(24) NOT NULL DEFAULT 'vanguard',
+          preferred_class VARCHAR(24) NOT NULL DEFAULT 'vanguard',
+          runs_completed INT NOT NULL DEFAULT 0,
+          highest_floor INT NOT NULL DEFAULT 0,
+          total_kills INT NOT NULL DEFAULT 0,
+          total_revives INT NOT NULL DEFAULT 0,
+          gold INT NOT NULL DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+      console.log('Connected to PostgreSQL and verified schema.');
+
+      const res = await dbPool.query('SELECT * FROM accounts');
+      for (const row of res.rows) {
+        const rec: AccountRecord = {
+          id: row.id,
+          username: row.username,
+          usernameLower: row.username_lower,
+          passwordHash: row.password_hash,
+          lockedClass: row.locked_class as HeroClassId,
+          preferredClass: row.preferred_class as HeroClassId,
+          runsCompleted: Number(row.runs_completed) || 0,
+          highestFloor: Number(row.highest_floor) || 0,
+          totalKills: Number(row.total_kills) || 0,
+          totalRevives: Number(row.total_revives) || 0,
+          gold: Number(row.gold) || 0,
+        };
+        accountsByLower.set(rec.usernameLower, rec);
+        accountsById.set(rec.id, rec);
+      }
+      console.log(`Loaded ${res.rows.length} accounts from PostgreSQL.`);
+    } catch (err) {
+      console.error('PostgreSQL init error, falling back to local storage:', err);
+    }
+  }
+
+  // Load from local file if empty
+  if (accountsById.size === 0 && fs.existsSync(ACCOUNTS_FILE)) {
+    try {
+      const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
+      const list = JSON.parse(data) as AccountRecord[];
+      for (const rec of list) {
+        accountsByLower.set(rec.usernameLower, rec);
+        accountsById.set(rec.id, rec);
+      }
+      console.log(`Loaded ${list.length} accounts from ${ACCOUNTS_FILE}`);
+    } catch (err) {
+      console.error('Failed to load accounts from file:', err);
+    }
+  }
+
+  // Seed default wanderer account locked as vanguard if no accounts exist
+  if (!accountsByLower.has('wanderer')) {
+    createAccount('wanderer', 'beyond', 'vanguard');
+  }
 }
 
 function createAccount(
@@ -72,14 +211,11 @@ function createAccount(
     highestFloor: 0,
     totalKills: 0,
     totalRevives: 0,
+    gold: 0,
   };
-  accountsByLower.set(rec.usernameLower, rec);
-  accountsById.set(rec.id, rec);
+  persistAccount(rec);
   return rec;
 }
-
-// Seed default wanderer account locked as vanguard
-createAccount('wanderer', 'beyond', 'vanguard');
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -149,16 +285,23 @@ function createManagedRoom(opts: {
       if (acc) {
         acc.highestFloor = Math.max(acc.highestFloor, floor);
         if (floor >= 3) acc.runsCompleted += 1;
+        persistAccount(acc);
       }
     }
   };
   room.onKillCallback = (pid) => {
     const acc = accountsById.get(pid);
-    if (acc) acc.totalKills += 1;
+    if (acc) {
+      acc.totalKills += 1;
+      persistAccount(acc);
+    }
   };
   room.onReviveCallback = (pid) => {
     const acc = accountsById.get(pid);
-    if (acc) acc.totalRevives += 1;
+    if (acc) {
+      acc.totalRevives += 1;
+      persistAccount(acc);
+    }
   };
 
   rooms.set(roomId, room);
@@ -185,8 +328,25 @@ function leaveCurrentRoom(client: ConnectedClient): void {
 }
 
 async function startServer() {
+  await initStorage();
+
   const app = express();
   app.use(express.json());
+
+  // CORS middleware for cross-origin requests
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
+  const isMaintenance = process.env.MAINTENANCE_MODE === 'true';
+  const redirectTarget = process.env.REDIRECT_URL || 'https://beyond-game-sg.onrender.com';
 
   app.post('/api/auth/login', (req, res) => {
     const usernameRaw = String(req.body?.username ?? '').trim();
@@ -203,6 +363,13 @@ async function startServer() {
 
     let acc = accountsByLower.get(usernameRaw.toLowerCase());
     if (!acc) {
+      if (isMaintenance) {
+        res.status(503).json({
+          error: `Server is migrating to Singapore for lower latency. Please connect to: ${redirectTarget}`,
+          redirectUrl: redirectTarget,
+        });
+        return;
+      }
       acc = createAccount(usernameRaw, passwordRaw, 'vanguard');
     } else if (acc.passwordHash !== hashPassword(passwordRaw)) {
       res.status(401).json({ error: 'Invalid password for this adventurer.' });
@@ -215,6 +382,14 @@ async function startServer() {
   });
 
   app.post('/api/auth/register', (req, res) => {
+    if (isMaintenance) {
+      res.status(503).json({
+        error: `Server is migrating to Singapore for lower latency. Please register at: ${redirectTarget}`,
+        redirectUrl: redirectTarget,
+      });
+      return;
+    }
+
     const usernameRaw = String(req.body?.username ?? '').trim();
     const passwordRaw = String(req.body?.password ?? '');
     const preferredClass = (req.body?.preferredClass as HeroClassId) || 'vanguard';
@@ -256,6 +431,7 @@ async function startServer() {
       return;
     }
     acc.passwordHash = hashPassword(newPassword);
+    persistAccount(acc);
     res.json({ message: 'Password updated. You may now log in.' });
   });
 
@@ -280,6 +456,66 @@ async function startServer() {
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     if (token) sessionsByToken.delete(token);
     res.json({ ok: true });
+  });
+
+  // Protected Admin Migration: Export Accounts
+  app.get('/api/admin/export-accounts', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET || 'beyond_migrate_secret_key_2026';
+    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7) !== expectedSecret) {
+      res.status(403).json({ error: 'Forbidden: Invalid or missing migration admin secret.' });
+      return;
+    }
+
+    const list = Array.from(accountsById.values());
+    res.json({
+      exportTimestamp: Date.now(),
+      count: list.length,
+      accounts: list,
+    });
+  });
+
+  // Protected Admin Migration: Import Accounts
+  app.post('/api/admin/import-accounts', async (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET || 'beyond_migrate_secret_key_2026';
+    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7) !== expectedSecret) {
+      res.status(403).json({ error: 'Forbidden: Invalid or missing migration admin secret.' });
+      return;
+    }
+
+    const payload = req.body?.accounts;
+    if (!Array.isArray(payload)) {
+      res.status(400).json({ error: 'Invalid payload: "accounts" array required.' });
+      return;
+    }
+
+    let importedCount = 0;
+    for (const item of payload) {
+      if (item && item.username && item.passwordHash) {
+        const rec: AccountRecord = {
+          id: String(item.id || `usr_${crypto.randomBytes(6).toString('hex')}`),
+          username: String(item.username),
+          usernameLower: String(item.usernameLower || item.username).toLowerCase(),
+          passwordHash: String(item.passwordHash),
+          lockedClass: (item.lockedClass as HeroClassId) || 'vanguard',
+          preferredClass: (item.preferredClass || item.lockedClass || 'vanguard') as HeroClassId,
+          runsCompleted: Number(item.runsCompleted) || 0,
+          highestFloor: Number(item.highestFloor) || 0,
+          totalKills: Number(item.totalKills) || 0,
+          totalRevives: Number(item.totalRevives) || 0,
+          gold: Number(item.gold) || 0,
+        };
+        await persistAccount(rec);
+        importedCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      importedCount,
+      message: `Successfully migrated ${importedCount} accounts into storage.`,
+    });
   });
 
   const server = http.createServer(app);
@@ -329,6 +565,13 @@ async function startServer() {
       }
 
       if (msg.type === 'room:create') {
+        if (isMaintenance) {
+          sendJson(ws, {
+            type: 'error',
+            message: `Expeditions are paused on Oregon during Singapore migration. Please connect to: ${redirectTarget}`,
+          });
+          return;
+        }
         leaveCurrentRoom(client);
         // Player is strictly locked to their account's hero class
         const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
@@ -482,7 +725,7 @@ async function startServer() {
     });
   }
 
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Beyond Co-op Server listening on http://0.0.0.0:${PORT}`);
   });

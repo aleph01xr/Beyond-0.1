@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { getApiEndpoint } from '../client/apiConfig.ts';
 import { sfx } from '../client/sound.ts';
 import { HERO_CLASSES, type HeroClassId, type UserProfile } from '../shared/types.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
@@ -114,7 +115,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
     setLoading(true);
     try {
       if (mode === 'reset') {
-        const res = await fetch('/api/auth/reset-password', {
+        const res = await fetch(getApiEndpoint('/api/auth/reset-password'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: trimmedUser, newPassword: password }),
@@ -130,7 +131,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
       }
 
       const endpoint = mode === 'register' ? '/api/auth/register' : '/api/auth/login';
-      const res = await fetch(endpoint, {
+      const res = await fetch(getApiEndpoint(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
