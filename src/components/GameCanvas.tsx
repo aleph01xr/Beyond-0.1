@@ -355,8 +355,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             cur.y += p.vy * dtSec;
           }
           // Smoothly reconcile error with server
-          cur.x += (p.x - cur.x) * 0.38;
-          cur.y += (p.y - cur.y) * 0.38;
+          cur.x += (p.x - cur.x) * 0.58;
+          cur.y += (p.y - cur.y) * 0.58;
         }
       }
 
@@ -369,8 +369,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             cur.x += en.vx * dtSec;
             cur.y += en.vy * dtSec;
           }
-          cur.x += (en.x - cur.x) * 0.38;
-          cur.y += (en.y - cur.y) * 0.38;
+          cur.x += (en.x - cur.x) * 0.58;
+          cur.y += (en.y - cur.y) * 0.58;
         }
       }
 
