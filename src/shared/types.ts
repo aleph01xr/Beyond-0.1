@@ -205,7 +205,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'twinstring_charm',
     name: 'Twinstring Charm',
     category: 'Offense',
-    summary: 'Primary attacks unleash +1 additional projectile or cleave wave.',
+    summary: 'Primary attacks unleash +1 additional projectile or cleave wave, but extra projectiles deal 75% damage.',
     accent: '#E0A94F',
   },
   {

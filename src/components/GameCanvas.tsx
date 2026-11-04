@@ -1799,17 +1799,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.stroke();
         }
 
-        // Player Name Tag & Class Role Badge
+        // Player Name Tag
         const isLocalPlayer = p.id === playerId;
-        const roleIcon =
-          p.heroClass === 'vanguard'
-            ? '⚔️'
-            : p.heroClass === 'ranger'
-              ? '🏹'
-              : p.heroClass === 'arcanist'
-                ? '🔮'
-                : '✨';
-        const displayLabel = `${roleIcon} ${p.username}`;
+        const displayLabel = p.username;
 
         ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';

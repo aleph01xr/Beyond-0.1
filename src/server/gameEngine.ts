@@ -1610,6 +1610,7 @@ export class GameRoom {
     for (let s = 0; s < shotCount; s++) {
       const spread = shotCount === 2 ? (s === 0 ? -0.1 : 0.1) : 0;
       const ang = p.aimAngle + spread;
+      const shotDmg = Math.round(dmg * (s === 0 ? 1.0 : 0.75));
 
       if (p.heroClass === 'vanguard') {
         this.spawnProjectile({
@@ -1622,7 +1623,7 @@ export class GameRoom {
           vy: Math.sin(ang) * 310,
           angle: ang,
           radius: 28,
-          damage: dmg,
+          damage: shotDmg,
           pierce: 4 + bonusPierce,
           crit: hasCrit,
           ttlMs: 260,
@@ -1639,7 +1640,7 @@ export class GameRoom {
           vy: Math.sin(ang) * 470,
           angle: ang,
           radius: 6,
-          damage: dmg,
+          damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
           ttlMs: 850,
@@ -1675,7 +1676,7 @@ export class GameRoom {
           vy: Math.sin(ang) * 380,
           angle: ang,
           radius: 8,
-          damage: dmg,
+          damage: shotDmg,
           pierce: 2 + bonusPierce,
           crit: hasCrit,
           ttlMs: 920,
@@ -1692,7 +1693,7 @@ export class GameRoom {
           vy: Math.sin(ang) * 390,
           angle: ang,
           radius: 8,
-          damage: dmg,
+          damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
           ttlMs: 800,
