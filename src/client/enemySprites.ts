@@ -15,15 +15,32 @@ export function drawSlimeSprite(
   const isMoving = en.state === 'chase';
   const isWindup = en.state === 'windup';
 
-  // Squash-and-stretch cycle
-  const bouncePhase = isMoving ? (now * 0.012 + ex * 0.1) % (Math.PI * 2) : now * 0.004;
-  const stretchY = isWindup ? 0.75 : isMoving ? 1 + Math.sin(bouncePhase) * 0.22 : 1 + Math.sin(bouncePhase) * 0.06;
-  const stretchX = 1 / stretchY;
-  const yOffset = isMoving ? Math.abs(Math.sin(bouncePhase)) * -6 : 0;
+  // Distinct Idle Jelly Breathing vs Moving Hop vs Windup Squash
+  let stretchY = 1;
+  let stretchX = 1;
+  let yOffset = 0;
+
+  if (isWindup) {
+    stretchY = 0.72;
+    stretchX = 1.35;
+    yOffset = 2;
+  } else if (isMoving) {
+    const bouncePhase = (now * 0.012 + ex * 0.1) % (Math.PI * 2);
+    stretchY = 1 + Math.sin(bouncePhase) * 0.24;
+    stretchX = 1 / stretchY;
+    yOffset = Math.abs(Math.sin(bouncePhase)) * -6;
+  } else {
+    // Rich idle organic jelly breathing with subtle side-to-side gel wobble
+    const idleBounce = Math.sin(now * 0.0034 + ex * 0.2);
+    stretchY = 1 + idleBounce * 0.11;
+    const idleWobble = Math.cos(now * 0.0026 + ex * 0.15) * 0.04;
+    stretchX = (1 / stretchY) + idleWobble;
+    yOffset = -Math.abs(idleBounce) * 1.2;
+  }
 
   const sy = ey + yOffset;
 
-  // Shadow
+  // Shadow expands/flattens realistically with squash-and-stretch
   const shadowW = en.radius * (1 + (1 - stretchY) * 0.5) * 1.8;
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   ctx.beginPath();
@@ -75,17 +92,20 @@ export function drawSlimeSprite(
   ctx.closePath();
   ctx.fill();
 
-  // 3. Floating Nucleus Core
-  const nucBob = Math.sin(now * 0.008) * 1.5;
+  // 3. Floating Buoyant Nucleus Core
+  const nucBob = isMoving ? Math.sin(now * 0.008) * 1.5 : Math.sin(now * 0.004 + ex) * 2.2;
+  const nucX = !isMoving ? Math.cos(now * 0.003 + ex) * 1.2 : 0;
   ctx.fillStyle = nucleusColor;
   ctx.beginPath();
-  ctx.arc(0, -1 + nucBob, en.radius * 0.35, 0, Math.PI * 2);
+  ctx.arc(nucX, -1 + nucBob, en.radius * 0.35, 0, Math.PI * 2);
   ctx.fill();
 
-  // Floating micro-bubbles
+  // Floating micro-bubbles drifting inside the jelly
+  const bubbleY1 = Math.sin(now * 0.005 + ex) * 1.8;
+  const bubbleY2 = Math.cos(now * 0.004 + ex) * 1.8;
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(-en.radius * 0.3, -en.radius * 0.2 + nucBob, 2, 2);
-  ctx.fillRect(en.radius * 0.25, en.radius * 0.1 - nucBob, 1.5, 1.5);
+  ctx.fillRect(-en.radius * 0.3, -en.radius * 0.2 + bubbleY1, 2, 2);
+  ctx.fillRect(en.radius * 0.25, en.radius * 0.1 + bubbleY2, 1.5, 1.5);
 
   // 4. Glossy Specular Bevel & Shine
   ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
@@ -93,7 +113,7 @@ export function drawSlimeSprite(
   ctx.fillRect(-en.radius * 0.7, -en.radius * 0.65, 3, en.radius * 0.35);
 
   // 5. Expressive Blinking Eyes
-  const blink = Math.sin(now * 0.003 + ex) > 0.96;
+  const blink = Math.sin(now * 0.0028 + ex) > 0.94;
   const eyeY = -en.radius * 0.15;
   const eyeSpacing = en.radius * 0.38;
 
@@ -133,9 +153,19 @@ export function drawGoblinSprite(
 ): void {
   const isMoving = en.state === 'chase';
   const isWindup = en.state === 'windup';
-  const walkBob = isMoving ? Math.sin(now * 0.018 + ex * 0.15) * 2.5 : 0;
+
+  // Fidgety rapid goblin breathing vs walking bob
+  const idleBreathing = Math.sin(now * 0.0062 + ex * 0.18) * 1.4;
+  const walkBob = isMoving ? Math.sin(now * 0.018 + ex * 0.15) * 2.5 : idleBreathing;
   const legCycle = isMoving ? Math.sin(now * 0.02 + ex * 0.1) * 3 : 0;
   const facingRight = (en.vx || 0) >= 0;
+
+  // Ear twitching: goblins nervously perk their pointed ears
+  const earTwitchCycle = Math.sin(now * 0.0035 + ex);
+  const earTwitch = !isMoving && earTwitchCycle > 0.85 ? Math.sin(now * 0.04) * 1.8 : 0;
+
+  // Shifty glances: looking around warily when idle
+  const eyeShift = !isMoving && Math.sin(now * 0.002 + ex) > 0.35 ? 1 : 0;
 
   // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
@@ -180,34 +210,35 @@ export function drawGoblinSprite(
   ctx.fillStyle = '#3F6212';
   ctx.fillRect(5, -8, 3, 3);
 
-  // 4. Large Pointed Goblin Ears
+  // 4. Large Pointed Goblin Ears with Twitching
   // Left ear
   ctx.fillStyle = '#3F6212';
-  ctx.fillRect(-10, -11, 5, 4);
-  ctx.fillRect(-12, -10, 3, 2);
+  ctx.fillRect(-10, -11 + earTwitch, 5, 4);
+  ctx.fillRect(-12, -10 + earTwitch, 3, 2);
   ctx.fillStyle = '#65A30D';
-  ctx.fillRect(-9, -10, 3, 2);
+  ctx.fillRect(-9, -10 + earTwitch, 3, 2);
   // Right ear
   ctx.fillStyle = '#3F6212';
-  ctx.fillRect(4, -12, 5, 4);
-  ctx.fillRect(8, -13, 3, 2);
+  ctx.fillRect(4, -12 - earTwitch, 5, 4);
+  ctx.fillRect(8, -13 - earTwitch, 3, 2);
   ctx.fillStyle = '#65A30D';
-  ctx.fillRect(5, -11, 3, 2);
+  ctx.fillRect(5, -11 - earTwitch, 3, 2);
   // Golden earring hoop on right ear
   ctx.fillStyle = '#F59E0B';
-  ctx.fillRect(8, -10, 2, 3);
+  ctx.fillRect(8, -10 - earTwitch, 2, 3);
 
-  // 5. Menacing Glowing Amber/Red Eyes
+  // 5. Menacing Glowing Amber/Red Eyes with Shifty Glance
   ctx.fillStyle = '#7F1D1D';
-  ctx.fillRect(0, -9, 3, 3);
-  ctx.fillRect(4, -9, 3, 3);
+  ctx.fillRect(0 + eyeShift, -9, 3, 3);
+  ctx.fillRect(4 + eyeShift, -9, 3, 3);
   ctx.fillStyle = isWindup ? '#EF4444' : '#FBBF24';
-  ctx.fillRect(1, -8, 2, 2);
-  ctx.fillRect(4.5, -8, 2, 2);
+  ctx.fillRect(1 + eyeShift, -8, 2, 2);
+  ctx.fillRect(4.5 + eyeShift, -8, 2, 2);
 
-  // 6. Jagged Scavenged Iron Scimitar
+  // 6. Jagged Scavenged Iron Scimitar with Idle Twitch
   ctx.save();
-  const swordAngle = isWindup ? -0.8 : 0.3 + (isMoving ? Math.sin(now * 0.015) * 0.2 : 0);
+  const swordIdleWiggle = !isMoving ? Math.sin(now * 0.005 + ex) * 0.08 : 0;
+  const swordAngle = isWindup ? -0.8 : isMoving ? 0.3 + Math.sin(now * 0.015) * 0.2 : 0.28 + swordIdleWiggle;
   ctx.translate(6, 2);
   ctx.rotate(swordAngle);
   // Hilt
@@ -242,9 +273,16 @@ export function drawSkeletonSprite(
 ): void {
   const isMoving = en.state === 'chase';
   const isWindup = en.state === 'windup';
-  const walkBob = isMoving ? Math.sin(now * 0.016 + ex * 0.2) * 2 : 0;
+
+  // Undead skeletal rattle sway
+  const idleRattle = Math.sin(now * 0.0032 + ex * 0.14) * 1.3;
+  const walkBob = isMoving ? Math.sin(now * 0.016 + ex * 0.2) * 2 : idleRattle;
   const legCycle = isMoving ? Math.sin(now * 0.02 + ex * 0.1) * 4 : 0;
   const facingRight = (en.vx || 0) >= 0;
+
+  // Skull micro-tilt & jaw rattle when idle
+  const jawDrop = !isMoving && Math.sin(now * 0.003 + ex) > 0.72 ? 1 : 0;
+  const skullTilt = !isMoving ? Math.sin(now * 0.0022 + ex) * 0.04 : 0;
 
   // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.36)';
@@ -283,19 +321,22 @@ export function drawSkeletonSprite(
   ctx.fillRect(-3, 0, 2, 2);
   ctx.fillRect(1, 0, 2, 2);
 
-  // 4. Ancient Ivory Bone Skull
+  // 4. Ancient Ivory Bone Skull with subtle tilt
+  ctx.save();
+  ctx.rotate(skullTilt);
   ctx.fillStyle = '#CBD5E1';
   ctx.fillRect(-6, -14, 12, 11);
   ctx.fillStyle = '#F1F5F9';
   ctx.fillRect(-5, -13, 10, 9);
-  // Cheekbones & jawline
+
+  // Cheekbones & jawline with jaw creak
   ctx.fillStyle = '#94A3B8';
-  ctx.fillRect(-5, -4, 10, 2); // Teeth row
+  ctx.fillRect(-5, -4 + jawDrop, 10, 2); // Teeth row
   ctx.fillStyle = '#0F172A';
-  ctx.fillRect(-4, -4, 1, 2); // Teeth gaps
-  ctx.fillRect(-2, -4, 1, 2);
-  ctx.fillRect(0, -4, 1, 2);
-  ctx.fillRect(2, -4, 1, 2);
+  ctx.fillRect(-4, -4 + jawDrop, 1, 2); // Teeth gaps
+  ctx.fillRect(-2, -4 + jawDrop, 1, 2);
+  ctx.fillRect(0, -4 + jawDrop, 1, 2);
+  ctx.fillRect(2, -4 + jawDrop, 1, 2);
 
   // Nasal cavity
   ctx.fillStyle = '#0F172A';
@@ -306,13 +347,15 @@ export function drawSkeletonSprite(
   ctx.fillRect(-4.5, -10, 3.5, 3.5);
   ctx.fillRect(1, -10, 3.5, 3.5);
 
-  const soulFlicker = Math.sin(now * 0.02 + ex) * 0.5;
+  const soulFlicker = Math.sin(now * 0.024 + ex) * 0.8;
+  const flameH = 2.4 + Math.sin(now * 0.016 + ex) * 0.6;
   ctx.fillStyle = '#38BDF8';
-  ctx.fillRect(-4, -9.5 + soulFlicker, 2.5, 2.5);
-  ctx.fillRect(1.5, -9.5 + soulFlicker, 2.5, 2.5);
+  ctx.fillRect(-4, -9.5 + soulFlicker, 2.5, flameH);
+  ctx.fillRect(1.5, -9.5 + soulFlicker, 2.5, flameH);
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(-3.5, -9 + soulFlicker, 1, 1);
   ctx.fillRect(2, -9 + soulFlicker, 1, 1);
+  ctx.restore();
 
   // 6. Left Hand: Wooden Buckler Shield
   ctx.fillStyle = '#451A03';
@@ -323,9 +366,10 @@ export function drawSkeletonSprite(
   ctx.fillStyle = '#CBD5E1';
   ctx.fillRect(-11, 1, 2, 2); // Iron boss
 
-  // 7. Right Hand: Weathered Iron Shortsword
+  // 7. Right Hand: Weathered Iron Shortsword with Idle Grip Twitch
   ctx.save();
-  const swordAngle = isWindup ? -0.7 : 0.2 + (isMoving ? Math.sin(now * 0.015) * 0.15 : 0);
+  const swordIdle = !isMoving ? Math.sin(now * 0.003 + ex) * 0.06 : 0;
+  const swordAngle = isWindup ? -0.7 : isMoving ? 0.2 + Math.sin(now * 0.015) * 0.15 : 0.18 + swordIdle;
   ctx.translate(6, 2);
   ctx.rotate(swordAngle);
   ctx.fillStyle = '#78350F';
@@ -354,10 +398,11 @@ export function drawCultistSprite(
 ): void {
   const isMoving = en.state === 'chase';
   const isWindup = en.state === 'windup';
-  const hoverBob = Math.sin(now * 0.007 + ex * 0.1) * 3.5;
+  // Smooth levitation hover glide
+  const hoverBob = Math.sin(now * 0.0055 + ex * 0.1) * 3.5;
   const facingRight = (en.vx || 0) >= 0;
 
-  // Shadow expands/contracts with hover
+  // Shadow expands/contracts with hover height
   const shadowScale = 1 - Math.abs(hoverBob) * 0.05;
   ctx.fillStyle = 'rgba(0,0,0,0.38)';
   ctx.beginPath();
@@ -368,8 +413,8 @@ export function drawCultistSprite(
   ctx.translate(ex, ey - 2 + hoverBob);
   if (!facingRight) ctx.scale(-1, 1);
 
-  // 1. Billowing Dark Purple Vestments / Robes
-  const robeFlap = isMoving ? Math.sin(now * 0.015) * 2 : 0;
+  // 1. Billowing Dark Purple Vestments / Robes with idle air draft flutter
+  const robeFlap = isMoving ? Math.sin(now * 0.015) * 2 : Math.sin(now * 0.004 + ex * 0.12) * 1.5;
   ctx.fillStyle = '#2E1065';
   ctx.fillRect(-8, -4, 16, 16);
   ctx.fillStyle = '#3B0764';
@@ -402,7 +447,7 @@ export function drawCultistSprite(
   ctx.fillStyle = '#0F0E17';
   ctx.fillRect(-5, -12, 10, 7);
 
-  // 5. Piercing Eldritch Magenta Eyes
+  // 5. Piercing Eldritch Magenta Eyes with subtle pulse
   const eyeColor = isWindup ? '#EF4444' : '#C084FC';
   ctx.fillStyle = eyeColor;
   ctx.fillRect(-3.5, -9, 2.5, 2.5);
@@ -411,36 +456,45 @@ export function drawCultistSprite(
   ctx.fillRect(-3, -8.5, 1, 1);
   ctx.fillRect(1.5, -8.5, 1, 1);
 
-  // 6. Floating Swirling Void Orb in Hand
-  const orbBob = Math.sin(now * 0.01) * 2;
+  // 6. Floating Swirling Void Orb with Pulsating Expansion
+  const orbBob = Math.sin(now * 0.008 + ex) * 2;
+  const orbPulse = Math.sin(now * 0.006 + ex) * 0.8;
   const ox = 9;
   const oy = -1 + orbBob;
 
   // Void orb aura
   ctx.fillStyle = 'rgba(126, 34, 206, 0.4)';
   ctx.beginPath();
-  ctx.arc(ox, oy, 7, 0, Math.PI * 2);
+  ctx.arc(ox, oy, 7 + orbPulse, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#4C1D95';
   ctx.beginPath();
-  ctx.arc(ox, oy, 4.5, 0, Math.PI * 2);
+  ctx.arc(ox, oy, 4.5 + orbPulse * 0.5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#A855F7';
   ctx.beginPath();
-  ctx.arc(ox, oy, 2.5, 0, Math.PI * 2);
+  ctx.arc(ox, oy, 2.5 + orbPulse * 0.3, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = '#F3E8FF';
   ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
 
-  // Orbiting Void Spark
-  const orbAngle = now * 0.012;
-  const sx = ox + Math.cos(orbAngle) * 6;
-  const sy = oy + Math.sin(orbAngle) * 4;
+  // Dual Orbiting Void Sparks
+  // Primary spark
+  const orbAngle1 = now * 0.012;
+  const sx1 = ox + Math.cos(orbAngle1) * 6;
+  const sy1 = oy + Math.sin(orbAngle1) * 4;
   ctx.fillStyle = '#E9D5FF';
-  ctx.fillRect(sx - 0.5, sy - 0.5, 1.5, 1.5);
+  ctx.fillRect(sx1 - 0.5, sy1 - 0.5, 1.5, 1.5);
+
+  // Secondary counter-orbiting spark
+  const orbAngle2 = -now * 0.008 + Math.PI;
+  const sx2 = ox + Math.cos(orbAngle2) * 8;
+  const sy2 = oy + Math.sin(orbAngle2) * 5;
+  ctx.fillStyle = '#C084FC';
+  ctx.fillRect(sx2 - 0.5, sy2 - 0.5, 1, 1);
 
   ctx.restore();
 }
@@ -458,9 +512,15 @@ export function drawKnightSprite(
 ): void {
   const isMoving = en.state === 'chase';
   const isWindup = en.state === 'windup';
-  const walkBob = isMoving ? Math.sin(now * 0.014 + ex * 0.1) * 2.5 : 0;
+
+  // Heavy plate-armored breathing vs heavy march bob
+  const idleBob = Math.sin(now * 0.0028 + ex * 0.12) * 1.3;
+  const walkBob = isMoving ? Math.sin(now * 0.014 + ex * 0.1) * 2.5 : idleBob;
   const legCycle = isMoving ? Math.sin(now * 0.016 + ex * 0.1) * 3 : 0;
   const facingRight = (en.vx || 0) >= 0;
+
+  // Tattered red war cape draft flutter
+  const capeWave = Math.sin(now * 0.0036 + ex * 0.15) * 2;
 
   // Heavy armored shadow
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -472,11 +532,11 @@ export function drawKnightSprite(
   ctx.translate(ex, ey + walkBob);
   if (!facingRight) ctx.scale(-1, 1);
 
-  // 1. Tattered Red War Cape behind
+  // 1. Tattered Red War Cape behind with idle draft flutter
   ctx.fillStyle = '#881337';
-  ctx.fillRect(-10, -5, 20, 16);
+  ctx.fillRect(-10, -5, 20 + capeWave * 0.5, 16);
   ctx.fillStyle = '#9F1239';
-  ctx.fillRect(-9, -4, 18, 14);
+  ctx.fillRect(-9, -4, 18 + capeWave * 0.5, 14);
 
   // 2. Heavy Greaves & Sabatons (Legs & Feet)
   ctx.fillStyle = '#1E293B';
@@ -519,28 +579,31 @@ export function drawKnightSprite(
   ctx.fillRect(-3, -22, 6, 4);
   ctx.fillRect(-1, -24, 2, 3);
 
-  // 6. Barred Visor with Menacing Crimson War-Glare
+  // 6. Barred Visor with Menacing Crimson War-Glare Pulse
   ctx.fillStyle = '#0F172A';
   ctx.fillRect(-5, -13, 10, 4);
 
-  const glowColor = isWindup ? '#FEF08A' : '#EF4444';
+  const glarePulse = Math.sin(now * 0.0045 + ex) * 0.2 + 0.8;
+  const glowColor = isWindup ? '#FEF08A' : glarePulse > 0.9 ? '#FF4D4D' : '#EF4444';
   ctx.fillStyle = glowColor;
   ctx.fillRect(-4, -12, 8, 2);
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(-2, -12, 4, 1);
 
-  // 7. Left Hand: Tower Heater Shield
+  // 7. Left Hand: Tower Heater Shield with subtle idle settling
+  const shieldSettle = !isMoving ? Math.cos(now * 0.0028 + ex * 0.12) * 0.5 : 0;
   ctx.fillStyle = '#1E293B';
-  ctx.fillRect(-14, -6, 6, 17);
+  ctx.fillRect(-14, -6 + shieldSettle, 6, 17);
   ctx.fillStyle = '#991B1B';
-  ctx.fillRect(-13, -5, 4, 15);
+  ctx.fillRect(-13, -5 + shieldSettle, 4, 15);
   ctx.fillStyle = '#D97706';
-  ctx.fillRect(-13, 0, 4, 3); // Gold shield cross
-  ctx.fillRect(-12, -2, 2, 7);
+  ctx.fillRect(-13, 0 + shieldSettle, 4, 3); // Gold shield cross
+  ctx.fillRect(-12, -2 + shieldSettle, 2, 7);
 
-  // 8. Right Hand: Massive Notched Steel Greatsword
+  // 8. Right Hand: Massive Notched Steel Greatsword with Blade Gleam Sweep
   ctx.save();
-  const swordAngle = isWindup ? -0.9 : 0.25 + (isMoving ? Math.sin(now * 0.014) * 0.2 : 0);
+  const swordIdle = !isMoving ? Math.sin(now * 0.0024 + ex) * 0.05 : 0;
+  const swordAngle = isWindup ? -0.9 : 0.25 + (isMoving ? Math.sin(now * 0.014) * 0.2 : swordIdle);
   ctx.translate(8, 0);
   ctx.rotate(swordAngle);
   // Hilt
@@ -558,6 +621,15 @@ export function drawKnightSprite(
   // Battle notch in steel
   ctx.fillStyle = '#1E293B';
   ctx.fillRect(-1, -12, 2, 2);
+
+  // Periodic metallic gleam traveling up the greatsword
+  const gleamCycle = (now * 0.0006 + ex * 0.05) % 1;
+  if (!isWindup && gleamCycle > 0.4 && gleamCycle < 0.6) {
+    const gleamY = -21 + (gleamCycle - 0.4) * 5 * 18;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, gleamY, 3, 2);
+  }
+
   ctx.restore();
 
   ctx.restore();

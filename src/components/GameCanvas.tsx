@@ -329,6 +329,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               aimAngleRef.current = Math.atan2(en.y - me.y, en.x - me.x);
             }
           }
+          if (nearestDist === Infinity && snap.trainingDummies) {
+            for (const dummy of snap.trainingDummies) {
+              const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
+              if (d < nearestDist && d <= maxDist) {
+                nearestDist = d;
+                aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
+              }
+            }
+          }
+          if (nearestDist === Infinity && snap.trainingDummies) {
+            for (const dummy of snap.trainingDummies) {
+              const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
+              if (d < nearestDist && d <= maxDist) {
+                nearestDist = d;
+                aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
+              }
+            }
+          }
         }
         if (!keysRef.current.attack) {
           keysRef.current.attack = true;
@@ -725,12 +743,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           drawNpc(ctx, npc, now);
         }
       }
-      if (snap.trainingDummies) {
-        for (const dummy of snap.trainingDummies) {
-          drawTrainingDummy(ctx, dummy, now);
-        }
-      }
-
       // Auto-hit Target Acquisition for local player
       const myPlayer = snap.players.find((p) => p.id === playerId);
       let lockedEnemyId: string | null = null;
@@ -745,6 +757,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             lockedEnemyId = en.id;
           }
         }
+        if (!lockedEnemyId && snap.trainingDummies) {
+          for (const dummy of snap.trainingDummies) {
+            const d = Math.hypot(dummy.x - myPlayer.x, dummy.y - myPlayer.y);
+            if (d < bestDist && d <= maxDist) {
+              bestDist = d;
+              lockedEnemyId = dummy.id;
+            }
+          }
+        }
+      }
+
+      if (snap.trainingDummies) {
+        for (const dummy of snap.trainingDummies) {
+          drawTrainingDummy(ctx, dummy, now, dummy.id === lockedEnemyId);
+        }
       }
 
       // Enemies
@@ -752,7 +779,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const pos = smoothedEnemies.get(en.id) || { x: en.x, y: en.y };
         const ex = Math.round(pos.x);
         const ey = Math.round(pos.y);
-        const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex * 0.1) * 2 : 0;
+        const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex * 0.1) * 2 : Math.sin(now * 0.003 + ex * 0.1) * 1.5;
 
         if (en.kind === 'slime') {
           drawSlimeSprite(ctx, en, ex, ey, now, map.biome);
@@ -1900,6 +1927,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (d < nearestDist && d <= maxDist) {
             nearestDist = d;
             aimAngleRef.current = Math.atan2(en.y - me.y, en.x - me.x);
+          }
+        }
+        if (nearestDist === Infinity && snap.trainingDummies) {
+          for (const dummy of snap.trainingDummies) {
+            const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
+            if (d < nearestDist && d <= maxDist) {
+              nearestDist = d;
+              aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
+            }
           }
         }
       }

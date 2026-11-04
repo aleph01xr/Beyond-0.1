@@ -740,117 +740,117 @@ export function drawDungeonProp(
   }
 }
 
-export function drawNpc(
-  ctx: CanvasRenderingContext2D,
-  npc: NpcState,
-  now: number
-): void {
-  const x = Math.round(npc.x);
-  const y = Math.round(npc.y);
-  const isSpeaking = (npc.speakingMs ?? 0) > 0;
-
-  // Idle vs Speaking animation
-  const talkBob = isSpeaking ? Math.sin(now * 0.018 + x) * 2.8 : 0;
-  const bob = Math.sin(now * 0.004 + x) * 1.5 + talkBob;
-
-  // Shadow
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fillRect(x - 9, y + 10, 18, 4);
-
-  // Glowing Golden Speech Aura Ring around feet when speaking
-  if (isSpeaking) {
-    const auraPulse = Math.sin(now * 0.012) * 2.5;
-    ctx.strokeStyle = 'rgba(252, 211, 77, 0.7)';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.ellipse(x, y + 10, 14 + auraPulse, 6, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // Body / Robes / Apron
-  ctx.fillStyle = npc.spriteKind === 'innkeeper' ? '#78350F' : npc.spriteKind === 'barkeep' ? '#1E3A8A' : '#374151';
-  ctx.fillRect(x - 8, y - 6 + bob, 16, 16);
-  ctx.fillStyle = npc.spriteKind === 'innkeeper' ? '#92400E' : npc.spriteKind === 'barkeep' ? '#2563EB' : '#4B5563';
-  ctx.fillRect(x - 6, y - 4 + bob, 12, 12);
-
-  // Animated Hand Gestures when speaking
-  if (isSpeaking) {
-    const armGest = Math.sin(now * 0.02) * 4;
-    ctx.fillStyle = '#FCD34D';
-    ctx.fillRect(x - 11, y - 2 + bob + armGest, 4, 4); // Left hand
-    ctx.fillRect(x + 7, y - 2 + bob - armGest, 4, 4); // Right hand
-  }
-
-  // Head & Hair/Hat
-  ctx.fillStyle = '#FCD34D';
-  ctx.fillRect(x - 5, y - 16 + bob, 10, 10);
-  ctx.fillStyle = npc.spriteKind === 'innkeeper' ? '#451A03' : '#1E293B';
-  ctx.fillRect(x - 6, y - 18 + bob, 12, 4);
-
-  // Animated Talking Mouth
-  if (isSpeaking) {
-    const mouthOpen = Math.sin(now * 0.035) > 0;
-    ctx.fillStyle = '#1E110A';
-    ctx.fillRect(x - 2, y - 10 + bob, 4, mouthOpen ? 3 : 1);
-  }
-
-  // Floating Speech Icon Badge
-  if (isSpeaking) {
-    const iconBob = Math.sin(now * 0.01) * 2;
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('💬', x, y - 36 + iconBob);
-  }
-
-  // Name Tag & Prompt
-  ctx.font = '600 10px "Plus Jakarta Sans", sans-serif';
-  ctx.fillStyle = isSpeaking ? '#FCD34D' : '#FDE68A';
-  ctx.textAlign = 'center';
-  ctx.fillText(npc.name, x, y - 22 + bob);
-  ctx.fillStyle = isSpeaking ? '#38BDF8' : '#94A3B8';
-  ctx.font = '500 9px "JetBrains Mono", monospace';
-  ctx.fillText(isSpeaking ? '• Speaking •' : '[E] Talk', x, y - 32 + bob);
-}
+export { drawNpc } from './npcSprites.ts';
 
 export function drawTrainingDummy(
   ctx: CanvasRenderingContext2D,
   dummy: TrainingDummyState,
-  now: number
+  now: number,
+  isLocked = false
 ): void {
   const x = Math.round(dummy.x);
   const y = Math.round(dummy.y);
-  const hitShake = dummy.hitAnimMs > 0 ? Math.sin(now * 0.05) * 3 : 0;
+  const isHit = (dummy.hitAnimMs ?? 0) > 0;
+  const hitIntensity = isHit ? Math.min(1, dummy.hitAnimMs / 280) : 0;
+  const hitShake = isHit ? Math.sin(now * 0.08) * 3.5 * hitIntensity : 0;
+  const hitRecoilTilt = isHit ? Math.sin(now * 0.06) * 0.14 * hitIntensity : 0;
+
+  // Subtle straw rope squeak & idle creak
+  const idleCreak = !isHit ? Math.sin(now * 0.003 + x) * 0.8 : 0;
+  const dummyTilt = !isHit ? Math.sin(now * 0.0025 + x) * 0.015 : hitRecoilTilt;
 
   // Shadow
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.fillRect(x - 10, y + 12, 20, 5);
 
-  // Wooden Post & Base
-  ctx.fillStyle = '#451A03';
-  ctx.fillRect(x - 3, y - 4, 6, 16);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(dummyTilt);
 
-  // Burlap Body / Torso
-  ctx.fillStyle = '#A16207';
-  ctx.fillRect(x - 12 + hitShake, y - 22, 24, 20);
-  ctx.fillStyle = '#CA8A04';
-  ctx.fillRect(x - 10 + hitShake, y - 20, 20, 16);
+  // Wooden Post & Crossbar Base
+  ctx.fillStyle = '#451A03';
+  ctx.fillRect(-3, -4, 6, 16);
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(-14 + hitShake * 0.3, -16 + idleCreak, 28, 4); // Crossbar arms
+
+  // Burlap Body / Torso (with hit flash brightness)
+  const outerBurlap = isHit && hitIntensity > 0.4 ? '#CA8A04' : '#A16207';
+  const innerBurlap = isHit && hitIntensity > 0.4 ? '#FEF08A' : '#CA8A04';
+  ctx.fillStyle = outerBurlap;
+  ctx.fillRect(-12 + hitShake, -22 + idleCreak, 24, 20);
+  ctx.fillStyle = innerBurlap;
+  ctx.fillRect(-10 + hitShake, -20 + idleCreak, 20, 16);
 
   // Stitched Cross on Dummy
   ctx.fillStyle = '#78350F';
-  ctx.fillRect(x - 2 + hitShake, y - 16, 4, 10);
-  ctx.fillRect(x - 6 + hitShake, y - 12, 12, 4);
+  ctx.fillRect(-2 + hitShake, -16 + idleCreak, 4, 10);
+  ctx.fillRect(-6 + hitShake, -12 + idleCreak, 12, 4);
 
-  // Head Sacks
-  ctx.fillStyle = '#CA8A04';
-  ctx.fillRect(x - 8 + hitShake, y - 30, 16, 10);
+  // Head Sacks with straw stuffing
+  ctx.fillStyle = innerBurlap;
+  ctx.fillRect(-8 + hitShake, -30 + idleCreak, 16, 10);
   ctx.fillStyle = '#854D0E';
-  ctx.fillRect(x - 7 + hitShake, y - 29, 14, 2);
+  ctx.fillRect(-7 + hitShake, -29 + idleCreak, 14, 2);
 
-  // Label
-  ctx.font = '600 9px "JetBrains Mono", monospace';
-  ctx.fillStyle = '#FDE68A';
+  // Straw poking from top knot & arms
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(-4 + hitShake, -33 + idleCreak, 2, 3);
+  ctx.fillRect(1 + hitShake, -34 + idleCreak, 2, 4);
+  ctx.fillRect(-16 + hitShake * 0.3, -17 + idleCreak, 3, 2);
+  ctx.fillRect(13 + hitShake * 0.3, -17 + idleCreak, 3, 2);
+
+  // Impact straw flecks when struck
+  if (isHit && hitIntensity > 0.2) {
+    ctx.fillStyle = '#FDE047';
+    ctx.fillRect(-15 + hitShake, -20, 2, 2);
+    ctx.fillRect(13 - hitShake, -25, 2, 2);
+    ctx.fillRect(-2 + hitShake * 1.5, -34, 1.5, 2.5);
+  }
+
+  // Target Lock Reticle
+  if (isLocked) {
+    ctx.strokeStyle = '#F43F5E';
+    ctx.lineWidth = 1.5;
+    const r = 20;
+    const len = 5;
+    ctx.beginPath();
+    // Top-left
+    ctx.moveTo(-r, -14 - r + len);
+    ctx.lineTo(-r, -14 - r);
+    ctx.lineTo(-r + len, -14 - r);
+    // Top-right
+    ctx.moveTo(r - len, -14 - r);
+    ctx.lineTo(r, -14 - r);
+    ctx.lineTo(r, -14 - r + len);
+    // Bottom-left
+    ctx.moveTo(-r, -14 + r - len);
+    ctx.lineTo(-r, -14 + r);
+    ctx.lineTo(-r + len, -14 + r);
+    // Bottom-right
+    ctx.moveTo(r - len, -14 + r);
+    ctx.lineTo(r, -14 + r);
+    ctx.lineTo(r, -14 + r - len);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Distinctive Title & Practice Stats Readout
+  ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
+  ctx.fillStyle = isHit ? '#FCD34D' : '#FDE68A';
   ctx.textAlign = 'center';
-  ctx.fillText('Training Dummy', x, y - 36);
+  ctx.fillText('🎯 Training Dummy', x, y - 36);
+
+  ctx.font = '600 8.5px "JetBrains Mono", monospace';
+  if (dummy.totalDamageTaken && dummy.totalDamageTaken > 0) {
+    ctx.fillStyle = '#FBBF24';
+    ctx.fillText(`${dummy.totalDamageTaken.toLocaleString()} DMG`, x, y - 46);
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillText('[E] Reset DMG', x, y - 24);
+  } else {
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillText('[Attack to Practice]', x, y - 46);
+  }
 }
 
 export function drawTavernDecorations(

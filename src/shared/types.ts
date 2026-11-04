@@ -505,6 +505,8 @@ export interface TrainingDummyState {
   hp: number;
   maxHp: number;
   hitAnimMs: number;
+  totalDamageTaken?: number;
+  lastHitTimerMs?: number;
 }
 
 export interface GameSnapshot {

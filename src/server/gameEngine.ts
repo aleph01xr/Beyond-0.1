@@ -440,6 +440,16 @@ export class GameRoom {
 
           this.emitEvent('status', npc.x, npc.y - 28, `"${spoken}"`, '#FDE68A');
           this.pushSystemChat(`💬 ${npc.name}: "${spoken}"`);
+        }
+      }
+
+      for (const dummy of this.trainingDummies) {
+        const dist = Math.hypot(dummy.x - p.x, dummy.y - p.y);
+        if (dist <= 72) {
+          dummy.totalDamageTaken = 0;
+          dummy.lastHitTimerMs = 0;
+          this.emitEvent('status', dummy.x, dummy.y - 44, '🔄 Counter Reset', '#38BDF8');
+          this.pushSystemChat(`🎯 ${p.username} reset the Training Dummy damage tracker.`);
           return {};
         }
       }
@@ -570,6 +580,11 @@ export class GameRoom {
             this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false);
           }
         }
+        for (const dummy of this.trainingDummies) {
+          if (Math.hypot(dummy.x - p.x, dummy.y - p.y) <= 84) {
+            this.damageDummy(dummy, Math.round(32 * dmgMult), p, false);
+          }
+        }
       } else if (p.heroClass === 'ranger') {
         const baseDmg = Math.round(18 * dmgMult);
         for (let i = -2; i <= 2; i++) {
@@ -620,6 +635,11 @@ export class GameRoom {
         for (const enemy of this.enemies) {
           if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 135) {
             this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false);
+          }
+        }
+        for (const dummy of this.trainingDummies) {
+          if (Math.hypot(dummy.x - p.x, dummy.y - p.y) <= 135) {
+            this.damageDummy(dummy, Math.round(28 * dmgMult), p, false);
           }
         }
       }
@@ -703,6 +723,22 @@ export class GameRoom {
     for (const npc of this.npcs) {
       if (npc.speakingMs && npc.speakingMs > 0) {
         npc.speakingMs = Math.max(0, npc.speakingMs - dtMs);
+      }
+    }
+
+    for (const dummy of this.trainingDummies) {
+      if (dummy.hitAnimMs > 0) {
+        dummy.hitAnimMs = Math.max(0, dummy.hitAnimMs - dtMs);
+      }
+      if (dummy.hp < dummy.maxHp) {
+        dummy.hp = Math.min(dummy.maxHp, dummy.hp + Math.round(500 * dtSec));
+      }
+      if (dummy.lastHitTimerMs && dummy.lastHitTimerMs > 0) {
+        dummy.lastHitTimerMs = Math.max(0, dummy.lastHitTimerMs - dtMs);
+        if (dummy.lastHitTimerMs === 0 && dummy.totalDamageTaken && dummy.totalDamageTaken > 0) {
+          dummy.totalDamageTaken = 0;
+          this.emitEvent('status', dummy.x, dummy.y - 44, '🔄 Counter Reset', '#94A3B8');
+        }
       }
     }
 
@@ -1255,9 +1291,14 @@ export class GameRoom {
         continue;
       }
 
-      // Homing guidance for player projectiles towards target enemy
+      // Homing guidance for player projectiles towards target enemy or training dummy
       if (proj.ownerType === 'player' && proj.targetEnemyId) {
-        const target = this.enemies.find((e) => e.id === proj.targetEnemyId && e.hp > 0);
+        let target: { x: number; y: number } | undefined = this.enemies.find(
+          (e) => e.id === proj.targetEnemyId && e.hp > 0
+        );
+        if (!target) {
+          target = this.trainingDummies.find((d) => d.id === proj.targetEnemyId);
+        }
         if (target) {
           const tdx = target.x - proj.x;
           const tdy = target.y - proj.y;
@@ -1321,6 +1362,27 @@ export class GameRoom {
         }
 
         const ownerPr = this.players.get(proj.ownerId);
+
+        // Check collision with training dummies
+        let hitDummy = false;
+        for (const dummy of this.trainingDummies) {
+          if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+            this.damageDummy(
+              dummy,
+              proj.damage,
+              ownerPr ? ownerPr.state : null,
+              Boolean(proj.crit)
+            );
+            proj.pierce -= 1;
+            if (proj.pierce <= 0) {
+              this.projectiles.splice(i, 1);
+              hitDummy = true;
+              break;
+            }
+          }
+        }
+        if (hitDummy) continue;
+
         for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
           const enemy = this.enemies[eIdx];
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
@@ -1374,9 +1436,9 @@ export class GameRoom {
     const extraCount = p.relics.includes('twinstring_charm') ? 1 : 0;
     const bonusPierce = p.relics.includes('piercing_prism') ? 1 : 0;
 
-    // Automatic Target Acquisition: Find nearest enemy within strike range
+    // Automatic Target Acquisition: Find nearest enemy or training dummy within strike range
     // Vanguard: 140px cleave search; Ranged: 460px line-of-fire search
-    let bestEnemy: EnemyState | null = null;
+    let bestTarget: { id: string; x: number; y: number } | null = null;
     let bestDist = Infinity;
     const maxSearchDist = p.heroClass === 'vanguard' ? 140 : 460;
 
@@ -1385,13 +1447,23 @@ export class GameRoom {
       const d = Math.hypot(enemy.x - p.x, enemy.y - p.y);
       if (d <= maxSearchDist && d < bestDist) {
         bestDist = d;
-        bestEnemy = enemy;
+        bestTarget = enemy;
       }
     }
 
-    // Automatically orient attack towards the nearest enemy
-    if (bestEnemy) {
-      p.aimAngle = Math.atan2(bestEnemy.y - p.y, bestEnemy.x - p.x);
+    if (!bestTarget) {
+      for (const dummy of this.trainingDummies) {
+        const d = Math.hypot(dummy.x - p.x, dummy.y - p.y);
+        if (d <= maxSearchDist && d < bestDist) {
+          bestDist = d;
+          bestTarget = dummy;
+        }
+      }
+    }
+
+    // Automatically orient attack towards the nearest target
+    if (bestTarget) {
+      p.aimAngle = Math.atan2(bestTarget.y - p.y, bestTarget.x - p.x);
     }
 
     const shotCount = 1 + extraCount;
@@ -1414,7 +1486,7 @@ export class GameRoom {
           pierce: 4 + bonusPierce,
           crit: hasCrit,
           ttlMs: 260,
-          targetEnemyId: bestEnemy?.id,
+          targetEnemyId: bestTarget?.id,
         });
       } else if (p.heroClass === 'ranger') {
         this.spawnProjectile({
@@ -1431,7 +1503,7 @@ export class GameRoom {
           pierce: 1 + bonusPierce,
           crit: hasCrit,
           ttlMs: 850,
-          targetEnemyId: bestEnemy?.id,
+          targetEnemyId: bestTarget?.id,
         });
       } else if (p.heroClass === 'arcanist') {
         this.spawnProjectile({
@@ -1448,7 +1520,7 @@ export class GameRoom {
           pierce: 1 + bonusPierce,
           crit: hasCrit,
           ttlMs: 920,
-          targetEnemyId: bestEnemy?.id,
+          targetEnemyId: bestTarget?.id,
         });
       } else {
         this.spawnProjectile({
@@ -1465,7 +1537,7 @@ export class GameRoom {
           pierce: 1 + bonusPierce,
           crit: hasCrit,
           ttlMs: 800,
-          targetEnemyId: bestEnemy?.id,
+          targetEnemyId: bestTarget?.id,
         });
       }
     }
@@ -1646,6 +1718,65 @@ export class GameRoom {
 
     if (enemy.hp <= 0) {
       this.processEnemyDeath(enemy, attacker);
+    }
+  }
+
+  private damageDummy(
+    dummy: TrainingDummyState,
+    rawAmount: number,
+    attacker: PlayerState | null,
+    isCrit = false
+  ): void {
+    const finalDmg = Math.max(1, rawAmount);
+    dummy.hitAnimMs = 280;
+    dummy.lastHitTimerMs = 4000; // Reset counter after 4s of combat inactivity
+    dummy.totalDamageTaken = (dummy.totalDamageTaken || 0) + finalDmg;
+    dummy.hp = Math.max(1, dummy.hp - finalDmg);
+
+    if (attacker) {
+      attacker.damageDealt += finalDmg;
+    }
+
+    const text = isCrit ? `💥 ${finalDmg} CRIT!` : `${finalDmg}`;
+    const color = isCrit ? '#FEF08A' : '#FCD34D';
+    this.emitEvent(
+      isCrit ? 'crit' : 'damage',
+      dummy.x + (Math.random() * 14 - 7),
+      dummy.y - 28,
+      text,
+      color
+    );
+
+    // Relic synergies practice feedback
+    if (attacker) {
+      if (attacker.relics.includes('cinder_heart') && (isCrit || rawAmount >= 24)) {
+        this.emitEvent('status', dummy.x, dummy.y - 42, '🔥 IGNITED!', '#F97316');
+      }
+      if (attacker.relics.includes('rimefrost_shard') && Math.random() < 0.25) {
+        this.emitEvent('status', dummy.x, dummy.y - 42, '❄️ CHILLED!', '#38BDF8');
+      }
+      if (attacker.relics.includes('stormcaller_lodestone')) {
+        const pr = this.players.get(attacker.id);
+        if (pr) {
+          pr.attackCount = (pr.attackCount || 0) + 1;
+          if (pr.attackCount % 3 === 0) {
+            this.emitEvent('status', dummy.x, dummy.y - 42, '⚡ SHOCKED!', '#FBBF24');
+            // Arc to other dummy if nearby
+            for (const other of this.trainingDummies) {
+              if (other.id !== dummy.id && Math.hypot(other.x - dummy.x, other.y - dummy.y) <= 350) {
+                this.damageDummy(other, Math.round(finalDmg * 0.5), attacker, false);
+                this.emitEvent('status', other.x, other.y - 26, '⚡ Arc Shock', '#FBBF24');
+              }
+            }
+          }
+        }
+      }
+      if (attacker.relics.includes('viper_crucible')) {
+        this.emitEvent('status', dummy.x, dummy.y - 42, '🧪 POISONED!', '#22C55E');
+      }
+      if (attacker.relics.includes('bloodletter_talisman')) {
+        this.emitEvent('status', dummy.x, dummy.y - 42, '🩸 LACERATED!', '#DC2626');
+      }
     }
   }
 

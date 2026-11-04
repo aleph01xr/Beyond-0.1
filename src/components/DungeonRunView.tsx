@@ -162,6 +162,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         snapshot.npcs?.some(
           (n) => Math.hypot(n.x - me.x, n.y - me.y) <= 68
         ) ||
+        snapshot.trainingDummies?.some(
+          (d) => Math.hypot(d.x - me.x, d.y - me.y) <= 72
+        ) ||
         (snapshot.bossDefeated &&
           Math.hypot(map.portalPos.x - me.x, map.portalPos.y - me.y) <= 68))
   );
