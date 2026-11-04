@@ -335,6 +335,7 @@ export function App() {
         onSendChat={handleSendChat}
         onRestartRun={handleRestartRun}
         onLeaveRoom={handleLeaveRoom}
+        onSendAdminCommand={sendWs}
         pingMs={pingMs}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}

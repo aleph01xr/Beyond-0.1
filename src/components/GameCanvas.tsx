@@ -658,6 +658,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
+        } else if (z.kind === 'star_rift') {
+          // Arcanist Star Rift Zone: Spinning cosmic nebula portal
+          const rotAngle = now * 0.003;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          ctx.fillStyle = 'rgba(126, 34, 206, 0.22)';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.rotate(rotAngle);
+          ctx.strokeStyle = 'rgba(192, 132, 252, 0.85)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.75, 0, Math.PI * 1.5);
+          ctx.stroke();
+
+          ctx.rotate(-rotAngle * 2.2);
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.45, 0, Math.PI * 1.5);
+          ctx.stroke();
+
+          ctx.restore();
         } else if (z.kind === 'boss_slam') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const isCatacombs = map.biome === 'catacombs' || map.floor === 2;
@@ -1419,13 +1445,82 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(hx - 10, hy + 10, 20, 5);
 
-        // Class-specific Ground VFX (e.g. Cleric holy aura)
-        if (p.heroClass === 'cleric') {
-          const haloPulse = Math.sin(now * 0.005) * 2;
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.4)';
+        // Class-specific Passive Ground Visual Effects
+        if (p.heroClass === 'vanguard') {
+          // Vanguard: Iron Will Slate-Blue & Gold Metallic Shield Ring
+          const shieldPulse = Math.sin(now * 0.006 + hx) * 2;
+          const hasShield = p.shield > 0;
+          ctx.strokeStyle = hasShield ? 'rgba(251, 191, 36, 0.75)' : 'rgba(148, 163, 184, 0.5)';
+          ctx.lineWidth = hasShield ? 2 : 1.5;
+          ctx.beginPath();
+          ctx.ellipse(hx, hy + 11, 18 + shieldPulse, 7, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
+          if (hasShield) {
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.12)';
+            ctx.beginPath();
+            ctx.ellipse(hx, hy + 11, 18 + shieldPulse, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else if (p.heroClass === 'ranger') {
+          // Ranger: Eagle Keenness Emerald Swiftness Aura & Wind Motion Trail
+          const swiftPulse = Math.sin(now * 0.008 + hx) * 2;
+          const isSwift = p.hasteMs > 0;
+          ctx.strokeStyle = isSwift ? 'rgba(74, 222, 128, 0.85)' : 'rgba(52, 211, 153, 0.45)';
+          ctx.lineWidth = isSwift ? 2.5 : 1.5;
+          ctx.beginPath();
+          ctx.ellipse(hx, hy + 11, 17 + swiftPulse, 6.5, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
+          if (isSwift) {
+            // Swiftness wind motion lines drifting behind movement
+            const windOffX = -Math.cos(p.aimAngle) * 14;
+            const windOffY = -Math.sin(p.aimAngle) * 14;
+            ctx.strokeStyle = 'rgba(134, 239, 172, 0.7)';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(hx + windOffX, hy + windOffY);
+            ctx.lineTo(hx + windOffX * 1.8, hy + windOffY * 1.8);
+            ctx.stroke();
+          }
+        } else if (p.heroClass === 'arcanist') {
+          // Arcanist: Astral Resonance 3 Orbiting Celestial Starlight Orbs
+          const orbAngleBase = now * 0.003 + hx;
+          for (let orbIdx = 0; orbIdx < 3; orbIdx++) {
+            const a = orbAngleBase + (orbIdx * Math.PI * 2) / 3;
+            const ox = hx + Math.cos(a) * 20;
+            const oy = hy + 4 + Math.sin(a) * 8;
+            ctx.fillStyle = '#60A5FA';
+            ctx.beginPath();
+            ctx.arc(ox, oy, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#93C5FD';
+            ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
+          }
+          ctx.strokeStyle = 'rgba(129, 140, 248, 0.45)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.ellipse(hx, hy + 4, 20, 8, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        } else if (p.heroClass === 'cleric') {
+          // Cleric: Radiant Aura 140px Translucent Golden Warmth Halo
+          const auraPulse = Math.sin(now * 0.004 + hx) * 3;
+          ctx.fillStyle = 'rgba(253, 224, 71, 0.06)';
+          ctx.beginPath();
+          ctx.arc(hx, hy, 140, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(253, 224, 71, 0.35)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.ellipse(hx, hy + 11, 16 + haloPulse, 6, 0, 0, Math.PI * 2);
+          ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Inner halo ring
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.75)';
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.ellipse(hx, hy + 11, 18 + auraPulse * 0.5, 7, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 

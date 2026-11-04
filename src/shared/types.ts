@@ -382,6 +382,9 @@ export interface PlayerState {
   readyNextFloor: boolean;
   pendingRelicChoices: string[];
   connected: boolean;
+  isAdmin?: boolean;
+  godMode?: boolean;
+  speedBoost?: boolean;
 }
 
 export type EnemyKind = 'slime' | 'goblin' | 'skeleton' | 'cultist' | 'knight' | 'boss';
@@ -449,7 +452,7 @@ export interface PropState {
 
 export interface FieldZoneState {
   id: string;
-  kind: 'aegis_dome' | 'solar_beacon' | 'chrono_well' | 'boss_slam';
+  kind: 'aegis_dome' | 'solar_beacon' | 'chrono_well' | 'boss_slam' | 'star_rift';
   x: number;
   y: number;
   radius: number;
@@ -539,6 +542,7 @@ export interface UserProfile {
   highestFloor: number;
   totalKills: number;
   totalRevives: number;
+  isAdmin?: boolean;
 }
 
 export type ClientMessage =
@@ -563,6 +567,13 @@ export type ClientMessage =
   | { type: 'player:ping'; label: string; x: number; y: number }
   | { type: 'chat:send'; text: string }
   | { type: 'room:restart' }
+  | { type: 'admin:godmode'; enabled?: boolean }
+  | { type: 'admin:toggle_speed'; enabled?: boolean }
+  | { type: 'admin:add_gold'; amount?: number }
+  | { type: 'admin:add_potions'; amount?: number }
+  | { type: 'admin:set_level'; level?: number }
+  | { type: 'admin:add_relic'; relicId: string }
+  | { type: 'admin:spawn_dummy' }
   | { type: 'ping'; t: number };
 
 export type ServerMessage =

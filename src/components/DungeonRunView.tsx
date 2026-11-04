@@ -1,16 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
-import {
-  HERO_CLASSES,
-  RELIC_CATALOG,
-  type ChatMessage,
-  type DifficultyTier,
-  type DungeonMap,
-  type GameSnapshot,
-  type HeroClassId,
-  type PlayerInputState,
-  type RoomSummary,
-} from '../shared/types.ts';
+import { AdminPanel } from './AdminPanel.tsx';
 import { ExpeditionGateModal } from './ExpeditionGateModal.tsx';
 import { GameCanvas } from './GameCanvas.tsx';
 import {
@@ -20,6 +10,18 @@ import {
   type TouchSettings,
 } from './TouchControls.tsx';
 import { TouchSettingsModal } from './TouchSettingsModal.tsx';
+import {
+  HERO_CLASSES,
+  RELIC_CATALOG,
+  type ChatMessage,
+  type ClientMessage,
+  type DifficultyTier,
+  type DungeonMap,
+  type GameSnapshot,
+  type HeroClassId,
+  type PlayerInputState,
+  type RoomSummary,
+} from '../shared/types.ts';
 
 interface DungeonRunViewProps {
   playerId: string;
@@ -38,6 +40,7 @@ interface DungeonRunViewProps {
   onSendChat: (text: string) => void;
   onRestartRun: () => void;
   onLeaveRoom: () => void;
+  onSendAdminCommand?: (msg: ClientMessage) => void;
   pingMs?: number;
   onCreateRoom?: (opts: {
     name: string;
@@ -64,6 +67,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onSendChat,
   onRestartRun,
   onLeaveRoom,
+  onSendAdminCommand,
   pingMs = 18,
   onCreateRoom,
   onJoinRoom,
@@ -76,6 +80,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
 
   // Touch settings & visibility
@@ -393,6 +398,21 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             <span>{isMuted ? '🔇' : '🔊'}</span>
             <span className="hidden sm:inline">{isMuted ? 'Muted' : 'SFX'}</span>
           </button>
+
+          {/* Exclusive Developer Admin Menu Button */}
+          {me && (me.isAdmin || me.username.toLowerCase() === 'admin') && (
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                setAdminPanelOpen(true);
+              }}
+              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-amber-500/20 border border-amber-400 hover:bg-amber-500/30 text-xs font-mono font-bold text-amber-300 transition-all whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center shadow-md shadow-amber-500/10 animate-pulse"
+              title="Open Exclusive Admin Control Console"
+            >
+              <span>ADMIN</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -1082,6 +1102,20 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           onUpdateSettings={handleUpdateTouchSettings}
           onToggleForceGamepad={handleToggleForceGamepad}
           onClose={() => setTouchSettingsOpen(false)}
+        />
+      )}
+
+      {/* Exclusive Developer Admin Control Panel Modal */}
+      {me && (
+        <AdminPanel
+          me={me}
+          isOpen={adminPanelOpen}
+          onClose={() => setAdminPanelOpen(false)}
+          onSendAdminCommand={(msg) => {
+            if (onSendAdminCommand) {
+              onSendAdminCommand(msg);
+            }
+          }}
         />
       )}
     </div>

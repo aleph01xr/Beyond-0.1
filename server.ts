@@ -30,6 +30,7 @@ interface AccountRecord {
   totalKills: number;
   totalRevives: number;
   gold?: number;
+  isAdmin?: boolean;
 }
 
 const accountsByLower = new Map<string, AccountRecord>();
@@ -62,6 +63,7 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
     highestFloor: acc.highestFloor,
     totalKills: acc.totalKills,
     totalRevives: acc.totalRevives,
+    isAdmin: acc.isAdmin ?? (acc.usernameLower === 'admin'),
   };
 }
 
@@ -188,18 +190,31 @@ async function initStorage(): Promise<void> {
   if (!accountsByLower.has('wanderer')) {
     createAccount('wanderer', 'beyond', 'vanguard');
   }
+
+  // Seed exclusive admin account (Admin / admin123)
+  if (!accountsByLower.has('admin')) {
+    createAccount('Admin', 'admin123', 'vanguard', true);
+  } else {
+    const adminAcc = accountsByLower.get('admin');
+    if (adminAcc && !adminAcc.isAdmin) {
+      adminAcc.isAdmin = true;
+      persistAccount(adminAcc);
+    }
+  }
 }
 
 function createAccount(
   username: string,
   password: string,
-  chosenClass: HeroClassId = 'vanguard'
+  chosenClass: HeroClassId = 'vanguard',
+  isAdmin = false
 ): AccountRecord {
   const validClass: HeroClassId =
     chosenClass === 'ranger' || chosenClass === 'arcanist' || chosenClass === 'cleric'
       ? chosenClass
       : 'vanguard';
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
+  const isUserAdmin = isAdmin || username.toLowerCase() === 'admin';
   const rec: AccountRecord = {
     id,
     username,
@@ -212,6 +227,7 @@ function createAccount(
     totalKills: 0,
     totalRevives: 0,
     gold: 0,
+    isAdmin: isUserAdmin,
   };
   persistAccount(rec);
   return rec;
@@ -372,7 +388,7 @@ async function startServer() {
       return;
     }
 
-    let acc = accountsByLower.get(usernameRaw.toLowerCase());
+    const acc = accountsByLower.get(usernameRaw.toLowerCase());
     if (!acc) {
       if (isMaintenance) {
         res.status(503).json({
@@ -381,8 +397,10 @@ async function startServer() {
         });
         return;
       }
-      acc = createAccount(usernameRaw, passwordRaw, 'vanguard');
-    } else if (acc.passwordHash !== hashPassword(passwordRaw)) {
+      res.status(401).json({ error: 'No adventurer account found with that name.' });
+      return;
+    }
+    if (acc.passwordHash !== hashPassword(passwordRaw)) {
       res.status(401).json({ error: 'Invalid password for this adventurer.' });
       return;
     }
@@ -596,7 +614,7 @@ async function startServer() {
           difficulty,
           seed: msg.seed,
         });
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass);
+        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
         client.roomId = room.roomId;
 
         sendJson(ws, {
@@ -642,7 +660,7 @@ async function startServer() {
         leaveCurrentRoom(client);
         // Player is strictly locked to their account's hero class
         const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass);
+        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
         client.roomId = room.roomId;
 
         sendJson(ws, {
@@ -681,11 +699,73 @@ async function startServer() {
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
       } else if (msg.type === 'player:change_class') {
-        // Classes are permanently locked per account
-        sendJson(ws, {
-          type: 'error',
-          message: `${acc.username}'s account is permanently bound to the ${acc.lockedClass.toUpperCase()} class.`,
-        });
+        if (acc.isAdmin) {
+          const validClass: HeroClassId =
+            msg.heroClass === 'ranger' ||
+            msg.heroClass === 'arcanist' ||
+            msg.heroClass === 'cleric' ||
+            msg.heroClass === 'vanguard'
+              ? msg.heroClass
+              : 'vanguard';
+          acc.lockedClass = validClass;
+          acc.preferredClass = validClass;
+          persistAccount(acc);
+          room.changeClass(acc.id, validClass);
+          broadcastToRoom(room.roomId, {
+            type: 'chat:message',
+            message: room.pushSystemChat(`[ADMIN] ${acc.username} shifted hero class to ${validClass.toUpperCase()}`),
+          });
+        } else {
+          // Classes are permanently locked per account
+          sendJson(ws, {
+            type: 'error',
+            message: `${acc.username}'s account is permanently bound to the ${acc.lockedClass.toUpperCase()} class.`,
+          });
+        }
+      } else if (msg.type === 'admin:godmode') {
+        if (acc.isAdmin) {
+          const isGod = room.togglePlayerGodMode(acc.id, msg.enabled);
+          broadcastToRoom(room.roomId, {
+            type: 'chat:message',
+            message: room.pushSystemChat(`[ADMIN] God Mode ${isGod ? 'ENABLED' : 'DISABLED'} for ${acc.username}`),
+          });
+        } else {
+          sendJson(ws, { type: 'error', message: 'Admin access required.' });
+        }
+      } else if (msg.type === 'admin:toggle_speed') {
+        if (acc.isAdmin) {
+          const isSpeed = room.togglePlayerSpeedBoost(acc.id, msg.enabled);
+          broadcastToRoom(room.roomId, {
+            type: 'chat:message',
+            message: room.pushSystemChat(`[ADMIN] Speed Boost ${isSpeed ? 'ENABLED' : 'DISABLED'} for ${acc.username}`),
+          });
+        } else {
+          sendJson(ws, { type: 'error', message: 'Admin access required.' });
+        }
+      } else if (msg.type === 'admin:add_gold') {
+        if (acc.isAdmin) {
+          room.addPlayerGold(acc.id, msg.amount || 1000);
+        }
+      } else if (msg.type === 'admin:add_potions') {
+        if (acc.isAdmin) {
+          room.addPlayerPotions(acc.id, msg.amount || 5);
+        }
+      } else if (msg.type === 'admin:set_level') {
+        if (acc.isAdmin) {
+          room.setPlayerLevel(acc.id, msg.level || 10);
+          broadcastToRoom(room.roomId, {
+            type: 'chat:message',
+            message: room.pushSystemChat(`[ADMIN] Set Level ${msg.level || 10} for ${acc.username}`),
+          });
+        }
+      } else if (msg.type === 'admin:add_relic') {
+        if (acc.isAdmin && msg.relicId) {
+          room.addPlayerRelic(acc.id, msg.relicId);
+        }
+      } else if (msg.type === 'admin:spawn_dummy') {
+        if (acc.isAdmin) {
+          room.spawnDummyAtPlayer(acc.id);
+        }
       } else if (msg.type === 'player:ping') {
         room.addPing(acc.id, msg.label, msg.x, msg.y);
       } else if (msg.type === 'chat:send') {

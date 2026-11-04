@@ -56,6 +56,7 @@ export class GameRoom {
   private startedAt = Date.now();
   private zoneTickAccumMs = 0;
   private statusDotAccumMs = 0;
+  private clericAuraAccumMs = 0;
   public onFloorClearedCallback?: (playerIds: string[], floor: number) => void;
   public onKillCallback?: (playerId: string) => void;
   public onReviveCallback?: (playerId: string) => void;
@@ -171,12 +172,14 @@ export class GameRoom {
   public addOrReconnectPlayer(
     playerId: string,
     username: string,
-    heroClass: HeroClassId
+    heroClass: HeroClassId,
+    isAdmin = false
   ): PlayerState {
     const existing = this.players.get(playerId);
     if (existing) {
       existing.state.connected = true;
       existing.state.username = username;
+      existing.state.isAdmin = isAdmin || username.toLowerCase() === 'admin' || Boolean(existing.state.isAdmin);
       return existing.state;
     }
 
@@ -225,6 +228,9 @@ export class GameRoom {
       readyNextFloor: false,
       pendingRelicChoices: [],
       connected: true,
+      isAdmin: isAdmin || username.toLowerCase() === 'admin',
+      godMode: false,
+      speedBoost: false,
     };
 
     this.players.set(playerId, {
@@ -342,6 +348,101 @@ export class GameRoom {
       this.emitEvent('status', pr.state.x, pr.state.y - 24, `+ ${relic.name}`, relic.accent);
       this.pushSystemChat(`${pr.state.username} claimed relic: ${relic.name}.`);
     }
+  }
+
+  public togglePlayerGodMode(playerId: string, enabled?: boolean): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    const nextState = enabled !== undefined ? enabled : !pr.state.godMode;
+    pr.state.godMode = nextState;
+    if (nextState) {
+      pr.state.hp = pr.state.maxHp;
+    }
+    this.emitEvent(
+      'status',
+      pr.state.x,
+      pr.state.y - 28,
+      nextState ? '🌟 GOD MODE ON' : '🛡️ GOD MODE OFF',
+      nextState ? '#F59E0B' : '#64748B'
+    );
+    return nextState;
+  }
+
+  public togglePlayerSpeedBoost(playerId: string, enabled?: boolean): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    const nextState = enabled !== undefined ? enabled : !pr.state.speedBoost;
+    pr.state.speedBoost = nextState;
+    this.emitEvent(
+      'status',
+      pr.state.x,
+      pr.state.y - 28,
+      nextState ? '⚡ SPEED BOOST ON' : '🏃 SPEED NORMAL',
+      nextState ? '#10B981' : '#64748B'
+    );
+    return nextState;
+  }
+
+  public addPlayerGold(playerId: string, amount: number): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    pr.state.gold += amount;
+    this.emitEvent('gold', pr.state.x, pr.state.y - 22, `+${amount}g`, '#F4D378');
+  }
+
+  public addPlayerPotions(playerId: string, amount: number): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    pr.state.potions += amount;
+    this.emitEvent('heal', pr.state.x, pr.state.y - 22, `+${amount} Potions`, '#EF4444');
+  }
+
+  public setPlayerLevel(playerId: string, targetLevel: number): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    const def = HERO_CLASSES[p.heroClass];
+    p.level = Math.max(1, Math.min(100, targetLevel));
+    p.xp = 0;
+    p.nextXp = Math.round(80 * Math.pow(1.35, p.level - 1));
+    const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
+    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp;
+    p.hp = p.maxHp;
+    this.emitEvent('status', p.x, p.y - 26, `⚡ Level ${p.level} Set!`, '#F4D378');
+  }
+
+  public addPlayerRelic(playerId: string, relicId: string): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    if (!p.relics.includes(relicId)) {
+      p.relics.push(relicId);
+    }
+    if (relicId === 'bastion_pauldron') {
+      p.maxHp += 30;
+      p.hp = Math.min(p.maxHp, p.hp + 30);
+    }
+    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+    if (relic) {
+      this.emitEvent('status', p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
+    }
+  }
+
+  public spawnDummyAtPlayer(playerId: string): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const dummy: TrainingDummyState = {
+      id: this.nextId('dummy'),
+      x: pr.state.x + 40 * Math.cos(pr.state.aimAngle),
+      y: pr.state.y + 40 * Math.sin(pr.state.aimAngle),
+      hp: 10000,
+      maxHp: 10000,
+      hitAnimMs: 0,
+      totalDamageTaken: 0,
+      lastHitTimerMs: 0,
+    };
+    this.trainingDummies.push(dummy);
+    this.emitEvent('status', dummy.x, dummy.y - 20, '⚔️ Training Dummy Spawned', '#FBBF24');
   }
 
   private rollRelicChoices(owned: string[]): string[] {
@@ -811,6 +912,43 @@ export class GameRoom {
               pr.state.skillCooldownMs = Math.max(0, pr.state.skillCooldownMs - 350);
             }
           }
+        } else if (z.kind === 'star_rift') {
+          const riftDmg = 14 + this.floor * 2;
+          const ownerPr = this.players.get(z.ownerId);
+          for (const enemy of this.enemies) {
+            if (enemy.hp > 0 && Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius) {
+              const pullAngle = Math.atan2(z.y - enemy.y, z.x - enemy.x);
+              enemy.x += Math.cos(pullAngle) * 5;
+              enemy.y += Math.sin(pullAngle) * 5;
+              this.damageEnemy(enemy, riftDmg, ownerPr ? ownerPr.state : null, false);
+            }
+          }
+          for (const dummy of this.trainingDummies) {
+            if (Math.hypot(dummy.x - z.x, dummy.y - z.y) <= z.radius) {
+              this.damageDummy(dummy, riftDmg, ownerPr ? ownerPr.state : null, false);
+            }
+          }
+        }
+      }
+    }
+
+    // Cleric Passive: Radiant Aura (2.0s Periodic Golden Healing Warmth Pulse)
+    this.clericAuraAccumMs += dtMs;
+    if (this.clericAuraAccumMs >= 2000) {
+      this.clericAuraAccumMs = 0;
+      for (const pr of this.players.values()) {
+        const cleric = pr.state;
+        if (cleric.heroClass === 'cleric' && !cleric.downed && cleric.connected) {
+          for (const allyPr of this.players.values()) {
+            const ally = allyPr.state;
+            if (!ally.downed && ally.connected && Math.hypot(ally.x - cleric.x, ally.y - cleric.y) <= 140) {
+              if (ally.hp < ally.maxHp) {
+                const healAmt = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
+                ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
+                this.emitEvent('heal', ally.x, ally.y - 18, `✨ Radiant Aura +${healAmt}`, '#FDE047');
+              }
+            }
+          }
         }
       }
     }
@@ -841,7 +979,8 @@ export class GameRoom {
           }
         }
         if (reviver) {
-          p.reviveProgress = Math.min(1, p.reviveProgress + dtSec / 2.2);
+          const reviveSpeedMult = reviver.heroClass === 'cleric' ? 1.4 : 1.0;
+          p.reviveProgress = Math.min(1, p.reviveProgress + (dtSec / 2.2) * reviveSpeedMult);
           if (p.reviveProgress >= 1) {
             this.completeRevive(p, reviver.id);
           }
@@ -855,6 +994,7 @@ export class GameRoom {
       let moveSpeed = def.speed;
       if (p.relics.includes('zephyr_greaves')) moveSpeed *= 1.18;
       if (p.hasteMs > 0) moveSpeed *= 1.22;
+      if (p.speedBoost) moveSpeed *= 1.8;
 
       let mx = 0;
       let my = 0;
@@ -1506,18 +1646,37 @@ export class GameRoom {
           targetEnemyId: bestTarget?.id,
         });
       } else if (p.heroClass === 'arcanist') {
+        const pr = this.players.get(p.id);
+        if (pr) {
+          pr.attackCount = (pr.attackCount || 0) + 1;
+          if (pr.attackCount % 4 === 0) {
+            const riftX = bestTarget ? bestTarget.x : p.x + Math.cos(ang) * 120;
+            const riftY = bestTarget ? bestTarget.y : p.y + Math.sin(ang) * 120;
+            this.zones.push({
+              id: this.nextId('zone'),
+              kind: 'star_rift',
+              x: riftX,
+              y: riftY,
+              radius: 75,
+              ttlMs: 3000,
+              maxTtlMs: 3000,
+              ownerId: p.id,
+            });
+            this.emitEvent('status', riftX, riftY - 18, '✨ Star Rift', '#C084FC');
+          }
+        }
         this.spawnProjectile({
           ownerType: 'player',
           ownerId: p.id,
           style: 'arcane',
           x: p.x + Math.cos(ang) * 16,
           y: p.y + Math.sin(ang) * 16,
-          vx: Math.cos(ang) * 370,
-          vy: Math.sin(ang) * 370,
+          vx: Math.cos(ang) * 380,
+          vy: Math.sin(ang) * 380,
           angle: ang,
           radius: 8,
           damage: dmg,
-          pierce: 1 + bonusPierce,
+          pierce: 2 + bonusPierce,
           crit: hasCrit,
           ttlMs: 920,
           targetEnemyId: bestTarget?.id,
@@ -1602,6 +1761,16 @@ export class GameRoom {
     const physRes = Math.min(0.75, Math.max(-0.5, res.physical));
     let finalDmg = Math.max(1, Math.round(rawAmount * (1 - physRes) * markBonus));
 
+    // Ranger Class Passive: Eagle Keenness (+25% Longshot Crit Damage beyond 170px)
+    if (attacker && attacker.heroClass === 'ranger') {
+      const distToTarget = Math.hypot(enemy.x - attacker.x, enemy.y - attacker.y);
+      if (distToTarget >= 170) {
+        finalDmg = Math.round(finalDmg * 1.25);
+        isCrit = true;
+        this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 22, '🦅 LONGSHOT! (+25%)', '#34D399');
+      }
+    }
+
     // Freeze Shatter Mechanics
     let shattered = false;
     if (enemy.frozenMs > 0) {
@@ -1628,6 +1797,16 @@ export class GameRoom {
 
     if (attacker) {
       attacker.damageDealt += finalDmg;
+
+      // Vanguard Class Passive: Iron Will (+4 Shield when striking CC'd / Burning foes)
+      if (attacker.heroClass === 'vanguard') {
+        if (enemy.stunnedMs > 0 || enemy.burnedMs > 0 || enemy.frozenMs > 0) {
+          if (attacker.shield < 60) {
+            attacker.shield = Math.min(60, attacker.shield + 4);
+            this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+4 Shield)', '#93C5FD');
+          }
+        }
+      }
 
       // Status Relic Procs with Resistances & Tenacity:
       // 1. Cinder Heart: Ignite Burn
@@ -1727,7 +1906,17 @@ export class GameRoom {
     attacker: PlayerState | null,
     isCrit = false
   ): void {
-    const finalDmg = Math.max(1, rawAmount);
+    let finalDmg = Math.max(1, rawAmount);
+
+    if (attacker && attacker.heroClass === 'ranger') {
+      const distToTarget = Math.hypot(dummy.x - attacker.x, dummy.y - attacker.y);
+      if (distToTarget >= 170) {
+        finalDmg = Math.round(finalDmg * 1.25);
+        isCrit = true;
+        this.emitEvent('crit', dummy.x, dummy.y - 42, '🦅 LONGSHOT! (+25%)', '#34D399');
+      }
+    }
+
     dummy.hitAnimMs = 280;
     dummy.lastHitTimerMs = 4000; // Reset counter after 4s of combat inactivity
     dummy.totalDamageTaken = (dummy.totalDamageTaken || 0) + finalDmg;
@@ -1735,6 +1924,13 @@ export class GameRoom {
 
     if (attacker) {
       attacker.damageDealt += finalDmg;
+
+      if (attacker.heroClass === 'vanguard') {
+        if (attacker.shield < 60) {
+          attacker.shield = Math.min(60, attacker.shield + 4);
+          this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+4 Shield)', '#93C5FD');
+        }
+      }
     }
 
     const text = isCrit ? `💥 ${finalDmg} CRIT!` : `${finalDmg}`;
@@ -1791,6 +1987,10 @@ export class GameRoom {
       if (attacker.relics.includes('crimson_fang')) {
         attacker.hp = Math.min(attacker.maxHp, attacker.hp + 5);
       }
+      if (attacker.heroClass === 'ranger') {
+        attacker.hasteMs = Math.max(attacker.hasteMs, 2500);
+        this.emitEvent('status', attacker.x, attacker.y - 22, '⚡ EAGLE SWIFTNESS!', '#4ADE80');
+      }
     }
 
     if (Math.random() < 0.55 || enemy.kind === 'boss') {
@@ -1836,7 +2036,7 @@ export class GameRoom {
     rawDamage: number,
     damageType: 'physical' | 'elemental' = 'physical'
   ): void {
-    if (p.downed) return;
+    if (p.downed || p.godMode) return;
 
     const classDef = HERO_CLASSES[p.heroClass];
     const res = classDef?.resistances || {
@@ -1862,6 +2062,11 @@ export class GameRoom {
     resist = Math.min(0.75, Math.max(0, resist));
 
     let dmg = Math.max(1, Math.round(rawDamage * (1 - resist)));
+
+    if (p.heroClass === 'vanguard') {
+      dmg = Math.max(1, Math.round(dmg * 0.85));
+      this.emitEvent('status', p.x, p.y - 28, '🛡️ Iron Will (-15%)', '#CBD5E1');
+    }
 
     const inAegis = this.zones.some(
       (z) => z.kind === 'aegis_dome' && Math.hypot(p.x - z.x, p.y - z.y) <= z.radius
