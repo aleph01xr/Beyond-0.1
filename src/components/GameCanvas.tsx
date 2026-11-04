@@ -584,7 +584,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Grand Descent Portal
-      drawDungeonPortal(ctx, map.portalPos.x, map.portalPos.y, snap.bossDefeated, now, map.biome);
+      drawDungeonPortal(ctx, map.portalPos.x, map.portalPos.y, snap.bossDefeated, now, map.biome, snap.floor);
       particleManager.spawnPortalWisps(map.portalPos.x, map.portalPos.y, snap.bossDefeated, now);
 
       // Torches

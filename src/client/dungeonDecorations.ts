@@ -9,7 +9,8 @@ export function drawDungeonPortal(
   py: number,
   bossDefeated: boolean,
   now: number,
-  biome: BiomeId
+  biome: BiomeId,
+  floor = 1
 ): void {
   const roundPx = Math.round(px);
   const roundPy = Math.round(py);
@@ -146,7 +147,7 @@ export function drawDungeonPortal(
     ctx.save();
     ctx.font = '700 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    const label = '[E] ENTER THE DEEP';
+    const label = floor === 0 ? '[E] EXPEDITION GATE' : '[E] ENTER THE DEEP';
     const tw = ctx.measureText(label).width;
 
     ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';

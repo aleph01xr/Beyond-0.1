@@ -4,11 +4,14 @@ import {
   HERO_CLASSES,
   RELIC_CATALOG,
   type ChatMessage,
+  type DifficultyTier,
   type DungeonMap,
   type GameSnapshot,
   type HeroClassId,
   type PlayerInputState,
+  type RoomSummary,
 } from '../shared/types.ts';
+import { ExpeditionGateModal } from './ExpeditionGateModal.tsx';
 import { GameCanvas } from './GameCanvas.tsx';
 import {
   TouchControls,
@@ -36,6 +39,15 @@ interface DungeonRunViewProps {
   onRestartRun: () => void;
   onLeaveRoom: () => void;
   pingMs?: number;
+  onCreateRoom?: (opts: {
+    name: string;
+    difficulty: DifficultyTier;
+    seed?: number;
+    heroClass: HeroClassId;
+  }) => void;
+  onJoinRoom?: (roomId: string, heroClass: HeroClassId) => void;
+  onReturnToTavern?: () => void;
+  rooms?: RoomSummary[];
 }
 
 export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
@@ -53,11 +65,16 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onRestartRun,
   onLeaveRoom,
   pingMs = 18,
+  onCreateRoom,
+  onJoinRoom,
+  onReturnToTavern,
+  rooms = [],
 }) => {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
   const [chatFocused, setChatFocused] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
 
@@ -130,15 +147,36 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     snapshot.players.find((p) => p.id === playerId) || snapshot.players[0];
   const boss = snapshot.enemies.find((e) => e.kind === 'boss');
 
-  // Check if player is near any chest, shrine, or descent portal
+  const isTavern = map.floor === 0 || snapshot.floor === 0;
+  const nearPortal = Boolean(
+    me && Math.hypot(map.portalPos.x - me.x, map.portalPos.y - me.y) <= 80
+  );
+
+  // Check if player is near any chest, shrine, NPC, or portal
   const nearInteractable = Boolean(
     me &&
-      (snapshot.props.some(
-        (pr) => !pr.opened && Math.hypot(pr.x - me.x, pr.y - me.y) <= 64
-      ) ||
+      (nearPortal ||
+        snapshot.props.some(
+          (pr) => !pr.opened && Math.hypot(pr.x - me.x, pr.y - me.y) <= 64
+        ) ||
+        snapshot.npcs?.some(
+          (n) => Math.hypot(n.x - me.x, n.y - me.y) <= 68
+        ) ||
         (snapshot.bossDefeated &&
           Math.hypot(map.portalPos.x - me.x, map.portalPos.y - me.y) <= 68))
   );
+
+  const handleTriggerActionWithPortal = (
+    action: 'tactical' | 'ult' | 'potion' | 'interact',
+    aimAngle: number
+  ) => {
+    if (action === 'interact' && isTavern && nearPortal) {
+      sfx.playUiClick();
+      setExpeditionGateOpen(true);
+      return;
+    }
+    onTriggerAction(action, aimAngle);
+  };
 
   const handleCopyCode = () => {
     sfx.playUiClick();
@@ -235,7 +273,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         map={map}
         latestSnapshotRef={latestSnapshotRef}
         onSendKeyboardInput={handleKeyboardInput}
-        onTriggerAction={onTriggerAction}
+        onTriggerAction={handleTriggerActionWithPortal}
         onSendPing={onSendPing}
         chatFocused={chatFocused}
       />
@@ -244,21 +282,50 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       <header className="pointer-events-none fixed top-0 inset-x-0 z-10 flex items-center justify-between gap-2 px-3 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-b from-[#111219]/90 to-transparent">
         {/* Left: Floor, Biome, Seed */}
         <div className="pointer-events-auto flex items-center gap-2 text-xs sm:text-sm font-mono tabular-nums text-[#D4D2E0]">
-          <span className="font-display text-sm sm:text-base text-white font-semibold whitespace-nowrap truncate max-w-[150px] sm:max-w-none">
-            Floor {snapshot.floor}: {map.biomeTitle.split(' ')[0]}
-          </span>
-          <span aria-hidden="true" className="text-[#78768A]">
-            ·
-          </span>
-          <span className="hidden sm:inline">{snapshot.difficulty}</span>
-          <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">
-            ·
-          </span>
-          <span>{formatTime(snapshot.elapsedSec)}</span>
+          {isTavern ? (
+            <>
+              <span className="font-display text-sm sm:text-base text-[#FCD34D] font-bold whitespace-nowrap flex items-center gap-1.5">
+                <span>🍺</span> Sanctuary Tavern
+              </span>
+              <span aria-hidden="true" className="text-[#78768A]">·</span>
+              <span className="text-emerald-400 font-semibold">Social Hub</span>
+              <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">·</span>
+              <span className="hidden sm:inline text-[#BDBACF]">
+                {snapshot.players.length} {snapshot.players.length === 1 ? 'Adventurer' : 'Adventurers'}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="font-display text-sm sm:text-base text-white font-semibold whitespace-nowrap truncate max-w-[150px] sm:max-w-none">
+                Floor {snapshot.floor}: {map.biomeTitle.split(' ')[0]}
+              </span>
+              <span aria-hidden="true" className="text-[#78768A]">·</span>
+              <span className="hidden sm:inline">{snapshot.difficulty}</span>
+              <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">·</span>
+              <span>{formatTime(snapshot.elapsedSec)}</span>
+            </>
+          )}
         </div>
 
         {/* Right: Room Code, Ping, Chat & Menu */}
         <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5">
+          {/* Quick Expedition Gate Access inside Tavern */}
+          {isTavern && (
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                setExpeditionGateOpen(true);
+              }}
+              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-gradient-to-r from-[#854D0E] to-[#A16207] hover:from-[#A16207] hover:to-[#CA8A04] border border-[#FACC15]/60 text-xs font-display font-semibold text-white transition-all shadow-md whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1.5 animate-pulse"
+              title="Open Expedition Gate (Embark or Join Party)"
+            >
+              <span>⚔️</span>
+              <span className="hidden sm:inline">Expedition Gate</span>
+              <span className="sm:hidden">Gate</span>
+            </button>
+          )}
+
           {/* Latency / Ping Monitor */}
           <div
             className="pointer-events-auto hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] font-mono text-xs text-[#E6E4EE] min-h-[36px]"
@@ -279,10 +346,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <button
             type="button"
             onClick={handleCopyCode}
-            title="Copy Party Code"
+            title={isTavern ? 'Copy Tavern Room Code' : 'Copy Party Code'}
             className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] font-mono text-xs text-[#F3F2F8] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
           >
-            {copiedCode ? 'Copied!' : snapshot.roomId}
+            {copiedCode ? 'Copied!' : isTavern ? 'TAVERN-HUB' : snapshot.roomId}
           </button>
 
           <button
@@ -466,7 +533,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           nearInteractable={nearInteractable}
           onStickMove={handleStickMove}
           onAttackPress={handleAttackPress}
-          onTriggerAction={onTriggerAction}
+          onTriggerAction={handleTriggerActionWithPortal}
           onSendPing={onSendPing}
           settings={touchSettings}
           onOpenSettings={() => setTouchSettingsOpen(true)}
@@ -539,13 +606,19 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             type="button"
             onClick={() => {
               sfx.playUiClick();
-              onTriggerAction('interact', me.aimAngle);
+              handleTriggerActionWithPortal('interact', me.aimAngle);
             }}
-            className="px-3 py-1.5 bg-[#232832] border border-[#44566C] hover:border-[#93C5FD] text-left cursor-pointer"
+            className={`px-3 py-1.5 border text-left cursor-pointer transition-colors ${
+              isTavern && nearPortal
+                ? 'bg-[#854D0E] border-[#FACC15] text-[#FEF08A] animate-pulse'
+                : 'bg-[#232832] border-[#44566C] hover:border-[#93C5FD]'
+            }`}
           >
-            <div className="text-[10px] font-mono text-[#BAE6FD]">[E] Action</div>
+            <div className="text-[10px] font-mono text-[#BAE6FD]">
+              {isTavern && nearPortal ? '🌀 Portal' : '[E] Action'}
+            </div>
             <div className="font-display text-sm text-white whitespace-nowrap">
-              Interact
+              {isTavern && nearPortal ? 'Expedition Gate' : 'Interact'}
             </div>
           </button>
 
@@ -800,8 +873,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 }}
                 className="stone-button py-2.5 font-display text-sm text-white cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
               >
-                Return to Combat
+                {isTavern ? 'Resume Tavern Exploration' : 'Return to Combat'}
               </button>
+              {!isTavern && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setPauseOpen(false);
+                    if (onReturnToTavern) {
+                      onReturnToTavern();
+                    } else if (onJoinRoom) {
+                      onJoinRoom('TAVERN-HUB', me.heroClass);
+                    }
+                  }}
+                  className="py-2.5 bg-[#1F2937] hover:bg-[#2E3B4E] border border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5 shadow"
+                >
+                  <span>🍺</span>
+                  <span>Return to Tavern Hub</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -810,7 +901,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 }}
                 className="py-2 bg-[#3D2429] hover:bg-[#522E35] border border-[#8E3B46] font-display text-sm text-[#FECACA] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
               >
-                Leave Party
+                {isTavern ? 'Exit to Lobby' : 'Leave Party & Return to Lobby'}
               </button>
             </div>
           </div>
@@ -909,6 +1000,23 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               >
                 Play Again
               </button>
+              {!isTavern && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    if (onReturnToTavern) {
+                      onReturnToTavern();
+                    } else if (onJoinRoom) {
+                      onJoinRoom('TAVERN-HUB', me.heroClass);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#1E293B] hover:bg-[#334155] border-2 border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center gap-1.5 shadow"
+                >
+                  <span>🍺</span>
+                  <span>Return to Tavern</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -917,11 +1025,50 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 }}
                 className="px-4 py-2 bg-[#3B3942] hover:bg-[#494752] border-2 border-[#2D2B34] font-display text-sm text-[#E6E4F0] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center"
               >
-                Return to Sanctuary
+                Exit to Lobby
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Floating Prompt near Portal in Tavern */}
+      {isTavern && nearPortal && !expeditionGateOpen && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#38BDF8] shadow-2xl backdrop-blur-sm animate-bounce">
+          <span className="font-display font-bold text-xs sm:text-sm text-[#7DD3FC] flex items-center gap-1.5">
+            🌀 Ancient Expedition Portal
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              setExpeditionGateOpen(true);
+            }}
+            className="px-3 py-1 bg-[#0284C7] hover:bg-[#0369A1] font-display text-xs font-semibold text-white border border-[#38BDF8] cursor-pointer"
+          >
+            [E] Open Gate
+          </button>
+        </div>
+      )}
+
+      {/* Expedition Gate Modal */}
+      {expeditionGateOpen && (
+        <ExpeditionGateModal
+          userHeroClass={me.heroClass}
+          defaultHostName={me.username}
+          rooms={rooms}
+          onCreateExpedition={(opts) => {
+            if (onCreateRoom) {
+              onCreateRoom(opts);
+            }
+          }}
+          onJoinExpedition={(targetRoomId, heroClass) => {
+            if (onJoinRoom) {
+              onJoinRoom(targetRoomId, heroClass);
+            }
+          }}
+          onClose={() => setExpeditionGateOpen(false)}
+        />
       )}
 
       {/* Touch Controls Setup Modal */}

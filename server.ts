@@ -252,7 +252,7 @@ function broadcastRoomList(): void {
     onlineCount: clients.size,
   };
   for (const c of clients) {
-    if (!c.roomId) {
+    if (!c.roomId || c.roomId === 'TAVERN-HUB') {
       sendJson(c.ws, payload);
     }
   }
@@ -321,7 +321,7 @@ function leaveCurrentRoom(client: ConnectedClient): void {
     );
     if (!stillConnected) {
       room.removePlayer(client.userId);
-      if (room.getPlayerCount() === 0) {
+      if (room.getPlayerCount() === 0 && oldRoomId !== 'TAVERN-HUB') {
         rooms.delete(oldRoomId);
       }
     }
@@ -715,7 +715,9 @@ async function startServer() {
   setInterval(() => {
     for (const [roomId, room] of rooms.entries()) {
       if (room.getPlayerCount() === 0) {
-        rooms.delete(roomId);
+        if (roomId !== 'TAVERN-HUB') {
+          rooms.delete(roomId);
+        }
         continue;
       }
       const prevStatus = room.status;

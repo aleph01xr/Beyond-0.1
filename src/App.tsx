@@ -336,6 +336,10 @@ export function App() {
         onRestartRun={handleRestartRun}
         onLeaveRoom={handleLeaveRoom}
         pingMs={pingMs}
+        onCreateRoom={handleCreateRoom}
+        onJoinRoom={handleJoinRoom}
+        onReturnToTavern={() => handleJoinRoom('TAVERN-HUB', selectedClass)}
+        rooms={rooms}
       />
     );
   }

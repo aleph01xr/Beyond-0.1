@@ -85,6 +85,9 @@ export class GameRoom {
   }
 
   private loadFloor(floorNum: number, partySize: number): void {
+    if (this.roomId === 'TAVERN-HUB') {
+      floorNum = 0;
+    }
     this.floor = floorNum;
     if (floorNum === 0) {
       const tav = generateTavernFloor();
@@ -155,8 +158,13 @@ export class GameRoom {
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
     }
-    this.loadFloor(1, this.players.size);
-    this.pushSystemChat(`Expedition restarted on Seed ${this.baseSeed}.`);
+    const restartFloor = this.roomId === 'TAVERN-HUB' ? 0 : 1;
+    this.loadFloor(restartFloor, this.players.size);
+    this.pushSystemChat(
+      this.roomId === 'TAVERN-HUB'
+        ? `Sanctuary Tavern refreshed.`
+        : `Expedition restarted on Seed ${this.baseSeed}.`
+    );
     return this.map;
   }
 
@@ -482,7 +490,7 @@ export class GameRoom {
         }
       }
 
-      if (this.map.portalActive) {
+      if (this.floor > 0 && this.roomId !== 'TAVERN-HUB' && this.map.portalActive) {
         const portalDist = Math.hypot(
           this.map.portalPos.x - p.x,
           this.map.portalPos.y - p.y
