@@ -81,6 +81,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [partyOpen, setPartyOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
 
   // Touch settings & visibility
@@ -316,7 +317,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         </div>
 
         {/* Right: Room Code, Ping, Chat & Menu */}
-        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2.5">
+        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 overflow-x-auto custom-scrollbar max-w-[65vw] md:max-w-[75vw] lg:max-w-none shrink-0 py-1">
           {/* Quick Expedition Gate Access inside Tavern */}
           {isTavern && (
             <button
@@ -504,49 +505,66 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         );
       })()}
 
-      {/* Left Co-op Party Stack */}
-      <aside className="pointer-events-none fixed top-14 sm:top-16 left-3 sm:left-5 z-10 space-y-1.5 sm:space-y-2 w-44 sm:w-56">
-        {snapshot.players.map((p) => {
-          const cDef = HERO_CLASSES[p.heroClass];
-          const hpPct = Math.max(0, Math.min(100, (p.hp / Math.max(1, p.maxHp)) * 100));
-          return (
-            <div
-              key={p.id}
-              className="bg-[#1A1A24]/90 border border-[#323044] px-2.5 py-1.5 sm:px-3 sm:py-2 space-y-1"
-            >
-              <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs">
-                <span className="font-display text-xs sm:text-sm text-white truncate">
-                  {p.username} {p.id === playerId ? '(You)' : ''}
-                </span>
-                <span className="font-mono text-[10px] text-[#B3B1C4] tabular-nums whitespace-nowrap">
-                  {cDef.name}
-                </span>
-              </div>
+      {/* Collapsible Co-op Party Dropdown Menu */}
+      <div className="pointer-events-auto fixed top-12 sm:top-14 left-3 sm:left-5 z-20">
+        <button
+          type="button"
+          onClick={() => {
+            sfx.playUiClick();
+            setPartyOpen((v) => !v);
+          }}
+          className="px-2.5 py-1.5 bg-[#1A1A24]/95 border border-[#38364C] hover:border-[#D9AA52] font-mono text-xs text-[#E6E4EE] transition-colors whitespace-nowrap shadow-md flex items-center gap-1.5 cursor-pointer min-h-[36px]"
+          title="Toggle Party Members List"
+        >
+          <span>Party ({snapshot.players.length})</span>
+          <span className="text-[10px] text-[#FCD34D]">{partyOpen ? '▴' : '▾'}</span>
+        </button>
 
-              <div className="w-full h-1.5 sm:h-2 bg-[#2B2A38] overflow-hidden">
+        {partyOpen && (
+          <aside className="mt-1.5 space-y-1.5 w-48 sm:w-56 max-h-[50vh] overflow-y-auto custom-scrollbar bg-[#1A1A24]/95 border border-[#323044] p-2 shadow-2xl animate-in fade-in duration-150">
+            {snapshot.players.map((p) => {
+              const cDef = HERO_CLASSES[p.heroClass];
+              const hpPct = Math.max(0, Math.min(100, (p.hp / Math.max(1, p.maxHp)) * 100));
+              return (
                 <div
-                  style={{ width: `${hpPct}%` }}
-                  className={`h-full ${
-                    p.downed
-                      ? 'bg-[#64748B]'
-                      : hpPct <= 30
-                        ? 'bg-[#EF4444]'
-                        : 'bg-[#22C55E]'
-                  }`}
-                />
-              </div>
+                  key={p.id}
+                  className="bg-[#242332] border border-[#3E3C50] px-2 py-1.5 space-y-1"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs">
+                    <span className="font-display text-xs text-white truncate">
+                      {p.username} {p.id === playerId ? '(You)' : ''}
+                    </span>
+                    <span className="font-mono text-[9px] text-[#B3B1C4] tabular-nums whitespace-nowrap">
+                      {cDef.name}
+                    </span>
+                  </div>
 
-              <div className="flex items-center justify-between text-[10px] sm:text-[11px] font-mono tabular-nums text-[#C9C7D8]">
-                <span>
-                  HP {p.hp}/{p.maxHp}
-                  {p.shield > 0 ? ` (+${p.shield})` : ''}
-                </span>
-                <span>{p.downed ? 'DOWN' : `${Math.round(hpPct)}%`}</span>
-              </div>
-            </div>
-          );
-        })}
-      </aside>
+                  <div className="w-full h-1.5 bg-[#171622] overflow-hidden">
+                    <div
+                      style={{ width: `${hpPct}%` }}
+                      className={`h-full ${
+                        p.downed
+                          ? 'bg-[#64748B]'
+                          : hpPct <= 30
+                            ? 'bg-[#EF4444]'
+                            : 'bg-[#22C55E]'
+                      }`}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10px] font-mono tabular-nums text-[#C9C7D8]">
+                    <span>
+                      HP {p.hp}/{p.maxHp}
+                      {p.shield > 0 ? ` (+${p.shield})` : ''}
+                    </span>
+                    <span>{p.downed ? 'DOWN' : `${Math.round(hpPct)}%`}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </aside>
+        )}
+      </div>
 
       {/* MOBILE ON-SCREEN TOUCH GAMEPAD (Virtual Joystick + Action Cluster) */}
       {me && (isTouchDevice || forceTouchGamepad) && (

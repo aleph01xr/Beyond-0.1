@@ -156,31 +156,29 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
               <span className="font-semibold text-white">Action Buttons</span>
               <span className="text-[#F4D378] capitalize">{settings.buttonSize}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setButtonSize('standard')}
-                className={`py-2 px-3 border cursor-pointer min-h-[44px] flex flex-col items-center justify-center text-center transition-colors ${
-                  settings.buttonSize === 'standard'
-                    ? 'bg-[#5B5870] border-[#F4D378] text-white font-bold'
-                    : 'bg-[#292834] border-[#3F3D4E] text-[#B8B6C7] hover:border-[#73708A]'
-                }`}
-              >
-                <span>Standard</span>
-                <span className="text-[10px] opacity-75">Compact layout</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setButtonSize('large')}
-                className={`py-2 px-3 border cursor-pointer min-h-[44px] flex flex-col items-center justify-center text-center transition-colors ${
-                  settings.buttonSize === 'large'
-                    ? 'bg-[#5B5870] border-[#F4D378] text-white font-bold'
-                    : 'bg-[#292834] border-[#3F3D4E] text-[#B8B6C7] hover:border-[#73708A]'
-                }`}
-              >
-                <span>Large (+25%)</span>
-                <span className="text-[10px] opacity-75">Easier targeting</span>
-              </button>
+            <div className="grid grid-cols-3 gap-1.5">
+              {[
+                { id: 'compact', label: 'Compact', desc: 'Space-saving' },
+                { id: 'standard', label: 'Standard', desc: 'Balanced' },
+                { id: 'large', label: 'Large', desc: 'Comfortable' },
+              ].map((opt) => {
+                const active = settings.buttonSize === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setButtonSize(opt.id as ButtonSizeOption)}
+                    className={`py-2 px-1 border cursor-pointer min-h-[44px] flex flex-col items-center justify-center text-center transition-colors ${
+                      active
+                        ? 'bg-[#5B5870] border-[#F4D378] text-white font-bold'
+                        : 'bg-[#292834] border-[#3F3D4E] text-[#B8B6C7] hover:border-[#73708A]'
+                    }`}
+                  >
+                    <span>{opt.label}</span>
+                    <span className="text-[10px] opacity-75">{opt.desc}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
