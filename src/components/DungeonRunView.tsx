@@ -401,7 +401,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           </button>
 
           {/* Exclusive Developer Admin Menu Button */}
-          {me && (me.isAdmin || me.username.toLowerCase() === 'admin') && (
+          {me && (me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph') && (
             <button
               type="button"
               onClick={() => {

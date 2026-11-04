@@ -191,12 +191,17 @@ async function initStorage(): Promise<void> {
     createAccount('wanderer', 'beyond', 'vanguard');
   }
 
-  // Seed exclusive admin account (Admin / admin123)
-  if (!accountsByLower.has('admin')) {
-    createAccount('Admin', 'admin123', 'vanguard', true);
+  // Seed exclusive admin account (Aleph / admin123)
+  if (!accountsByLower.has('aleph') && !accountsByLower.has('admin')) {
+    createAccount('Aleph', 'admin123', 'vanguard', true);
   } else {
-    const adminAcc = accountsByLower.get('admin');
-    if (adminAcc && !adminAcc.isAdmin) {
+    const adminAcc = accountsByLower.get('admin') || accountsByLower.get('aleph');
+    if (adminAcc) {
+      if (adminAcc.username !== 'Aleph') {
+        accountsByLower.delete(adminAcc.usernameLower);
+        adminAcc.username = 'Aleph';
+        adminAcc.usernameLower = 'aleph';
+      }
       adminAcc.isAdmin = true;
       persistAccount(adminAcc);
     }
@@ -214,7 +219,8 @@ function createAccount(
       ? chosenClass
       : 'vanguard';
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
-  const isUserAdmin = isAdmin || username.toLowerCase() === 'admin';
+  const lowerName = username.toLowerCase();
+  const isUserAdmin = isAdmin || lowerName === 'admin' || lowerName === 'aleph';
   const rec: AccountRecord = {
     id,
     username,

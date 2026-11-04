@@ -179,7 +179,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             </h1>
             <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm text-[#9E9CAE] font-mono tabular-nums">
               <span className="text-[#E6E4EE] font-semibold">{user.username}</span>
-              {(user.isAdmin || user.username.toLowerCase() === 'admin') && (
+              {(user.isAdmin || user.username.toLowerCase() === 'admin' || user.username.toLowerCase() === 'aleph') && (
                 <span className="px-2 py-0.5 bg-amber-500/20 border border-amber-400 text-amber-300 font-bold text-xs rounded font-mono shadow-sm flex items-center animate-pulse">
                   ADMIN
                 </span>
