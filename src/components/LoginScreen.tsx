@@ -10,7 +10,7 @@ interface LoginScreenProps {
   onAuthenticated: (token: string, user: UserProfile) => void;
 }
 
-type AuthMode = 'login' | 'register' | 'reset';
+type AuthMode = 'login' | 'register';
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<AuthMode>('login');
@@ -107,28 +107,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
       setErrorMsg('Enter a username (at least 2 characters).');
       return;
     }
-    if (password.length < 3) {
-      setErrorMsg('Enter a password (at least 3 characters).');
+    if (password.length < 8) {
+      setErrorMsg('Enter a password (at least 8 characters).');
       return;
     }
 
     setLoading(true);
     try {
-      if (mode === 'reset') {
-        const res = await fetch(getApiEndpoint('/api/auth/reset-password'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: trimmedUser, newPassword: password }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setErrorMsg(data.error || 'Could not reset password.');
-        } else {
-          setInfoMsg(data.message || 'Password updated. Sign in below.');
-          setMode('login');
-        }
-        return;
-      }
+
 
       const endpoint = mode === 'register' ? '/api/auth/register' : '/api/auth/login';
       const res = await fetch(getApiEndpoint(endpoint), {
@@ -165,9 +151,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
   const headerTitle =
     mode === 'login'
       ? 'Log In'
-      : mode === 'register'
-        ? 'Create Account'
-        : 'Reset Password';
+      : 'Create Account';
 
   return (
     <main className="relative min-h-screen w-screen overflow-x-hidden overflow-y-auto select-none bg-[#191924] flex items-center justify-center p-4">
@@ -270,7 +254,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
           {/* Password Input with Padlock & Eye Toggle */}
           <label className="stone-input flex items-center gap-3 px-3.5 h-12 focus-within:outline-2 focus-within:outline-[#C9C7D4]">
             <span className="sr-only">
-              {mode === 'reset' ? 'New Password' : 'Password'}
+              Password
             </span>
             <svg
               width="20"
@@ -292,7 +276,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder={mode === 'reset' ? 'New Password' : 'Password'}
+              placeholder="Password"
               className="w-full bg-transparent font-display text-base sm:text-lg tracking-wide text-[#F3F2F7] placeholder:text-[#9694A1] focus:outline-none"
             />
             <button
@@ -414,9 +398,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
                 ? 'Connecting...'
                 : mode === 'login'
                   ? 'Log In'
-                  : mode === 'register'
-                    ? 'Create Account'
-                    : 'Save Password'}
+                  : 'Create Account'}
             </button>
           </div>
         </form>
@@ -431,16 +413,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
                 className="hover:text-white transition-colors cursor-pointer whitespace-nowrap min-h-[36px] flex items-center"
               >
                 &gt; Create Account
-              </button>
-              <span aria-hidden="true" className="text-[#ABA9B5]">
-                |
-              </span>
-              <button
-                type="button"
-                onClick={() => switchMode('reset')}
-                className="hover:text-white transition-colors cursor-pointer whitespace-nowrap min-h-[36px] flex items-center"
-              >
-                Forgot Password?
               </button>
             </>
           ) : (

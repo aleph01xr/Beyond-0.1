@@ -28,7 +28,7 @@ interface PlayerRuntime {
   attackCount: number;
 }
 
-const MAX_FLOORS_FOR_VICTORY = 3;
+const MAX_FLOORS_FOR_VICTORY = 5;
 
 export class GameRoom {
   public readonly roomId: string;
@@ -179,7 +179,7 @@ export class GameRoom {
     if (existing) {
       existing.state.connected = true;
       existing.state.username = username;
-      existing.state.isAdmin = isAdmin || username.toLowerCase() === 'admin' || Boolean(existing.state.isAdmin);
+      existing.state.isAdmin = isAdmin || Boolean(existing.state.isAdmin);
       return existing.state;
     }
 
@@ -228,9 +228,12 @@ export class GameRoom {
       readyNextFloor: false,
       pendingRelicChoices: [],
       connected: true,
-      isAdmin: isAdmin || username.toLowerCase() === 'admin',
+      isAdmin: isAdmin,
       godMode: false,
       speedBoost: false,
+      dexterity: 10,
+      vitality: 10,
+      attributePoints: 0,
     };
 
     this.players.set(playerId, {
@@ -415,6 +418,8 @@ export class GameRoom {
     const pr = this.players.get(playerId);
     if (!pr) return;
     const p = pr.state;
+    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+    if (!relic) return;
     if (!p.relics.includes(relicId)) {
       p.relics.push(relicId);
     }
@@ -422,10 +427,29 @@ export class GameRoom {
       p.maxHp += 30;
       p.hp = Math.min(p.maxHp, p.hp + 30);
     }
-    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
-    if (relic) {
-      this.emitEvent('status', p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
-    }
+    this.emitEvent('status', p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
+  }
+
+  public updatePlayerAttributes(
+    playerId: string,
+    dexterity: number,
+    vitality: number,
+    attributePoints: number
+  ): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    p.dexterity = dexterity;
+    p.vitality = vitality;
+    p.attributePoints = attributePoints;
+
+    const def = HERO_CLASSES[p.heroClass];
+    const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
+    const vitBonus = (p.vitality - 10) * 5;
+    const oldMax = p.maxHp;
+    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+    p.hp += p.maxHp - oldMax;
+    p.hp = Math.min(p.maxHp, p.hp);
   }
 
   public spawnDummyAtPlayer(playerId: string): void {
@@ -809,6 +833,9 @@ export class GameRoom {
 
   private computeDamageMult(p: PlayerState): number {
     let mult = 1 + (p.level - 1) * 0.1;
+    // Dexterity bonus: +1% damage per point above 10
+    const dexBonus = Math.max(0, (p.dexterity - 10) * 0.012);
+    mult += dexBonus;
     if (p.relics.includes('sunfire_signet')) mult *= 1.24;
     return mult;
   }
@@ -1762,10 +1789,10 @@ export class GameRoom {
     const physRes = Math.min(0.75, Math.max(-0.5, res.physical));
     let finalDmg = Math.max(1, Math.round(rawAmount * (1 - physRes) * markBonus));
 
-    // Ranger Class Passive: Eagle Keenness (+25% Longshot Crit Damage beyond 170px)
+    // Ranger Class Passive: Eagle Keenness (+25% Longshot Crit Damage beyond 180px)
     if (attacker && attacker.heroClass === 'ranger') {
       const distToTarget = Math.hypot(enemy.x - attacker.x, enemy.y - attacker.y);
-      if (distToTarget >= 170) {
+      if (distToTarget >= 180) {
         finalDmg = Math.round(finalDmg * 1.25);
         isCrit = true;
         this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 22, '🦅 LONGSHOT! (+25%)', '#34D399');
@@ -1799,12 +1826,12 @@ export class GameRoom {
     if (attacker) {
       attacker.damageDealt += finalDmg;
 
-      // Vanguard Class Passive: Iron Will (+4 Shield when striking CC'd / Burning foes)
+      // Vanguard Class Passive: Iron Will (+3 Shield when striking CC'd / Burning foes)
       if (attacker.heroClass === 'vanguard') {
         if (enemy.stunnedMs > 0 || enemy.burnedMs > 0 || enemy.frozenMs > 0) {
           if (attacker.shield < 60) {
-            attacker.shield = Math.min(60, attacker.shield + 4);
-            this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+4 Shield)', '#93C5FD');
+            attacker.shield = Math.min(60, attacker.shield + 3);
+            this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+3 Shield)', '#93C5FD');
           }
         }
       }
@@ -1911,7 +1938,7 @@ export class GameRoom {
 
     if (attacker && attacker.heroClass === 'ranger') {
       const distToTarget = Math.hypot(dummy.x - attacker.x, dummy.y - attacker.y);
-      if (distToTarget >= 170) {
+      if (distToTarget >= 180) {
         finalDmg = Math.round(finalDmg * 1.25);
         isCrit = true;
         this.emitEvent('crit', dummy.x, dummy.y - 42, '🦅 LONGSHOT! (+25%)', '#34D399');
@@ -1928,8 +1955,8 @@ export class GameRoom {
 
       if (attacker.heroClass === 'vanguard') {
         if (attacker.shield < 60) {
-          attacker.shield = Math.min(60, attacker.shield + 4);
-          this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+4 Shield)', '#93C5FD');
+          attacker.shield = Math.min(60, attacker.shield + 3);
+          this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+3 Shield)', '#93C5FD');
         }
       }
     }
@@ -2025,10 +2052,17 @@ export class GameRoom {
     while (p.xp >= p.nextXp) {
       p.xp -= p.nextXp;
       p.level += 1;
+      p.attributePoints += 2; // Give 2 points per level
       p.nextXp = Math.round(p.nextXp * 1.35);
-      p.maxHp += 12;
+      
+      const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
+      const vitBonus = (p.vitality - 10) * 5; // Vitality bonus: +5 HP per point above 10
+      const oldMax = p.maxHp;
+      p.maxHp = HERO_CLASSES[p.heroClass].maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+      p.hp += (p.maxHp - oldMax); // Keep current HP relative to max
       p.hp = Math.min(p.maxHp, p.hp + 24);
-      this.emitEvent('status', p.x, p.y - 26, `Level ${p.level}`, '#F4D378');
+
+      this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, '#F4D378');
     }
   }
 

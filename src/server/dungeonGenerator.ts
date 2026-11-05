@@ -37,14 +37,19 @@ const BIOMES: { id: BiomeId; title: string; bossNames: string[] }[] = [
     bossNames: ['Warden Malakor', 'Sir Vane the Hollow'],
   },
   {
-    id: 'catacombs',
-    title: 'Sunken Reliquary',
-    bossNames: ['Archlich Vaelor', 'Dread Prelate Moros'],
-  },
-  {
     id: 'ember',
     title: 'Cindervault Bastion',
     bossNames: ['Ignis, Cinder Sovereign', 'Pyrelord Kaelen'],
+  },
+  {
+    id: 'catacombs', // Reusing ID for now or using new one if types allow
+    title: 'Abyssal Shadow Chasm',
+    bossNames: ['Void-Eater Malice', 'Shadow Stalker'],
+  },
+  {
+    id: 'courtyard', // Reusing ID for now or using new one if types allow
+    title: 'Aetherial Void Spire',
+    bossNames: ['Archon of Nothingness', 'Star-Spawn Herald'],
   },
 ];
 

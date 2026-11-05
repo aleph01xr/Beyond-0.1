@@ -824,7 +824,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </div>
 
             {/* Account Class Locked Soul Oath */}
-            <div className="p-3.5 bg-[#201F2B] border border-[#3A384C] space-y-1.5">
+            <div className="p-3.5 bg-[#201F2B] border border-[#3A384C] space-y-2.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-display text-white font-semibold flex items-center gap-1.5">
                   <span>🔒</span> Soul Oath (Class Locked)
@@ -833,14 +833,69 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   {myDef.roleBadge}
                 </span>
               </div>
-              <p className="text-xs text-[#E2E0EE]">
-                Bonded as <strong className="text-white">{myDef.name}</strong> · {myDef.title}
-              </p>
-              <p className="text-[11px] text-[#A6A4B6] leading-relaxed">
-                <span className="text-[#FBBF24] font-semibold">{myDef.passiveName}:</span> {myDef.passiveDesc}
-              </p>
-              <p className="text-[10.5px] text-[#787687] font-mono pt-0.5">
-                Each account is permanently locked to 1 class.
+              
+              <div className="flex items-center gap-3">
+                <div className="flex-1 space-y-1">
+                  <p className="text-xs text-[#E2E0EE]">
+                    Bonded as <strong className="text-white">{myDef.name}</strong> · {myDef.title}
+                  </p>
+                  <p className="text-[10.5px] text-[#A6A4B6] leading-relaxed">
+                    <span className="text-[#FBBF24] font-semibold">{myDef.passiveName}:</span> {myDef.passiveDesc}
+                  </p>
+                </div>
+              </div>
+
+              {/* Attributes Section */}
+              <div className="pt-2.5 border-t border-[#3A384C] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-display text-[#D9AA52] font-bold">Adventurer Attributes</span>
+                  {me.attributePoints > 0 && (
+                    <span className="text-[10px] font-mono bg-[#D9AA52] text-black px-1.5 py-0.5 rounded animate-pulse">
+                      {me.attributePoints} Points Available
+                    </span>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-[#171622] border border-[#2B293A] p-2 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="text-[#38BDF8]">DEXTERITY</span>
+                      <span className="text-white font-bold">{me.dexterity}</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={me.attributePoints <= 0}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
+                      }}
+                      className="w-full py-1 bg-[#2D2A3A] hover:bg-[#383548] border border-[#3A384C] text-[9px] font-bold text-white cursor-pointer disabled:opacity-30"
+                    >
+                      + UPGRADE (+1.2% DMG)
+                    </button>
+                  </div>
+                  <div className="bg-[#171622] border border-[#2B293A] p-2 flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="text-[#10B981]">VITALITY</span>
+                      <span className="text-white font-bold">{me.vitality}</span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={me.attributePoints <= 0}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
+                      }}
+                      className="w-full py-1 bg-[#2D2A3A] hover:bg-[#383548] border border-[#3A384C] text-[9px] font-bold text-white cursor-pointer disabled:opacity-30"
+                    >
+                      + UPGRADE (+5 MAX HP)
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[10.5px] text-[#787687] font-mono pt-0.5 text-center">
+                Gain +2 attribute points on every level up.
               </p>
             </div>
 

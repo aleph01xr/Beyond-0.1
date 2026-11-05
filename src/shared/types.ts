@@ -385,6 +385,9 @@ export interface PlayerState {
   isAdmin?: boolean;
   godMode?: boolean;
   speedBoost?: boolean;
+  dexterity: number;
+  vitality: number;
+  attributePoints: number;
 }
 
 export type EnemyKind = 'slime' | 'goblin' | 'skeleton' | 'cultist' | 'knight' | 'boss';
@@ -543,6 +546,9 @@ export interface UserProfile {
   totalKills: number;
   totalRevives: number;
   isAdmin?: boolean;
+  dexterity: number;
+  vitality: number;
+  attributePoints: number;
 }
 
 export type ClientMessage =
@@ -574,6 +580,7 @@ export type ClientMessage =
   | { type: 'admin:set_level'; level?: number }
   | { type: 'admin:add_relic'; relicId: string }
   | { type: 'admin:spawn_dummy' }
+  | { type: 'player:spend_attribute'; attribute: 'dexterity' | 'vitality' }
   | { type: 'ping'; t: number };
 
 export type ServerMessage =

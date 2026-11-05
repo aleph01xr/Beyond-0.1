@@ -31,11 +31,24 @@ interface AccountRecord {
   totalRevives: number;
   gold?: number;
   isAdmin?: boolean;
+  dexterity?: number;
+  vitality?: number;
+  attributePoints?: number;
 }
 
 const accountsByLower = new Map<string, AccountRecord>();
 const accountsById = new Map<string, AccountRecord>();
-const sessionsByToken = new Map<string, string>();
+const sessionsByToken = new Map<string, { userId: string; expiresAt: number }>();
+
+function clearExpiredSessions(): void {
+  const now = Date.now();
+  for (const [token, session] of sessionsByToken.entries()) {
+    if (session.expiresAt < now) {
+      sessionsByToken.delete(token);
+    }
+  }
+}
+setInterval(clearExpiredSessions, 1000 * 60 * 60); // Clean up every hour
 
 const DATA_DIR = path.resolve(__dirname, 'data');
 const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
@@ -49,8 +62,26 @@ if (process.env.DATABASE_URL) {
   });
 }
 
-function hashPassword(pw: string): string {
-  return crypto.createHash('sha256').update(`beyond_salt_${pw}`).digest('hex');
+function hashPassword(pw: string, salt?: string): string {
+  if (!salt) {
+    // New scrypt hash: "scrypt:salt:hash"
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(pw, newSalt, 64).toString('hex');
+    return `scrypt:${newSalt}:${hash}`;
+  }
+  // Verify scrypt
+  const hash = crypto.scryptSync(pw, salt, 64).toString('hex');
+  return hash;
+}
+
+function verifyPassword(pw: string, storedHash: string): boolean {
+  if (storedHash.startsWith('scrypt:')) {
+    const [, salt, hash] = storedHash.split(':');
+    return hashPassword(pw, salt) === hash;
+  }
+  // Legacy SHA-256 fallback
+  const legacyHash = crypto.createHash('sha256').update(`beyond_salt_${pw}`).digest('hex');
+  return legacyHash === storedHash;
 }
 
 function toPublicProfile(acc: AccountRecord): UserProfile {
@@ -63,7 +94,10 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
     highestFloor: acc.highestFloor,
     totalKills: acc.totalKills,
     totalRevives: acc.totalRevives,
-    isAdmin: acc.isAdmin ?? (acc.usernameLower === 'admin'),
+    isAdmin: !!acc.isAdmin,
+    dexterity: acc.dexterity || 10,
+    vitality: acc.vitality || 10,
+    attributePoints: acc.attributePoints || 0,
   };
 }
 
@@ -93,8 +127,9 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
       await dbPool.query(
         `INSERT INTO accounts (
           id, username, username_lower, password_hash, locked_class, preferred_class,
-          runs_completed, highest_floor, total_kills, total_revives, gold, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+          runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
+          dexterity, vitality, attribute_points, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
         ON CONFLICT (username_lower) DO UPDATE SET
           password_hash = EXCLUDED.password_hash,
           locked_class = EXCLUDED.locked_class,
@@ -104,6 +139,10 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
           total_kills = EXCLUDED.total_kills,
           total_revives = EXCLUDED.total_revives,
           gold = EXCLUDED.gold,
+          is_admin = EXCLUDED.is_admin,
+          dexterity = EXCLUDED.dexterity,
+          vitality = EXCLUDED.vitality,
+          attribute_points = EXCLUDED.attribute_points,
           updated_at = NOW();`,
         [
           acc.id,
@@ -117,6 +156,10 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
           acc.totalKills,
           acc.totalRevives,
           acc.gold ?? 0,
+          !!acc.isAdmin,
+          acc.dexterity || 10,
+          acc.vitality || 10,
+          acc.attributePoints || 0,
         ]
       );
     } catch (err) {
@@ -133,7 +176,7 @@ async function initStorage(): Promise<void> {
           id VARCHAR(64) PRIMARY KEY,
           username VARCHAR(32) NOT NULL,
           username_lower VARCHAR(32) UNIQUE NOT NULL,
-          password_hash VARCHAR(128) NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
           locked_class VARCHAR(24) NOT NULL DEFAULT 'vanguard',
           preferred_class VARCHAR(24) NOT NULL DEFAULT 'vanguard',
           runs_completed INT NOT NULL DEFAULT 0,
@@ -141,9 +184,33 @@ async function initStorage(): Promise<void> {
           total_kills INT NOT NULL DEFAULT 0,
           total_revives INT NOT NULL DEFAULT 0,
           gold INT NOT NULL DEFAULT 0,
+          is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+          dexterity INT NOT NULL DEFAULT 10,
+          vitality INT NOT NULL DEFAULT 10,
+          attribute_points INT NOT NULL DEFAULT 0,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
+      `);
+      // Safe migration for existing tables missing attribute columns
+      await dbPool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='is_admin') THEN
+            ALTER TABLE accounts ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT FALSE;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='dexterity') THEN
+            ALTER TABLE accounts ADD COLUMN dexterity INT NOT NULL DEFAULT 10;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='vitality') THEN
+            ALTER TABLE accounts ADD COLUMN vitality INT NOT NULL DEFAULT 10;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='attribute_points') THEN
+            ALTER TABLE accounts ADD COLUMN attribute_points INT NOT NULL DEFAULT 0;
+          END IF;
+          -- Increase password_hash length for scrypt
+          ALTER TABLE accounts ALTER COLUMN password_hash TYPE VARCHAR(255);
+        END $$;
       `);
       console.log('Connected to PostgreSQL and verified schema.');
 
@@ -161,6 +228,10 @@ async function initStorage(): Promise<void> {
           totalKills: Number(row.total_kills) || 0,
           totalRevives: Number(row.total_revives) || 0,
           gold: Number(row.gold) || 0,
+          isAdmin: !!row.is_admin,
+          dexterity: Number(row.dexterity) || 10,
+          vitality: Number(row.vitality) || 10,
+          attributePoints: Number(row.attribute_points) || 0,
         };
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -174,37 +245,47 @@ async function initStorage(): Promise<void> {
   // Load from local file if empty
   if (accountsById.size === 0 && fs.existsSync(ACCOUNTS_FILE)) {
     try {
+      const isProduction = process.env.NODE_ENV === 'production';
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       const list = JSON.parse(data) as AccountRecord[];
       for (const rec of list) {
+        // Skip publicly known test account in production even if present in file
+        if (isProduction && rec.usernameLower === 'wanderer') continue;
+        
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
-      console.log(`Loaded ${list.length} accounts from ${ACCOUNTS_FILE}`);
+      console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
       console.error('Failed to load accounts from file:', err);
     }
   }
 
-  // Seed default wanderer account locked as vanguard if no accounts exist
-  if (!accountsByLower.has('wanderer')) {
+  // Seed default wanderer account locked as vanguard if no accounts exist (DEV ONLY)
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!isProduction && !accountsByLower.has('wanderer')) {
     createAccount('wanderer', 'beyond', 'vanguard');
   }
 
-  // Seed exclusive admin account (Aleph / admin123)
-  if (!accountsByLower.has('aleph') && !accountsByLower.has('admin')) {
-    createAccount('Aleph', 'admin123', 'vanguard', true);
-  } else {
-    const adminAcc = accountsByLower.get('admin') || accountsByLower.get('aleph');
-    if (adminAcc) {
-      if (adminAcc.username !== 'Aleph') {
-        accountsByLower.delete(adminAcc.usernameLower);
-        adminAcc.username = 'Aleph';
-        adminAcc.usernameLower = 'aleph';
+  // Seed exclusive admin account (Aleph)
+  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  if (bootstrapPassword && bootstrapPassword.length >= 16) {
+    const adminUsername = 'Aleph';
+    const adminLower = adminUsername.toLowerCase();
+    
+    if (!accountsByLower.has(adminLower)) {
+      console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
+      createAccount(adminUsername, bootstrapPassword, 'vanguard', true);
+    } else {
+      // Account exists. Do NOT automatically upgrade just because of the name.
+      // If we want to force upgrade an existing account, we should require a more explicit flag or manual DB edit.
+      const existing = accountsByLower.get(adminLower)!;
+      if (!existing.isAdmin) {
+        console.warn(`Account "${adminUsername}" exists but is NOT an administrator. Automatic upgrade disabled for security.`);
       }
-      adminAcc.isAdmin = true;
-      persistAccount(adminAcc);
     }
+  } else if (bootstrapPassword) {
+    console.error('ADMIN_BOOTSTRAP_PASSWORD is too weak (min 16 chars). Admin bootstrap skipped.');
   }
 }
 
@@ -220,7 +301,7 @@ function createAccount(
       : 'vanguard';
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
   const lowerName = username.toLowerCase();
-  const isUserAdmin = isAdmin || lowerName === 'admin' || lowerName === 'aleph';
+  const isUserAdmin = isAdmin;
   const rec: AccountRecord = {
     id,
     username,
@@ -234,6 +315,9 @@ function createAccount(
     totalRevives: 0,
     gold: 0,
     isAdmin: isUserAdmin,
+    dexterity: 10,
+    vitality: 10,
+    attributePoints: 0,
   };
   persistAccount(rec);
   return rec;
@@ -366,11 +450,34 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // CORS middleware for cross-origin requests
+  // CORS middleware for authorized origins
+  const isProduction = process.env.NODE_ENV === 'production';
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+  
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin || '';
+    let isAllowed = false;
+
+    if (allowedOrigins.length > 0) {
+      isAllowed = allowedOrigins.includes(origin);
+    } else if (!isProduction) {
+      // In development, allow localhost/loopback if no origins specified
+      isAllowed = !origin || origin.includes('localhost') || origin.includes('127.0.0.1');
+    } else {
+      // In production, if no ALLOWED_ORIGINS are set, only allow same-origin requests.
+      // (Bypassing CORS headers for same-origin browser requests).
+      const host = req.headers.host || '';
+      isAllowed = !origin || origin.includes(host);
+    }
+
+    if (isAllowed && origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Vary', 'Origin');
+    }
+    
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
     if (req.method === 'OPTIONS') {
       res.sendStatus(204);
       return;
@@ -389,8 +496,8 @@ async function startServer() {
       res.status(400).json({ error: 'Username must be 2 to 20 characters.' });
       return;
     }
-    if (passwordRaw.length < 3) {
-      res.status(400).json({ error: 'Password must be at least 3 characters.' });
+    if (passwordRaw.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters.' });
       return;
     }
 
@@ -406,13 +513,22 @@ async function startServer() {
       res.status(401).json({ error: 'No adventurer account found with that name.' });
       return;
     }
-    if (acc.passwordHash !== hashPassword(passwordRaw)) {
+    if (!verifyPassword(passwordRaw, acc.passwordHash)) {
       res.status(401).json({ error: 'Invalid password for this adventurer.' });
       return;
     }
 
+    // Automatic rehash if using legacy SHA-256
+    if (!acc.passwordHash.startsWith('scrypt:')) {
+      acc.passwordHash = hashPassword(passwordRaw);
+      persistAccount(acc);
+    }
+
     const token = crypto.randomBytes(24).toString('hex');
-    sessionsByToken.set(token, acc.id);
+    sessionsByToken.set(token, {
+      userId: acc.id,
+      expiresAt: Date.now() + 1000 * 60 * 60 * 24, // 24 hours
+    });
     res.json({ token, user: toPublicProfile(acc) });
   });
 
@@ -435,8 +551,8 @@ async function startServer() {
       });
       return;
     }
-    if (passwordRaw.length < 3) {
-      res.status(400).json({ error: 'Password must be at least 3 characters.' });
+    if (passwordRaw.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters.' });
       return;
     }
     if (accountsByLower.has(usernameRaw.toLowerCase())) {
@@ -446,34 +562,60 @@ async function startServer() {
 
     const acc = createAccount(usernameRaw, passwordRaw, preferredClass);
     const token = crypto.randomBytes(24).toString('hex');
-    sessionsByToken.set(token, acc.id);
+    sessionsByToken.set(token, {
+      userId: acc.id,
+      expiresAt: Date.now() + 1000 * 60 * 60 * 24, // 24 hours
+    });
     res.status(201).json({ token, user: toPublicProfile(acc) });
   });
 
-  app.post('/api/auth/reset-password', (req, res) => {
-    const usernameRaw = String(req.body?.username ?? '').trim();
+  app.post('/api/auth/change-password', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required to change password.' });
+      return;
+    }
+    const acc = accountsById.get(userId);
+    if (!acc) {
+      res.status(401).json({ error: 'Account not found.' });
+      return;
+    }
+
+    const currentPassword = String(req.body?.currentPassword ?? '');
     const newPassword = String(req.body?.newPassword ?? '');
 
-    if (!usernameRaw || newPassword.length < 3) {
-      res
-        .status(400)
-        .json({ error: 'Enter your username and a new password (min 3 chars).' });
+    if (newPassword.length < 8) {
+      res.status(400).json({ error: 'New password must be at least 8 characters.' });
       return;
     }
-    const acc = accountsByLower.get(usernameRaw.toLowerCase());
-    if (!acc) {
-      res.status(404).json({ error: 'No adventurer found with that username.' });
+
+    if (!verifyPassword(currentPassword, acc.passwordHash)) {
+      res.status(401).json({ error: 'Incorrect current password.' });
       return;
     }
+
     acc.passwordHash = hashPassword(newPassword);
     persistAccount(acc);
-    res.json({ message: 'Password updated. You may now log in.' });
+
+    // Invalidate all sessions for this user except current? 
+    // Checklist says: "Invalidate existing sessions after a successful password change."
+    for (const [t, sess] of sessionsByToken.entries()) {
+      if (sess.userId === userId) {
+        sessionsByToken.delete(t);
+      }
+    }
+
+    res.json({ message: 'Password updated successfully. Please log in again.' });
   });
 
   app.get('/api/auth/me', (req, res) => {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const userId = sessionsByToken.get(token);
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
     if (!userId) {
       res.status(401).json({ error: 'Session expired.' });
       return;
@@ -496,8 +638,21 @@ async function startServer() {
   // Protected Admin Migration: Export Accounts
   app.get('/api/admin/export-accounts', (req, res) => {
     const authHeader = req.headers.authorization || '';
-    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET || 'beyond_migrate_secret_key_2026';
-    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7) !== expectedSecret) {
+    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET;
+    if (!expectedSecret || expectedSecret.length < 16) {
+      res.status(500).json({ error: 'Migration secret not configured or too weak.' });
+      return;
+    }
+
+    if (!authHeader.startsWith('Bearer ')) {
+      res.status(403).json({ error: 'Forbidden: Missing Bearer token.' });
+      return;
+    }
+
+    const providedToken = Buffer.from(authHeader.slice(7));
+    const expectedBuffer = Buffer.from(expectedSecret);
+
+    if (providedToken.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedToken, expectedBuffer)) {
       res.status(403).json({ error: 'Forbidden: Invalid or missing migration admin secret.' });
       return;
     }
@@ -513,8 +668,21 @@ async function startServer() {
   // Protected Admin Migration: Import Accounts
   app.post('/api/admin/import-accounts', async (req, res) => {
     const authHeader = req.headers.authorization || '';
-    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET || 'beyond_migrate_secret_key_2026';
-    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7) !== expectedSecret) {
+    const expectedSecret = process.env.MIGRATION_ADMIN_SECRET;
+    if (!expectedSecret || expectedSecret.length < 16) {
+      res.status(500).json({ error: 'Migration secret not configured or too weak.' });
+      return;
+    }
+
+    if (!authHeader.startsWith('Bearer ')) {
+      res.status(403).json({ error: 'Forbidden: Missing Bearer token.' });
+      return;
+    }
+
+    const providedToken = Buffer.from(authHeader.slice(7));
+    const expectedBuffer = Buffer.from(expectedSecret);
+
+    if (providedToken.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedToken, expectedBuffer)) {
       res.status(403).json({ error: 'Forbidden: Invalid or missing migration admin secret.' });
       return;
     }
@@ -540,6 +708,10 @@ async function startServer() {
           totalKills: Number(item.totalKills) || 0,
           totalRevives: Number(item.totalRevives) || 0,
           gold: Number(item.gold) || 0,
+          isAdmin: !!item.isAdmin,
+          dexterity: Number(item.dexterity) || 10,
+          vitality: Number(item.vitality) || 10,
+          attributePoints: Number(item.attributePoints) || 0,
         };
         await persistAccount(rec);
         importedCount++;
@@ -557,14 +729,15 @@ async function startServer() {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws, req) => {
-    const reqUrl = new URL(req.url || '/ws', 'http://localhost:3000');
-    const token = reqUrl.searchParams.get('token') || '';
-    const userId = sessionsByToken.get(token);
+    // Strictly use Sec-WebSocket-Protocol for tokens (safer than URL parameters)
+    const token = String(req.headers['sec-websocket-protocol'] || '').split(',')[0].trim();
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
     const acc = userId ? accountsById.get(userId) : undefined;
 
     if (!acc) {
       sendJson(ws, { type: 'error', message: 'Authentication required.' });
-      ws.close();
+      ws.close(4001, 'Unauthorized');
       return;
     }
 
@@ -750,23 +923,32 @@ async function startServer() {
         }
       } else if (msg.type === 'admin:add_gold') {
         if (acc.isAdmin) {
-          room.addPlayerGold(acc.id, msg.amount || 1000);
+          const amount = Math.floor(Number(msg.amount));
+          if (Number.isFinite(amount) && amount > 0 && amount <= 1000000) {
+            room.addPlayerGold(acc.id, amount);
+          }
         }
       } else if (msg.type === 'admin:add_potions') {
         if (acc.isAdmin) {
-          room.addPlayerPotions(acc.id, msg.amount || 5);
+          const amount = Math.floor(Number(msg.amount));
+          if (Number.isFinite(amount) && amount > 0 && amount <= 99) {
+            room.addPlayerPotions(acc.id, amount);
+          }
         }
       } else if (msg.type === 'admin:set_level') {
         if (acc.isAdmin) {
-          room.setPlayerLevel(acc.id, msg.level || 10);
-          broadcastToRoom(room.roomId, {
-            type: 'chat:message',
-            message: room.pushSystemChat(`[ADMIN] Set Level ${msg.level || 10} for ${acc.username}`),
-          });
+          const level = Math.floor(Number(msg.level));
+          if (Number.isFinite(level) && level >= 1 && level <= 100) {
+            room.setPlayerLevel(acc.id, level);
+            broadcastToRoom(room.roomId, {
+              type: 'chat:message',
+              message: room.pushSystemChat(`[ADMIN] Set Level ${level} for ${acc.username}`),
+            });
+          }
         }
       } else if (msg.type === 'admin:add_relic') {
         if (acc.isAdmin && msg.relicId) {
-          room.addPlayerRelic(acc.id, msg.relicId);
+          room.addPlayerRelic(acc.id, String(msg.relicId));
         }
       } else if (msg.type === 'admin:spawn_dummy') {
         if (acc.isAdmin) {
@@ -787,6 +969,28 @@ async function startServer() {
         const freshMap = room.restartRun();
         broadcastToRoom(room.roomId, { type: 'room:map', map: freshMap });
         broadcastRoomList();
+      } else if (msg.type === 'player:spend_attribute') {
+        if (acc.attributePoints && acc.attributePoints > 0) {
+          if (msg.attribute === 'dexterity') {
+            acc.dexterity = (acc.dexterity || 10) + 1;
+            acc.attributePoints -= 1;
+            persistAccount(acc);
+            room.pushSystemChat(`✨ ${acc.username} increased DEXTERITY to ${acc.dexterity}.`);
+          } else if (msg.attribute === 'vitality') {
+            acc.vitality = (acc.vitality || 10) + 1;
+            acc.attributePoints -= 1;
+            persistAccount(acc);
+            room.pushSystemChat(`✨ ${acc.username} increased VITALITY to ${acc.vitality}.`);
+          }
+          
+          // Force immediate update in game engine runtime state
+          room.updatePlayerAttributes(
+            acc.id,
+            acc.dexterity || 10,
+            acc.vitality || 10,
+            acc.attributePoints || 0
+          );
+        }
       }
     });
 
@@ -834,7 +1038,7 @@ async function startServer() {
     });
   }
 
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Beyond Co-op Server listening on http://0.0.0.0:${PORT}`);
   });

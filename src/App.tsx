@@ -96,8 +96,8 @@ export function App() {
 
     const connect = () => {
       if (disposed) return;
-      const wsUrl = getWsUrl(token);
-      const ws = new WebSocket(wsUrl);
+      const wsUrl = getWsUrl();
+      const ws = new WebSocket(wsUrl, [token]);
       wsRef.current = ws;
 
       ws.onopen = () => {
