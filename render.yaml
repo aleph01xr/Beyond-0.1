@@ -11,6 +11,8 @@ services:
         value: production
       - key: NODE_VERSION
         value: 22.14.0
+      - key: NODE_OPTIONS
+        value: "--import tsx"
       - key: MIGRATION_ADMIN_SECRET
         generateValue: true
       - key: ADMIN_BOOTSTRAP_PASSWORD
