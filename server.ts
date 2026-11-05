@@ -14,6 +14,7 @@ import type {
   ServerMessage,
   UserProfile,
 } from './src/shared/types.ts';
+import { MAX_ATTRIBUTE, MAX_LEVEL } from './src/shared/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,8 @@ interface AccountRecord {
   totalRevives: number;
   gold?: number;
   isAdmin?: boolean;
+  level?: number;
+  xp?: number;
   strength?: number;
   vitality?: number;
   dexterity?: number;
@@ -98,6 +101,8 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
     totalKills: acc.totalKills,
     totalRevives: acc.totalRevives,
     isAdmin: !!acc.isAdmin,
+    level: acc.level || 1,
+    xp: acc.xp || 0,
     strength: acc.strength || 0,
     vitality: acc.vitality || 0,
     dexterity: acc.dexterity || 0,
@@ -134,8 +139,9 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
         `INSERT INTO accounts (
           id, username, username_lower, password_hash, locked_class, preferred_class,
           runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
+          level, xp,
           strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
         ON CONFLICT (username_lower) DO UPDATE SET
           password_hash = EXCLUDED.password_hash,
           locked_class = EXCLUDED.locked_class,
@@ -146,6 +152,8 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
           total_revives = EXCLUDED.total_revives,
           gold = EXCLUDED.gold,
           is_admin = EXCLUDED.is_admin,
+          level = EXCLUDED.level,
+          xp = EXCLUDED.xp,
           strength = EXCLUDED.strength,
           vitality = EXCLUDED.vitality,
           dexterity = EXCLUDED.dexterity,
@@ -166,6 +174,8 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
           acc.totalRevives,
           acc.gold ?? 0,
           !!acc.isAdmin,
+          acc.level || 1,
+          acc.xp || 0,
           acc.strength || 0,
           acc.vitality || 0,
           acc.dexterity || 0,
@@ -197,6 +207,8 @@ async function initStorage(): Promise<void> {
           total_revives INT NOT NULL DEFAULT 0,
           gold INT NOT NULL DEFAULT 0,
           is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+          level INT NOT NULL DEFAULT 1,
+          xp INT NOT NULL DEFAULT 0,
           strength INT NOT NULL DEFAULT 0,
           vitality INT NOT NULL DEFAULT 0,
           dexterity INT NOT NULL DEFAULT 0,
@@ -232,6 +244,12 @@ async function initStorage(): Promise<void> {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='attribute_points') THEN
             ALTER TABLE accounts ADD COLUMN attribute_points INT NOT NULL DEFAULT 0;
           END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='level') THEN
+            ALTER TABLE accounts ADD COLUMN level INT NOT NULL DEFAULT 1;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='xp') THEN
+            ALTER TABLE accounts ADD COLUMN xp INT NOT NULL DEFAULT 0;
+          END IF;
           -- Increase password_hash length for scrypt
           ALTER TABLE accounts ALTER COLUMN password_hash TYPE VARCHAR(255);
         END $$;
@@ -261,6 +279,8 @@ async function initStorage(): Promise<void> {
           totalRevives: Number(row.total_revives) || 0,
           gold: Number(row.gold) || 0,
           isAdmin: !!row.is_admin,
+          level: Number(row.level) || 1,
+          xp: Number(row.xp) || 0,
           strength: str,
           vitality: vit,
           dexterity: dex,
@@ -297,6 +317,8 @@ async function initStorage(): Promise<void> {
         rec.strength = str;
         rec.intelligence = intl;
         rec.faith = fth;
+        rec.level = Number(rec.level) || 1;
+        rec.xp = Number(rec.xp) || 0;
         rec.attributePoints = Number(rec.attributePoints) || 0;
 
         accountsByLower.set(rec.usernameLower, rec);
@@ -366,6 +388,8 @@ function createAccount(
     intelligence: 0,
     faith: 0,
     attributePoints: 0,
+    level: 1,
+    xp: 0,
   };
   persistAccount(rec);
   return rec;
@@ -456,6 +480,20 @@ function createManagedRoom(opts: {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.totalRevives += 1;
+      persistAccount(acc);
+    }
+  };
+  room.onProgressionUpdateCallback = (pid, state) => {
+    const acc = accountsById.get(pid);
+    if (acc) {
+      acc.level = state.level;
+      acc.xp = state.xp;
+      acc.strength = state.strength;
+      acc.vitality = state.vitality;
+      acc.dexterity = state.dexterity;
+      acc.intelligence = state.intelligence;
+      acc.faith = state.faith;
+      acc.attributePoints = state.attributePoints;
       persistAccount(acc);
     }
   };
@@ -912,7 +950,16 @@ async function startServer() {
           difficulty,
           seed: msg.seed,
         });
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
+        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
+          level: acc.level || 1,
+          xp: acc.xp || 0,
+          strength: acc.strength || 0,
+          vitality: acc.vitality || 0,
+          dexterity: acc.dexterity || 0,
+          intelligence: acc.intelligence || 0,
+          faith: acc.faith || 0,
+          attributePoints: acc.attributePoints || 0,
+        });
         client.roomId = room.roomId;
 
         sendJson(ws, {
@@ -958,7 +1005,16 @@ async function startServer() {
         leaveCurrentRoom(client);
         // Player is strictly locked to their account's hero class
         const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
+        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
+          level: acc.level || 1,
+          xp: acc.xp || 0,
+          strength: acc.strength || 0,
+          vitality: acc.vitality || 0,
+          dexterity: acc.dexterity || 0,
+          intelligence: acc.intelligence || 0,
+          faith: acc.faith || 0,
+          attributePoints: acc.attributePoints || 0,
+        });
         client.roomId = room.roomId;
 
         sendJson(ws, {
@@ -1057,7 +1113,19 @@ async function startServer() {
       } else if (msg.type === 'admin:set_level') {
         if (acc.isAdmin) {
           const level = Math.floor(Number(msg.level));
-          if (Number.isFinite(level) && level >= 1 && level <= 100) {
+          if (Number.isFinite(level) && level >= 1 && level <= MAX_LEVEL) {
+            acc.level = level;
+            acc.xp = 0;
+            // Award points for target level (2 per level up)
+            acc.attributePoints = (level - 1) * 2;
+            // Reset spent attributes? Usually cleaner for admin testing
+            acc.strength = 0;
+            acc.vitality = 0;
+            acc.dexterity = 0;
+            acc.intelligence = 0;
+            acc.faith = 0;
+            persistAccount(acc);
+            
             room.setPlayerLevel(acc.id, level);
             broadcastToRoom(room.roomId, {
               type: 'chat:message',
@@ -1092,21 +1160,25 @@ async function startServer() {
         if (acc.attributePoints && acc.attributePoints > 0) {
           const attr = msg.attribute;
           if (attr === 'strength' || attr === 'dexterity' || attr === 'vitality' || attr === 'intelligence' || attr === 'faith') {
-            acc[attr] = (acc[attr] || 0) + 1;
-            acc.attributePoints -= 1;
-            persistAccount(acc);
-            room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
-            
-            // Force immediate update in game engine runtime state
-            room.updatePlayerAttributes(
-              acc.id,
-              acc.strength || 0,
-              acc.vitality || 0,
-              acc.dexterity || 0,
-              acc.intelligence || 0,
-              acc.faith || 0,
-              acc.attributePoints || 0
-            );
+            if ((acc[attr] || 0) < MAX_ATTRIBUTE) {
+              acc[attr] = (acc[attr] || 0) + 1;
+              acc.attributePoints -= 1;
+              persistAccount(acc);
+              room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
+              
+              // Force immediate update in game engine runtime state
+              room.updatePlayerAttributes(
+                acc.id,
+                acc.strength || 0,
+                acc.vitality || 0,
+                acc.dexterity || 0,
+                acc.intelligence || 0,
+                acc.faith || 0,
+                acc.attributePoints || 0
+              );
+            } else {
+              sendJson(ws, { type: 'error', message: `${attr.toUpperCase()} is already at maximum level.` });
+            }
           }
         }
       } else if (msg.type === 'admin:add_attribute_points') {
@@ -1116,6 +1188,69 @@ async function startServer() {
             acc.attributePoints = (acc.attributePoints || 0) + amount;
             persistAccount(acc);
             room.addPlayerAttributePoints(acc.id, amount);
+          }
+        }
+      } else if (msg.type === 'player:reset_attributes') {
+        // Correctly return spent points to the unspent pool instead of overwriting with level base
+        const spent = 
+          (acc.strength || 0) + 
+          (acc.vitality || 0) + 
+          (acc.dexterity || 0) + 
+          (acc.intelligence || 0) + 
+          (acc.faith || 0);
+        
+        acc.attributePoints = (acc.attributePoints || 0) + spent;
+        
+        acc.strength = 0;
+        acc.vitality = 0;
+        acc.dexterity = 0;
+        acc.intelligence = 0;
+        acc.faith = 0;
+        
+        persistAccount(acc);
+        
+        // Sync with room state
+        room.updatePlayerAttributes(
+          acc.id,
+          acc.strength,
+          acc.vitality,
+          acc.dexterity,
+          acc.intelligence,
+          acc.faith,
+          acc.attributePoints
+        );
+        
+        room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
+        
+        // Close dialogue if it was active
+        const aleph = room.npcs.find(n => n.id === 'npc_aleph');
+        if (aleph) {
+          aleph.speakingMs = 0;
+        }
+      } else if (msg.type === 'player:dialogue_close') {
+        const speakingNpc = room.npcs.find(n => (n.speakingMs ?? 0) > 0);
+        if (speakingNpc) {
+          speakingNpc.speakingMs = 0;
+        }
+      } else if (msg.type === 'player:dialogue_pick') {
+        const speakingNpc = room.npcs.find(n => (n.speakingMs ?? 0) > 0);
+        if (speakingNpc) {
+          if (speakingNpc.id === 'npc_aleph') {
+            if (msg.optionId === 'lore') {
+              speakingNpc.dialogue = 'I am who I am.';
+              speakingNpc.speakingMs = 9999999; 
+              speakingNpc.options = [
+                { id: 'back', label: 'I see. (Back)' }
+              ];
+            } else if (msg.optionId === 'back') {
+              speakingNpc.dialogue = 'The paths you walk are many, but your soul remains constant.';
+              speakingNpc.options = [
+                { id: 'reset_stats', label: 'I wish to reset my attributes.' },
+                { id: 'lore', label: 'Who are you?' }
+              ];
+            } else if (msg.optionId === 'reset_stats') {
+              // Frontend sends reset_attributes for this, but handle here just in case or for consistency
+            }
           }
         }
       }

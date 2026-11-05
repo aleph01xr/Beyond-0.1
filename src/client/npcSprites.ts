@@ -701,6 +701,204 @@ export function drawGenericNpc(
 }
 
 /**
+ * Aleph — The Soul-Shifter. A sophisticated man in a dramatic, high-detail hooded cloak.
+ * Merges mysterious occult silhouette with high-detail character features.
+ */
+export function drawMysteriousAleph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  now: number,
+  isSpeaking: boolean
+): void {
+  // 1. Idle Anatomy: Breathing & Stance
+  const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
+  const breathe = Math.sin(now * 0.003 + x) * 1.7;
+  const cy = y + breathe + talkBob;
+
+  // 2. Idle Routine (9-second cycle)
+  const idleCycleMs = 9000;
+  const cycleTime = (now + x * 300) % idleCycleMs;
+  const isAdjusting = !isSpeaking && cycleTime >= 4000 && cycleTime <= 7500;
+  
+  // 3. Natural Blinking & Heterochromia Eyes
+  const isBlinking = ((now + x * 200) % 4500) < 140;
+  const cloakSway = Math.sin(now * 0.004) * 3;
+
+  // --- Shadow (Deep & Weighted) ---
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 12, 16, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 1. Large Hooded Void Cloak (Back Layer) ---
+  ctx.fillStyle = '#111827'; // Dark charcoal back
+  ctx.beginPath();
+  ctx.moveTo(x - 15 + cloakSway * 0.5, cy - 12);
+  ctx.lineTo(x + 15 - cloakSway * 0.5, cy - 12);
+  ctx.lineTo(x + 18 - cloakSway, cy + 12);
+  ctx.lineTo(x - 18 + cloakSway, cy + 12);
+  ctx.fill();
+
+  // --- 2. Inner Attire: Midnight Vest & Purple Cravat ---
+  // These peek through the open front of the cloak
+  ctx.fillStyle = '#1E1B4B'; // Midnight vest
+  ctx.fillRect(x - 6, cy - 8, 12, 12);
+  ctx.fillStyle = '#4C1D95'; // Purple silk cravat
+  ctx.fillRect(x - 2, cy - 7, 4, 6);
+  ctx.fillStyle = '#7C3AED';
+  ctx.fillRect(x - 1, cy - 6, 2, 4);
+
+  // --- 3. Outer Cloak Panels (Deep Indigo) ---
+  ctx.fillStyle = '#1E1B4B'; // Main indigo cloak
+  // Left Panel
+  ctx.beginPath();
+  ctx.moveTo(x - 10, cy - 12);
+  ctx.lineTo(x - 4, cy - 12);
+  ctx.lineTo(x - 5, cy + 12);
+  ctx.lineTo(x - 16 + cloakSway, cy + 12);
+  ctx.closePath();
+  ctx.fill();
+  // Right Panel
+  ctx.beginPath();
+  ctx.moveTo(x + 10, cy - 12);
+  ctx.lineTo(x + 4, cy - 12);
+  ctx.lineTo(x + 5, cy + 12);
+  ctx.lineTo(x + 16 - cloakSway, cy + 12);
+  ctx.closePath();
+  ctx.fill();
+
+  // Cloak Highlights & Fold Shading
+  ctx.fillStyle = '#312E81';
+  ctx.fillRect(x - 10, cy - 10, 2, 20);
+  ctx.fillRect(x + 8, cy - 10, 2, 20);
+
+  // --- 4. Golden Runic Embroidery on Cloak Hem ---
+  ctx.fillStyle = '#D97706';
+  for (let i = 0; i < 3; i++) {
+    ctx.fillRect(x - 14 + cloakSway + i * 3, cy + 9, 1.5, 1.5);
+    ctx.fillRect(x + 10 - cloakSway + i * 3, cy + 9, 1.5, 1.5);
+  }
+
+  // --- 5. Head & Deep Hood ---
+  const headY = cy - 22;
+  
+  // Hood Silhouette
+  ctx.fillStyle = '#1E1B4B';
+  ctx.beginPath();
+  ctx.arc(x, headY + 4, 13, Math.PI, 0);
+  ctx.fill();
+  ctx.fillRect(x - 13, headY + 4, 26, 8);
+
+  // Golden Runic Trim on Hood Edge
+  ctx.strokeStyle = '#D97706';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, headY + 4, 13.5, Math.PI + 0.2, -0.2);
+  ctx.stroke();
+
+  // Deep Shadow inside Hood (The Void Face)
+  ctx.fillStyle = '#020617';
+  ctx.beginPath();
+  ctx.arc(x, headY + 4, 9, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Visible Pale Face peeking through shadow
+  ctx.fillStyle = '#FDE68A'; 
+  ctx.fillRect(x - 4, headY + 2, 9, 9);
+  // Chin shading
+  ctx.fillStyle = '#E5E7EB';
+  ctx.fillRect(x - 4, headY + 9, 9, 2);
+
+  // Heterochromia Piercing Eyes (Glow effect)
+  if (isBlinking) {
+    ctx.fillStyle = '#1E293B';
+    ctx.fillRect(x - 3, headY + 6, 2, 1);
+    ctx.fillRect(x + 1, headY + 6, 2, 1);
+  } else {
+    // Left eye: Soul-Cyan Flare
+    ctx.fillStyle = '#22D3EE';
+    ctx.fillRect(x - 3, headY + 5.5, 2.5, 2.5);
+    // Right eye: Star-Gold Flare
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(x + 1, headY + 5.5, 2.5, 2.5);
+    // Specular shine
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(x - 2.5, headY + 5.5, 1, 1);
+    ctx.fillRect(x + 1.5, headY + 5.5, 1, 1);
+  }
+
+  // Dark hair bangs visible under hood
+  ctx.fillStyle = '#171717';
+  ctx.fillRect(x - 5, headY + 1, 11, 2);
+  ctx.fillStyle = '#E2E8F0'; // Silver streak
+  ctx.fillRect(x - 4, headY + 1, 3, 1);
+
+  // --- 6. Hands & Celestial Staff ---
+  const staffX = x + 19;
+  const staffY = cy + Math.sin(now * 0.004) * 2;
+  
+  if (isSpeaking) {
+    const handG = Math.sin(now * 0.015) * 3;
+    ctx.fillStyle = '#FCD34D';
+    ctx.fillRect(x - 12, cy - 2 + handG, 4, 4); // Left hand gesticulating
+  } else if (isAdjusting) {
+    ctx.fillStyle = '#FCD34D';
+    ctx.fillRect(x - 9, cy - 14, 4, 4); // Adjusting hood edge
+  } else {
+    ctx.fillStyle = '#FCD34D';
+    ctx.fillRect(x - 11, cy + 2, 3, 3); // Hand at rest
+  }
+
+  // Right gauntleted hand holding staff
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(x + 10, cy - 2, 4, 6);
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(x + 10, cy - 1, 1, 4);
+
+  // Staff Handle
+  ctx.fillStyle = '#29180C';
+  ctx.fillRect(staffX - 1.5, staffY - 26, 3, 42);
+  // Pulsating Purple Soul-Shard
+  const shardPulse = 0.8 + Math.sin(now * 0.007) * 0.2;
+  ctx.fillStyle = '#A855F7';
+  ctx.beginPath();
+  ctx.moveTo(staffX, staffY - 34);
+  ctx.lineTo(staffX + 5, staffY - 29);
+  ctx.lineTo(staffX, staffY - 24);
+  ctx.lineTo(staffX - 5, staffY - 29);
+  ctx.closePath();
+  ctx.fill();
+  
+  // Ambient staff glow
+  const shardGlow = ctx.createRadialGradient(staffX, staffY - 29, 1, staffX, staffY - 29, 12);
+  shardGlow.addColorStop(0, 'rgba(168, 85, 247, 0.4)');
+  shardGlow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shardGlow;
+  ctx.beginPath();
+  ctx.arc(staffX, staffY - 29, 12 * shardPulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- 7. Orbiting Soul-Motes ---
+  [0, 1, 2].forEach(i => {
+    const moteAng = now * 0.0018 + (i * Math.PI * 2) / 3;
+    const mx = x + Math.cos(moteAng) * 22;
+    const my = cy - 8 + Math.sin(moteAng * 1.1) * 14;
+    ctx.fillStyle = i === 0 ? '#22D3EE' : i === 1 ? '#C084FC' : '#FACC15';
+    ctx.beginPath();
+    ctx.arc(mx, my, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Speaking Mouth
+  if (isSpeaking) {
+    const mouthOpen = Math.sin(now * 0.035) > 0;
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(x - 1.5, headY + 8.5, 3.5, mouthOpen ? 2 : 1);
+  }
+}
+
+/**
  * Main drawNpc dispatcher function
  */
 export function drawNpc(
@@ -719,16 +917,10 @@ export function drawNpc(
     drawBarkeeperLena(ctx, x, y, now, isSpeaking);
   } else if (npc.id === 'npc_jorah' || npc.spriteKind === 'veteran') {
     drawVeteranJorah(ctx, x, y, now, isSpeaking);
+  } else if (npc.id === 'npc_aleph' || npc.spriteKind === 'mysterious_cloak') {
+    drawMysteriousAleph(ctx, x, y, now, isSpeaking);
   } else {
     drawGenericNpc(ctx, npc, x, y, now, isSpeaking);
-  }
-
-  // Floating Speech Indicator Bubble
-  if (isSpeaking) {
-    const iconBob = Math.sin(now * 0.01) * 2;
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('', x, y - 36 + iconBob);
   }
 
   // Distinctive Name Badge & Interaction Prompt

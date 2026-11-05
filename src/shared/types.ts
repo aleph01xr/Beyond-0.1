@@ -3,6 +3,8 @@ export type HeroClassId = 'vanguard' | 'ranger' | 'arcanist' | 'cleric';
 export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
 
 export type BiomeId = 'courtyard' | 'catacombs' | 'ember' | 'void' | 'astral';
+export const MAX_LEVEL = 100;
+export const MAX_ATTRIBUTE = 100;
 
 export interface HeroClassStats {
   survivability: number; // 1-5
@@ -508,6 +510,11 @@ export interface RoomSummary {
   status: 'playing' | 'victory' | 'defeat';
 }
 
+export interface DialogueOption {
+  id: string;
+  label: string;
+}
+
 export interface NpcState {
   id: string;
   name: string;
@@ -517,6 +524,7 @@ export interface NpcState {
   spriteKind: string;
   speechIndex?: number;
   speakingMs?: number;
+  options?: DialogueOption[];
 }
 
 export interface TrainingDummyState {
@@ -561,6 +569,8 @@ export interface UserProfile {
   totalKills: number;
   totalRevives: number;
   isAdmin?: boolean;
+  level: number;
+  xp: number;
   dexterity: number;
   vitality: number;
   strength: number;
@@ -600,6 +610,9 @@ export type ClientMessage =
   | { type: 'admin:spawn_dummy' }
   | { type: 'admin:add_attribute_points'; amount?: number }
   | { type: 'player:spend_attribute'; attribute: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith' }
+  | { type: 'player:reset_attributes' }
+  | { type: 'player:dialogue_close' }
+  | { type: 'player:dialogue_pick'; optionId: string }
   | { type: 'ping'; t: number };
 
 export type ServerMessage =

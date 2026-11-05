@@ -806,6 +806,18 @@ export function generateTavernFloor(): {
       dialogue: 'Test your steel against the training dummies in my arena!',
       spriteKind: 'veteran',
     },
+    {
+      id: 'npc_aleph',
+      name: 'Aleph',
+      x: 18 * TILE_SIZE,
+      y: 28 * TILE_SIZE,
+      dialogue: 'The paths you walk are many, but your soul remains constant. Do you seek a different focus?',
+      spriteKind: 'mysterious_cloak',
+      options: [
+        { id: 'reset_stats', label: 'I wish to reset my attributes.' },
+        { id: 'lore', label: 'Who are you?' }
+      ]
+    },
   ];
 
   const trainingDummies: TrainingDummyState[] = [

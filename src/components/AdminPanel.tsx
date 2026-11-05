@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { sfx } from '../client/sound.ts';
 import {
   HERO_CLASSES,
+  MAX_ATTRIBUTE,
+  MAX_LEVEL,
   RELIC_CATALOG,
   type ClientMessage,
   type HeroClassId,
@@ -237,7 +239,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     className="stone-button stone-button-blue p-3 h-auto"
                   >
                     <div className="flex flex-col items-center">
-                      <span className="font-display font-bold text-sm">Set Level 100 (Cap)</span>
+                      <span className="font-display font-bold text-sm">Set Level {MAX_LEVEL} (Cap)</span>
                       <span className="text-[10px] opacity-80 font-mono">Current: Lv.{me.level}</span>
                     </div>
                   </button>
@@ -274,13 +276,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <button
                       key={attr.key}
                       type="button"
-                      onClick={() => handleCommand({ type: 'player:spend_attribute', attribute: attr.key as any })}
-                      className="stone-button stone-button-dark p-2 h-auto text-white border-none shadow-none ring-1 ring-[#383548] hover:ring-[#D9AA52]"
+                      onClick={() => {
+                        if (((me as any)[attr.key] || 0) < MAX_ATTRIBUTE) {
+                          handleCommand({ type: 'player:spend_attribute', attribute: attr.key as any });
+                        }
+                      }}
+                      disabled={((me as any)[attr.key] || 0) >= MAX_ATTRIBUTE}
+                      className="stone-button stone-button-dark p-2 h-auto text-white border-none shadow-none ring-1 ring-[#383548] hover:ring-[#D9AA52] disabled:opacity-40"
                     >
                       <div className="flex flex-col items-center">
                         <span className="text-[10px] font-bold" style={{ color: attr.color }}>{attr.label}</span>
                         <span className="text-[11px] font-mono font-bold">{(me as any)[attr.key] || 0}</span>
-                        <span className="text-[9px] text-[#A19FAF] mt-0.5">+1</span>
+                        <span className="text-[9px] text-[#A19FAF] mt-0.5">{(me as any)[attr.key] >= MAX_ATTRIBUTE ? 'MAX' : '+1'}</span>
                       </div>
                     </button>
                   ))}

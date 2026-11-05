@@ -1,5 +1,7 @@
 import {
   HERO_CLASSES,
+  MAX_ATTRIBUTE,
+  MAX_LEVEL,
   RELIC_CATALOG,
   TILE_SIZE,
   type ChatMessage,
@@ -60,6 +62,7 @@ export class GameRoom {
   public onFloorClearedCallback?: (playerIds: string[], floor: number) => void;
   public onKillCallback?: (playerId: string) => void;
   public onReviveCallback?: (playerId: string) => void;
+  public onProgressionUpdateCallback?: (playerId: string, state: PlayerState) => void;
 
   constructor(opts: {
     roomId: string;
@@ -143,6 +146,12 @@ export class GameRoom {
       pr.state.level = 1;
       pr.state.xp = 0;
       pr.state.nextXp = 80;
+      pr.state.strength = 0;
+      pr.state.vitality = 0;
+      pr.state.dexterity = 0;
+      pr.state.intelligence = 0;
+      pr.state.faith = 0;
+      pr.state.attributePoints = 0;
       pr.state.maxHp = def.maxHp;
       pr.state.hp = def.maxHp;
       pr.state.shield = 0;
@@ -158,6 +167,7 @@ export class GameRoom {
       pr.state.revives = 0;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
+      if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(pr.state.id, pr.state);
     }
     const restartFloor = this.roomId === 'TAVERN-HUB' ? 0 : 1;
     this.loadFloor(restartFloor, this.players.size);
@@ -173,7 +183,17 @@ export class GameRoom {
     playerId: string,
     username: string,
     heroClass: HeroClassId,
-    isAdmin = false
+    isAdmin = false,
+    savedStats?: {
+      level: number;
+      xp: number;
+      strength: number;
+      vitality: number;
+      dexterity: number;
+      intelligence: number;
+      faith: number;
+      attributePoints: number;
+    }
   ): PlayerState {
     const existing = this.players.get(playerId);
     if (existing) {
@@ -207,9 +227,9 @@ export class GameRoom {
       hp: def.maxHp,
       maxHp: def.maxHp,
       shield: 15,
-      level: 1,
-      xp: 0,
-      nextXp: 80,
+      level: savedStats?.level || 1,
+      xp: savedStats?.xp || 0,
+      nextXp: savedStats ? Math.round(80 * Math.pow(1.35, savedStats.level - 1)) : 80,
       gold: 0,
       potions: 2,
       relics: [],
@@ -231,13 +251,22 @@ export class GameRoom {
       isAdmin: isAdmin,
       godMode: false,
       speedBoost: false,
-      dexterity: 0,
-      vitality: 0,
-      strength: 0,
-      intelligence: 0,
-      faith: 0,
-      attributePoints: 0,
+      dexterity: savedStats?.dexterity || 0,
+      vitality: savedStats?.vitality || 0,
+      strength: savedStats?.strength || 0,
+      intelligence: savedStats?.intelligence || 0,
+      faith: savedStats?.faith || 0,
+      attributePoints: savedStats?.attributePoints || 0,
     };
+
+    if (state.level >= MAX_LEVEL) {
+      state.nextXp = 999999;
+      state.xp = 0;
+    }
+
+    const vitBonus = (state.vitality || 0) * 6;
+    state.maxHp = def.maxHp + (state.level - 1) * 12 + vitBonus;
+    state.hp = state.maxHp;
 
     this.players.set(playerId, {
       state,
@@ -408,14 +437,15 @@ export class GameRoom {
     if (!pr) return;
     const p = pr.state;
     const def = HERO_CLASSES[p.heroClass];
-    p.level = Math.max(1, Math.min(100, targetLevel));
+    p.level = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
     p.xp = 0;
-    p.nextXp = p.level >= 100 ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
+    p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
     const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
     const vitBonus = (p.vitality || 0) * 6;
     p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
     p.hp = p.maxHp;
     this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} Set!`, '#F4D378');
+    if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
   }
 
   public addPlayerRelic(playerId: string, relicId: string): void {
@@ -467,6 +497,7 @@ export class GameRoom {
     p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
     p.hp += p.maxHp - oldMax;
     p.hp = Math.min(p.maxHp, p.hp);
+    if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
   }
 
   public spawnDummyAtPlayer(playerId: string): void {
@@ -559,6 +590,19 @@ export class GameRoom {
               'Floor 5 reaches the Aetherial Void Spire! The Archon of Nothingness unleashes devastating astral starlight novas.',
               'Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!',
             ];
+          } else if (npc.id === 'npc_aleph') {
+            lines = [
+              'The paths you walk are many, but your soul remains constant. Do you seek a different focus?',
+              'True strength comes not from the sword, but from knowing how to wield it.',
+              'The stars whispered of your coming. I offer you the chance to begin anew.',
+            ];
+            // Ensure options are restored if they were cleared by a dialogue pick
+            if (!npc.options || npc.options.length === 0) {
+              npc.options = [
+                { id: 'reset_stats', label: 'I wish to reset my attributes.' },
+                { id: 'lore', label: 'Who are you?' }
+              ];
+            }
           } else {
             const combatTip =
               p.heroClass === 'vanguard'
@@ -581,7 +625,8 @@ export class GameRoom {
           npc.speechIndex = ((npc.speechIndex ?? -1) + 1) % lines.length;
           const spoken = lines[npc.speechIndex];
           npc.dialogue = spoken;
-          npc.speakingMs = 5000;
+          // Aleph stays open indefinitely if he has options
+          npc.speakingMs = (npc.options && npc.options.length > 0) ? 9999999 : 5000;
 
           this.emitEvent('status', npc.x, npc.y - 28, `"${spoken}"`, '#FDE68A');
           this.pushSystemChat(` ${npc.name}: "${spoken}"`);
@@ -2488,24 +2533,25 @@ export class GameRoom {
   }
 
   private grantXp(p: PlayerState, amount: number): void {
-    if (p.level >= 100) {
-      p.level = 100;
+    if (p.level >= MAX_LEVEL) {
+      p.level = MAX_LEVEL;
       p.xp = 0;
       return;
     }
     p.xp += amount;
-    while (p.xp >= p.nextXp && p.level < 100) {
+    let leveledUp = false;
+    while (p.xp >= p.nextXp && p.level < MAX_LEVEL) {
       p.xp -= p.nextXp;
       p.level += 1;
-      if (p.level <= 100) {
+      leveledUp = true;
+      if (p.level <= MAX_LEVEL) {
         p.attributePoints += 2;
       }
-      p.nextXp = p.level >= 100 ? 999999 : Math.round(p.nextXp * 1.35);
-      if (p.level >= 100) {
-        p.level = 100;
+      p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(p.nextXp * 1.35);
+      if (p.level >= MAX_LEVEL) {
+        p.level = MAX_LEVEL;
         p.xp = 0;
         p.nextXp = 999999;
-        break;
       }
 
       const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
@@ -2516,11 +2562,15 @@ export class GameRoom {
       p.hp = Math.min(p.maxHp, p.hp + 24);
 
       this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, '#F4D378');
+      if (p.level >= MAX_LEVEL) break;
     }
-    if (p.level >= 100) {
-      p.level = 100;
+    if (p.level >= MAX_LEVEL) {
+      p.level = MAX_LEVEL;
       p.xp = 0;
       p.nextXp = 999999;
+    }
+    if (this.onProgressionUpdateCallback) {
+      this.onProgressionUpdateCallback(p.id, p);
     }
   }
 

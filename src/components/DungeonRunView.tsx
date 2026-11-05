@@ -12,6 +12,8 @@ import {
 import { TouchSettingsModal } from './TouchSettingsModal.tsx';
 import {
   HERO_CLASSES,
+  MAX_ATTRIBUTE,
+  MAX_LEVEL,
   RELIC_CATALOG,
   type ChatMessage,
   type ClientMessage,
@@ -978,20 +980,32 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         if (!speakingNpc) return null;
         const isBram = speakingNpc.id === 'npc_bram';
         const isLena = speakingNpc.id === 'npc_lena';
-        const avatarEmoji = isBram ? '' : isLena ? '' : '️';
+        const isAleph = speakingNpc.id === 'npc_aleph';
+        const avatarEmoji = isBram ? '🍻' : isLena ? '🍷' : isAleph ? '🎭' : '🛡️';
         const roleLabel = isBram
           ? 'Innkeeper & Host'
           : isLena
             ? 'Meadmaster & Strategist'
-            : 'Mercenary Commander';
+            : isAleph
+              ? 'Mysterious Cloaked Figure'
+              : 'Mercenary Commander';
+
+        const handlePickOption = (optionId: string) => {
+          sfx.playUiClick('confirm');
+          if (optionId === 'reset_stats') {
+            onSendAdminCommand?.({ type: 'player:reset_attributes' });
+          } else {
+            onSendAdminCommand?.({ type: 'player:dialogue_pick', optionId });
+          }
+        };
 
         return (
-          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 bg-[#1B1A24]/95 border-2 border-[#D9AA52] shadow-2xl flex items-start gap-4 transition-all">
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 bg-[#1B1A24]/95 border-2 border-[#D9AA52] shadow-2xl flex items-start gap-4 transition-all animate-in slide-in-from-bottom-4 duration-300">
             <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded bg-[#2D231C] border border-[#D9AA52] flex items-center justify-center text-2xl sm:text-3xl relative overflow-hidden shadow-inner">
-              <span className="animate-bounce">{avatarEmoji}</span>
+              <span className="animate-pulse">{avatarEmoji}</span>
               <span className="absolute bottom-0 inset-x-0 h-1.5 bg-[#FCD34D] animate-ping" />
             </div>
-            <div className="flex-1 space-y-1">
+            <div className="flex-1 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-display font-bold text-sm sm:text-base text-[#FCD34D] flex items-center gap-1.5">
                   {speakingNpc.name}
@@ -999,13 +1013,46 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                     · {roleLabel}
                   </span>
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-[#D9AA52]/20 text-[#FDE68A] border border-[#D9AA52]/40 animate-pulse">
-                  SPEAKING
-                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // We can't easily set speakingMs to 0 from client without a message,
+                    // but we can at least stop showing it locally if we had local state.
+                    // For now, let's just use the 'Close' button if available.
+                  }}
+                  className="text-[10px] font-mono px-2 py-0.5 bg-[#D9AA52]/20 text-[#FDE68A] border border-[#D9AA52]/40 animate-pulse"
+                >
+                  {speakingNpc.speakingMs && speakingNpc.speakingMs > 6000 ? 'INTERACTIVE' : 'SPEAKING'}
+                </button>
               </div>
               <p className="text-xs sm:text-sm text-[#F1F5F9] font-sans leading-relaxed italic">
                 "{speakingNpc.dialogue}"
               </p>
+
+              {speakingNpc.options && speakingNpc.options.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10 mt-2">
+                  {speakingNpc.options.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handlePickOption(opt.id)}
+                      className="stone-button stone-button-gold text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sfx.playUiClick();
+                      onSendAdminCommand?.({ type: 'player:dialogue_close' });
+                    }}
+                    className="stone-button stone-button-dark text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
+                  >
+                    Goodbye
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -1154,7 +1201,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 <h2 className="font-display text-lg text-white font-bold flex items-center gap-2">
                   <span>Adventurer Attributes</span>
                   <span className="text-xs font-mono px-2 py-0.5 bg-[#252336] border border-[#3A384C] text-[#D9AA52]">
-                    Lv. {me.level}
+                    {me.level >= MAX_LEVEL ? 'MAX LEVEL' : `Lv. ${me.level}`}
                   </span>
                 </h2>
                 <p className="text-xs text-[#8E8C9E]">
@@ -1189,7 +1236,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
                     <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.strength || 0}
+                      {me.strength || 0} / {MAX_ATTRIBUTE}
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A6A4B6]">
@@ -1198,14 +1245,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={me.attributePoints <= 0}
+                  disabled={me.attributePoints <= 0 || (me.strength || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
                     onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'strength' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
                 >
-                  + Allocate
+                  {(me.strength || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
                 </button>
               </div>
 
@@ -1215,7 +1262,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
                     <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.vitality || 0}
+                      {me.vitality || 0} / {MAX_ATTRIBUTE}
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A6A4B6]">
@@ -1224,14 +1271,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={me.attributePoints <= 0}
+                  disabled={me.attributePoints <= 0 || (me.vitality || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
                     onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
                 >
-                  + Allocate
+                  {(me.vitality || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
                 </button>
               </div>
 
@@ -1241,7 +1288,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
                     <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.dexterity || 0}
+                      {me.dexterity || 0} / {MAX_ATTRIBUTE}
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A6A4B6]">
@@ -1250,14 +1297,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={me.attributePoints <= 0}
+                  disabled={me.attributePoints <= 0 || (me.dexterity || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
                     onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
                 >
-                  + Allocate
+                  {(me.dexterity || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
                 </button>
               </div>
 
@@ -1267,7 +1314,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
                     <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.intelligence || 0}
+                      {me.intelligence || 0} / {MAX_ATTRIBUTE}
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A6A4B6]">
@@ -1276,14 +1323,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={me.attributePoints <= 0}
+                  disabled={me.attributePoints <= 0 || (me.intelligence || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
                     onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'intelligence' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
                 >
-                  + Allocate
+                  {(me.intelligence || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
                 </button>
               </div>
 
@@ -1293,7 +1340,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
                     <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.faith || 0}
+                      {me.faith || 0} / {MAX_ATTRIBUTE}
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A6A4B6]">
@@ -1302,21 +1349,21 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  disabled={me.attributePoints <= 0}
+                  disabled={me.attributePoints <= 0 || (me.faith || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
                     onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'faith' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
                 >
-                  + Allocate
+                  {(me.faith || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
                 </button>
               </div>
             </div>
 
             <div className="pt-2 border-t border-[#2B293A] text-center">
               <p className="text-[11px] font-mono text-[#8E8C9E]">
-                Gain exactly +2 attribute points per level gained (Cap Lv. 100).
+                Gain exactly +2 attribute points per level gained (Cap Lv. {MAX_LEVEL}).
               </p>
             </div>
           </div>
