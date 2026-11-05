@@ -172,14 +172,14 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
           <button
             type="button"
             onClick={handleEnterTavern}
-            className="px-3.5 py-1.5 sm:px-4 sm:py-2 bg-[#2D231C] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-display text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center gap-1.5"
+            className="stone-button stone-button-gold text-[10px] sm:text-xs"
           >
-            <span></span> Tavern Hub
+            Tavern Hub
           </button>
           <button
             type="button"
             onClick={handleQuickStart}
-            className="stone-button px-3.5 py-1.5 sm:px-4 sm:py-2 font-display text-xs sm:text-sm font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center"
+            className="stone-button stone-button-blue text-[10px] sm:text-xs whitespace-nowrap"
           >
             Quick Co-op
           </button>
@@ -223,9 +223,9 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                 sfx.playUiClick();
                 setTouchSettingsOpen(true);
               }}
-              className="px-3.5 py-1.5 bg-[#2B2938] border border-[#58556D] hover:border-[#F4D378] text-white font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1"
             >
-              <span>Touch &amp; SFX Settings</span>
+              Touch &amp; SFX
             </button>
             <button
               type="button"
@@ -240,9 +240,9 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                   setMuted(true);
                 }
               }}
-              className="px-3.5 py-1.5 bg-[#2B2119] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
+              className={`stone-button text-[10px] sm:text-xs py-1 ${muted ? 'stone-button-red' : 'stone-button-green'}`}
             >
-              <span>Hearth Ambience: {muted ? 'Off' : 'On'}</span>
+              Hearth Ambience: {muted ? 'Off' : 'On'}
             </button>
             <button
               type="button"
@@ -250,7 +250,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                 sfx.playUiClick();
                 onLogout();
               }}
-              className="px-3 py-1.5 bg-[#23222E] border border-[#353445] hover:border-[#8C464E] text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center"
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1 border-red-900/50 hover:border-red-600"
             >
               Sign Out
             </button>
@@ -288,7 +288,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               <button
                 type="button"
                 onClick={handleEnterTavern}
-                className="stone-button px-6 py-3.5 font-display text-base text-white whitespace-nowrap shrink-0 cursor-pointer min-h-[50px] flex items-center justify-center z-10 shadow-lg"
+                className="stone-button stone-button-gold px-8 py-4 text-base shadow-xl"
               >
                 Enter Tavern Hub
               </button>
@@ -318,9 +318,9 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                   />
                   <button
                     type="submit"
-                    className="px-3.5 py-2 bg-[#2E2D3D] hover:bg-[#3A394D] border border-[#49475E] text-xs font-semibold text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center"
+                    className="stone-button stone-button-dark h-9 text-xs"
                   >
-                    Join Code
+                    Join
                   </button>
                 </form>
               </div>
@@ -372,7 +372,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                             sfx.playUiClick();
                             onJoinRoom(room.roomId, selectedClass);
                           }}
-                          className="stone-button px-4 py-2 font-display text-sm text-white disabled:opacity-45 whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center"
+                          className={`stone-button px-5 py-2 h-auto text-xs ${isFull ? 'stone-button-dark opacity-50' : 'stone-button-blue'}`}
                         >
                           {isFull ? 'Full' : 'Join'}
                         </button>
@@ -519,7 +519,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <button
                   type="submit"
-                  className="stone-button w-full h-12 font-display text-lg text-white cursor-pointer whitespace-nowrap flex items-center justify-center"
+                  className="stone-button stone-button-gold w-full h-14 text-xl shadow-lg"
                 >
                   Enter the Beyond
                 </button>

@@ -80,6 +80,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
+  const [attributesModalOpen, setAttributesModalOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'stats' | 'audio' | 'touch'>('stats');
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
@@ -327,10 +328,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 sfx.playUiClick();
                 setExpeditionGateOpen(true);
               }}
-              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-gradient-to-r from-[#854D0E] to-[#A16207] hover:from-[#A16207] hover:to-[#CA8A04] border border-[#FACC15]/60 text-xs font-display font-semibold text-white transition-all shadow-md whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1.5 animate-pulse"
+              className="stone-button stone-button-gold text-[10px] sm:text-xs animate-pulse"
               title="Open Expedition Gate (Embark or Join Party)"
             >
-              <span>️</span>
               <span className="hidden sm:inline">Expedition Gate</span>
               <span className="sm:hidden">Gate</span>
             </button>
@@ -357,7 +357,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             type="button"
             onClick={handleCopyCode}
             title={isTavern ? 'Copy Tavern Room Code' : 'Copy Party Code'}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] font-mono text-xs text-[#F3F2F8] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+            className="stone-button stone-button-dark text-[10px] sm:text-xs font-mono"
           >
             {copiedCode ? 'Copied!' : isTavern ? 'TAVERN-HUB' : snapshot.roomId}
           </button>
@@ -368,12 +368,31 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               sfx.playUiClick();
               setChatOpen((v) => !v);
             }}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#6E6C88] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+            className="stone-button stone-button-dark text-[10px] sm:text-xs"
           >
             Chat ({chatMessages.length})
           </button>
 
 
+
+          {me && (
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                setAttributesModalOpen(true);
+              }}
+              className="stone-button stone-button-gold text-[10px] sm:text-xs relative"
+              title="Open Stat Allocation Panel"
+            >
+              <span>Attributes</span>
+              {me.attributePoints > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 bg-[#FACC15] text-black font-mono text-[9px] font-bold rounded-full animate-pulse border border-[#854D0E] shadow">
+                  {me.attributePoints}
+                </span>
+              )}
+            </button>
+          )}
 
           <button
             type="button"
@@ -384,10 +403,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             }}
             title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
             aria-label={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1"
+            className="stone-button stone-button-dark text-[10px] sm:text-xs"
           >
-            <span>{isMuted ? '' : ''}</span>
             <span className="hidden sm:inline">{isMuted ? 'Muted' : 'SFX'}</span>
+            <span className="sm:hidden">{isMuted ? 'Off' : 'SFX'}</span>
           </button>
 
           {/* Exclusive Developer Admin Menu Button */}
@@ -398,7 +417,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 sfx.playUiClick();
                 setAdminPanelOpen(true);
               }}
-              className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-amber-500/20 border border-amber-400 hover:bg-amber-500/30 text-xs font-mono font-bold text-amber-300 transition-all whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center shadow-md shadow-amber-500/10 animate-pulse"
+              className="stone-button stone-button-gold text-[10px] sm:text-xs border-amber-400 text-amber-900 animate-pulse"
               title="Open Exclusive Admin Control Console"
             >
               <span>ADMIN</span>
@@ -411,7 +430,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               sfx.playUiClick();
               setPauseOpen((v) => !v);
             }}
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#6E6C88] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center"
+            className="stone-button text-[10px] sm:text-xs"
           >
             Menu
           </button>
@@ -606,13 +625,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <button
             type="button"
             onClick={() => onTriggerAction('tactical', me.aimAngle)}
-            className={`px-3 py-1.5 border text-left min-w-[120px] transition-colors cursor-pointer ${
-              tacSec > 0
-                ? 'bg-[#1D1C28] border-[#2E2D3E] text-[#7D7B8E]'
-                : 'bg-[#282738] border-[#595678] hover:border-[#D9AA52] text-white'
+            className={`stone-button stone-button-dark flex-col items-start min-w-[120px] h-auto py-1.5 ${
+              tacSec > 0 ? 'opacity-50 grayscale' : ''
             }`}
           >
-            <div className="flex justify-between text-[10px] font-mono tabular-nums">
+            <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
               <span>[Q / RMB]</span>
               <span>{tacSec > 0 ? `${tacSec}s` : 'READY'}</span>
             </div>
@@ -624,13 +641,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <button
             type="button"
             onClick={() => onTriggerAction('ult', me.aimAngle)}
-            className={`px-3 py-1.5 border text-left min-w-[120px] transition-colors cursor-pointer ${
-              ultSec > 0
-                ? 'bg-[#1D1C28] border-[#2E2D3E] text-[#7D7B8E]'
-                : 'bg-[#2C2836] border-[#8A6D3B] hover:border-[#F4D378] text-[#FDE68A]'
+            className={`stone-button flex-col items-start min-w-[120px] h-auto py-1.5 ${
+              ultSec > 0 ? 'stone-button-dark opacity-50 grayscale' : 'stone-button-gold shadow-[0_0_15px_rgba(251,191,36,0.2)]'
             }`}
           >
-            <div className="flex justify-between text-[10px] font-mono tabular-nums">
+            <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
               <span>[R / Shift]</span>
               <span>{ultSec > 0 ? `${ultSec}s` : 'READY'}</span>
             </div>
@@ -645,12 +660,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               sfx.playHeal();
               onTriggerAction('potion', me.aimAngle);
             }}
-            className="px-3 py-1.5 bg-[#281E24] border border-[#6E3642] hover:border-[#F87171] text-left cursor-pointer"
+            className="stone-button stone-button-red flex-col items-start h-auto py-1.5 min-w-[100px]"
           >
-            <div className="text-[10px] font-mono tabular-nums text-[#FCA5A5]">
+            <div className="text-[10px] font-mono tabular-nums opacity-80">
               [H] Flasks: {me.potions}
             </div>
-            <div className="font-display text-sm text-white whitespace-nowrap">
+            <div className="font-display text-sm whitespace-nowrap">
               Heal
             </div>
           </button>
@@ -661,16 +676,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               sfx.playUiClick();
               handleTriggerActionWithPortal('interact', me.aimAngle);
             }}
-            className={`px-3 py-1.5 border text-left cursor-pointer transition-colors ${
-              isTavern && nearPortal
-                ? 'bg-[#854D0E] border-[#FACC15] text-[#FEF08A] animate-pulse'
-                : 'bg-[#232832] border-[#44566C] hover:border-[#93C5FD]'
+            className={`stone-button flex-col h-auto py-2 ${
+              isTavern && nearPortal ? 'stone-button-gold animate-pulse' : 'stone-button-dark'
             }`}
           >
-            <div className="text-[10px] font-mono text-[#BAE6FD]">
-              {isTavern && nearPortal ? ' Portal' : '[E] Action'}
+            <div className="text-[10px] font-mono opacity-80">
+              {isTavern && nearPortal ? 'Portal' : '[E] Action'}
             </div>
-            <div className="font-display text-sm text-white whitespace-nowrap">
+            <div className="font-display text-sm whitespace-nowrap">
               {isTavern && nearPortal ? 'Expedition Gate' : 'Interact'}
             </div>
           </button>
@@ -758,7 +771,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       sfx.playRelicChime();
                       onSelectRelic(rid);
                     }}
-                    className="p-3.5 bg-[#3B3944] hover:bg-[#474553] border-2 border-[#2B2933] hover:border-[#F4D378] text-left flex flex-col justify-between gap-3 transition-colors cursor-pointer min-h-[110px]"
+                    className="stone-button stone-button-dark h-auto flex-col items-start p-4 text-left gap-3 border-2 border-transparent hover:border-[#F4D378] ring-1 ring-[#38364C]"
                   >
                     <div className="space-y-1">
                       <div className="text-[10px] font-mono text-[#BDBBC9]">
@@ -774,8 +787,8 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                         {relic.summary}
                       </p>
                     </div>
-                    <span className="font-display text-xs text-white underline">
-                      Claim
+                    <span className="font-display text-xs text-white underline mt-auto">
+                      Claim Relic
                     </span>
                   </button>
                 );
@@ -809,7 +822,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   sfx.playUiClick('toggle');
                   setIsTouchDevice((v) => !v);
                 }}
-                className="px-3 py-1 bg-[#474554] border border-[#5E5C6E] text-xs font-mono text-white cursor-pointer min-h-[36px]"
+                className="stone-button stone-button-dark h-8 text-[10px] py-0 px-4 min-h-0"
               >
                 {isTouchDevice ? 'ENABLED' : 'DISABLED'}
               </button>
@@ -825,11 +838,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   setIsMuted(nextMuted);
                   if (!nextMuted) sfx.playUiClick('confirm');
                 }}
-                className={`px-3 py-1 border text-xs font-mono cursor-pointer min-h-[36px] flex items-center gap-1.5 ${
-                  isMuted
-                    ? 'bg-[#3D2528] border-[#8C3A44] text-[#FECACA]'
-                    : 'bg-[#293B33] border-[#4E8B67] text-[#D1FAE5]'
-                }`}
+                className={`stone-button h-8 text-[10px] py-0 px-4 min-h-0 ${isMuted ? 'stone-button-red' : 'stone-button-green'}`}
               >
                 <span>{isMuted ? ' MUTED' : ' ACTIVE'}</span>
               </button>
@@ -857,58 +866,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
               </div>
 
-              {/* Attributes Section */}
-              <div className="pt-2.5 border-t border-[#3A384C] space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-display text-[#D9AA52] font-bold">Adventurer Attributes</span>
-                  {me.attributePoints > 0 && (
-                    <span className="text-[10px] font-mono bg-[#D9AA52] text-black px-1.5 py-0.5 rounded animate-pulse">
-                      {me.attributePoints} Points Available
-                    </span>
-                  )}
-                </div>
-                
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-[#171622] border border-[#2B293A] p-2 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-[11px] font-mono">
-                      <span className="text-[#38BDF8]">DEXTERITY</span>
-                      <span className="text-white font-bold">{me.dexterity}</span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={me.attributePoints <= 0}
-                      onClick={() => {
-                        sfx.playUiClick('confirm');
-                        onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
-                      }}
-                      className="w-full py-1 bg-[#2D2A3A] hover:bg-[#383548] border border-[#3A384C] text-[9px] font-bold text-white cursor-pointer disabled:opacity-30"
-                    >
-                      + UPGRADE (+1.2% DMG)
-                    </button>
-                  </div>
-                  <div className="bg-[#171622] border border-[#2B293A] p-2 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between text-[11px] font-mono">
-                      <span className="text-[#10B981]">VITALITY</span>
-                      <span className="text-white font-bold">{me.vitality}</span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={me.attributePoints <= 0}
-                      onClick={() => {
-                        sfx.playUiClick('confirm');
-                        onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
-                      }}
-                      className="w-full py-1 bg-[#2D2A3A] hover:bg-[#383548] border border-[#3A384C] text-[9px] font-bold text-white cursor-pointer disabled:opacity-30"
-                    >
-                      + UPGRADE (+5 MAX HP)
-                    </button>
-                  </div>
-                </div>
-              </div>
 
-              <p className="text-[10.5px] text-[#787687] font-mono pt-0.5 text-center">
-                Gain +2 attribute points on every level up.
-              </p>
             </div>
 
             {/* Active Character Resistances */}
@@ -968,10 +926,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   sfx.playUiClick();
                   setTouchSettingsOpen(true);
                 }}
-                className="py-2.5 bg-[#292837] hover:bg-[#363548] border border-[#49475D] font-display text-sm text-[#F3F2F8] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5"
+                className="stone-button stone-button-dark py-3"
               >
-                <span>️</span>
-                <span>Touch Controls Setup</span>
+                Touch Controls Setup
               </button>
               <button
                 type="button"
@@ -995,10 +952,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       onJoinRoom('TAVERN-HUB', me.heroClass);
                     }
                   }}
-                  className="py-2.5 bg-[#1F2937] hover:bg-[#2E3B4E] border border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5 shadow"
+                  className="stone-button stone-button-blue py-3"
                 >
-                  <span></span>
-                  <span>Return to Tavern Hub</span>
+                  Return to Tavern Hub
                 </button>
               )}
               <button
@@ -1007,7 +963,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   sfx.playUiClick();
                   onLeaveRoom();
                 }}
-                className="py-2 bg-[#3D2429] hover:bg-[#522E35] border border-[#8E3B46] font-display text-sm text-[#FECACA] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
+                className="stone-button stone-button-red py-3"
               >
                 {isTavern ? 'Exit to Lobby' : 'Leave Party & Return to Lobby'}
               </button>
@@ -1104,7 +1060,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   sfx.playUiClick();
                   onRestartRun();
                 }}
-                className="stone-button px-5 py-2 font-display text-base text-white cursor-pointer whitespace-nowrap min-h-[44px] flex items-center"
+                className="stone-button stone-button-gold px-8 py-3 text-lg"
               >
                 Play Again
               </button>
@@ -1119,10 +1075,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       onJoinRoom('TAVERN-HUB', me.heroClass);
                     }
                   }}
-                  className="px-4 py-2 bg-[#1E293B] hover:bg-[#334155] border-2 border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center gap-1.5 shadow"
+                  className="stone-button stone-button-blue px-6 py-3"
                 >
-                  <span></span>
-                  <span>Return to Tavern</span>
+                  Return to Tavern
                 </button>
               )}
               <button
@@ -1131,7 +1086,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   sfx.playUiClick();
                   onLeaveRoom();
                 }}
-                className="px-4 py-2 bg-[#3B3942] hover:bg-[#494752] border-2 border-[#2D2B34] font-display text-sm text-[#E6E4F0] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center"
+                className="stone-button stone-button-dark px-6 py-3"
               >
                 Exit to Lobby
               </button>
@@ -1142,8 +1097,8 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
       {/* Floating Prompt near Portal in Tavern */}
       {isTavern && nearPortal && !expeditionGateOpen && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#38BDF8] shadow-2xl backdrop-blur-sm animate-bounce">
-          <span className="font-display font-bold text-xs sm:text-sm text-[#7DD3FC] flex items-center gap-1.5">
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#D9AA52] shadow-2xl backdrop-blur-sm animate-bounce">
+          <span className="font-display font-bold text-xs sm:text-sm text-[#FCD34D] flex items-center gap-1.5">
              Ancient Expedition Portal
           </span>
           <button
@@ -1152,7 +1107,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               sfx.playUiClick();
               setExpeditionGateOpen(true);
             }}
-            className="px-3 py-1 bg-[#0284C7] hover:bg-[#0369A1] font-display text-xs font-semibold text-white border border-[#38BDF8] cursor-pointer"
+            className="stone-button stone-button-gold h-9 text-xs px-4"
           >
             [E] Open Gate
           </button>
@@ -1188,6 +1143,184 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           onToggleForceGamepad={handleToggleForceGamepad}
           onClose={() => setTouchSettingsOpen(false)}
         />
+      )}
+
+      {/* Stat Allocation Modal Panel */}
+      {attributesModalOpen && me && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#181722] border border-[#3A384C] w-full max-w-lg shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2B293A]">
+              <div>
+                <h2 className="font-display text-lg text-white font-bold flex items-center gap-2">
+                  <span>Adventurer Attributes</span>
+                  <span className="text-xs font-mono px-2 py-0.5 bg-[#252336] border border-[#3A384C] text-[#D9AA52]">
+                    Lv. {me.level}
+                  </span>
+                </h2>
+                <p className="text-xs text-[#8E8C9E]">
+                  Allocate earned points to empower {me.username} ({HERO_CLASSES[me.heroClass].name}).
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <div className="text-[10px] uppercase font-mono text-[#8E8C9E]">Available Points</div>
+                  <div className="text-sm font-mono font-bold text-[#FCD34D]">
+                    {me.attributePoints} PTS
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setAttributesModalOpen(false);
+                  }}
+                  className="stone-button stone-button-dark w-8 h-8 p-0 text-white text-sm font-bold"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {/* Strength */}
+              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
+                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                      {me.strength || 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#A6A4B6]">
+                    Increases physical damage for Vanguard and Ranger attacks (+3% per point).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={me.attributePoints <= 0}
+                  onClick={() => {
+                    sfx.playUiClick('confirm');
+                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'strength' });
+                  }}
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                >
+                  + Allocate
+                </button>
+              </div>
+
+              {/* Vitality */}
+              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
+                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                      {me.vitality || 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#A6A4B6]">
+                    Increases maximum health pool (+6 Max HP per point).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={me.attributePoints <= 0}
+                  onClick={() => {
+                    sfx.playUiClick('confirm');
+                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
+                  }}
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                >
+                  + Allocate
+                </button>
+              </div>
+
+              {/* Dexterity */}
+              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
+                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                      {me.dexterity || 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#A6A4B6]">
+                    Increases attack speed (+1.2% per point) and critical strike chance (+0.8% per point).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={me.attributePoints <= 0}
+                  onClick={() => {
+                    sfx.playUiClick('confirm');
+                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
+                  }}
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                >
+                  + Allocate
+                </button>
+              </div>
+
+              {/* Intelligence */}
+              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
+                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                      {me.intelligence || 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#A6A4B6]">
+                    Increases arcane spell damage for Arcanist shards and star rifts (+3% per point).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={me.attributePoints <= 0}
+                  onClick={() => {
+                    sfx.playUiClick('confirm');
+                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'intelligence' });
+                  }}
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                >
+                  + Allocate
+                </button>
+              </div>
+
+              {/* Faith */}
+              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
+                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                      {me.faith || 0}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#A6A4B6]">
+                    Increases divine damage and healing effectiveness for Cleric reliquary (+3% per point).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={me.attributePoints <= 0}
+                  onClick={() => {
+                    sfx.playUiClick('confirm');
+                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'faith' });
+                  }}
+                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0"
+                >
+                  + Allocate
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-[#2B293A] text-center">
+              <p className="text-[11px] font-mono text-[#8E8C9E]">
+                Gain exactly +2 attribute points per level gained (Cap Lv. 100).
+              </p>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Exclusive Developer Admin Control Panel Modal */}

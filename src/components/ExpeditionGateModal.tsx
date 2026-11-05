@@ -98,18 +98,18 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
     >
       <div className="stone-panel max-w-2xl w-full p-5 sm:p-7 space-y-6 relative border-2 border-[#D9AA52] shadow-[0_0_50px_rgba(217,170,82,0.2)]">
         {/* Close Button */}
-        <button
-          type="button"
-          onClick={() => {
-            sfx.playUiClick();
-            onClose();
-          }}
-          className="absolute top-4 right-4 w-9 h-9 bg-[#262433] hover:bg-[#38364C] border border-[#4E4C66] text-[#D8D6E8] hover:text-white flex items-center justify-center font-bold text-lg cursor-pointer transition-colors"
-          title="Close Gate (Esc)"
-          aria-label="Close Gate"
-        >
-          
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              onClose();
+            }}
+            className="stone-button stone-button-dark absolute top-4 right-4 w-9 h-9 p-0"
+            title="Close Gate (Esc)"
+            aria-label="Close Gate"
+          >
+            ✕
+          </button>
 
         {/* Header */}
         <div className="space-y-1.5 pr-10">
@@ -151,14 +151,13 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
               setActiveTab('create');
               setErrorMsg(null);
             }}
-            className={`px-4 py-2.5 font-display text-sm font-semibold transition-colors cursor-pointer border-b-2 flex items-center gap-2 ${
+            className={`px-4 py-2.5 font-display text-sm font-semibold transition-all cursor-pointer border-b-2 flex items-center gap-2 ${
               activeTab === 'create'
                 ? 'border-[#D9AA52] text-[#FDE68A] bg-[#2A2938]'
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span>️</span>
-            <span>Launch Expedition</span>
+            Launch Expedition
           </button>
 
           <button
@@ -168,14 +167,13 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
               setActiveTab('join');
               setErrorMsg(null);
             }}
-            className={`px-4 py-2.5 font-display text-sm font-semibold transition-colors cursor-pointer border-b-2 flex items-center gap-2 ${
+            className={`px-4 py-2.5 font-display text-sm font-semibold transition-all cursor-pointer border-b-2 flex items-center gap-2 ${
               activeTab === 'join'
                 ? 'border-[#D9AA52] text-[#FDE68A] bg-[#2A2938]'
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span>️</span>
-            <span>Join by Code</span>
+            Join Code
           </button>
 
           <button
@@ -185,14 +183,13 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
               setActiveTab('finder');
               setErrorMsg(null);
             }}
-            className={`px-4 py-2.5 font-display text-sm font-semibold transition-colors cursor-pointer border-b-2 flex items-center gap-2 ${
+            className={`px-4 py-2.5 font-display text-sm font-semibold transition-all cursor-pointer border-b-2 flex items-center gap-2 ${
               activeTab === 'finder'
                 ? 'border-[#D9AA52] text-[#FDE68A] bg-[#2A2938]'
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span></span>
-            <span>Active Parties ({activeExpeditions.length})</span>
+            Parties ({activeExpeditions.length})
           </button>
         </div>
 
@@ -309,16 +306,15 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                   sfx.playUiClick();
                   onClose();
                 }}
-                className="px-4 py-2.5 bg-[#252433] hover:bg-[#343247] border border-[#42405A] font-display text-sm text-[#D4D2E2] cursor-pointer transition-colors"
+                className="stone-button stone-button-dark"
               >
                 Stay in Tavern
               </button>
               <button
                 type="submit"
-                className="stone-button px-6 py-2.5 font-display text-base text-white font-bold cursor-pointer shadow-lg flex items-center gap-2"
+                className="stone-button stone-button-gold px-8 h-12 text-base font-bold shadow-lg"
               >
-                <span>️</span>
-                <span>Embark on Floor 1</span>
+                Embark on Floor 1
               </button>
             </div>
           </form>
@@ -351,7 +347,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 />
                 <button
                   type="submit"
-                  className="stone-button px-6 py-3 font-display text-sm text-white font-bold cursor-pointer whitespace-nowrap min-h-[46px]"
+                  className="stone-button stone-button-gold px-8 h-12 text-base"
                 >
                   Join Party
                 </button>
@@ -430,11 +426,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                           type="button"
                           disabled={isFull}
                           onClick={() => handleQuickJoin(room.roomId)}
-                          className={`px-4 py-2 font-display text-xs font-bold transition-all ${
-                            isFull
-                              ? 'bg-[#2E2D3D] text-[#6E6C80] border border-[#3D3C52] cursor-not-allowed'
-                              : 'stone-button text-white cursor-pointer'
-                          }`}
+                          className={`stone-button h-10 px-6 text-xs ${isFull ? 'stone-button-dark opacity-50' : 'stone-button-blue'}`}
                         >
                           {isFull ? 'Party Full' : 'Join Party'}
                         </button>

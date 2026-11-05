@@ -387,6 +387,9 @@ export interface PlayerState {
   speedBoost?: boolean;
   dexterity: number;
   vitality: number;
+  strength: number;
+  intelligence: number;
+  faith: number;
   attributePoints: number;
 }
 
@@ -560,6 +563,9 @@ export interface UserProfile {
   isAdmin?: boolean;
   dexterity: number;
   vitality: number;
+  strength: number;
+  intelligence: number;
+  faith: number;
   attributePoints: number;
 }
 
@@ -592,7 +598,8 @@ export type ClientMessage =
   | { type: 'admin:set_level'; level?: number }
   | { type: 'admin:add_relic'; relicId: string }
   | { type: 'admin:spawn_dummy' }
-  | { type: 'player:spend_attribute'; attribute: 'dexterity' | 'vitality' }
+  | { type: 'admin:add_attribute_points'; amount?: number }
+  | { type: 'player:spend_attribute'; attribute: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith' }
   | { type: 'ping'; t: number };
 
 export type ServerMessage =

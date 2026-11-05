@@ -231,8 +231,11 @@ export class GameRoom {
       isAdmin: isAdmin,
       godMode: false,
       speedBoost: false,
-      dexterity: 10,
-      vitality: 10,
+      dexterity: 0,
+      vitality: 0,
+      strength: 0,
+      intelligence: 0,
+      faith: 0,
       attributePoints: 0,
     };
 
@@ -407,11 +410,12 @@ export class GameRoom {
     const def = HERO_CLASSES[p.heroClass];
     p.level = Math.max(1, Math.min(100, targetLevel));
     p.xp = 0;
-    p.nextXp = Math.round(80 * Math.pow(1.35, p.level - 1));
+    p.nextXp = p.level >= 100 ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
     const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp;
+    const vitBonus = (p.vitality || 0) * 6;
+    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
     p.hp = p.maxHp;
-    this.emitEvent('status', p.x, p.y - 26, ` Level ${p.level} Set!`, '#F4D378');
+    this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} Set!`, '#F4D378');
   }
 
   public addPlayerRelic(playerId: string, relicId: string): void {
@@ -430,22 +434,35 @@ export class GameRoom {
     this.emitEvent('status', p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
   }
 
+  public addPlayerAttributePoints(playerId: string, amount: number): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    pr.state.attributePoints += amount;
+    this.emitEvent('status', pr.state.x, pr.state.y - 24, `+${amount} Attribute Pts`, '#D9AA52');
+  }
+
   public updatePlayerAttributes(
     playerId: string,
-    dexterity: number,
+    strength: number,
     vitality: number,
+    dexterity: number,
+    intelligence: number,
+    faith: number,
     attributePoints: number
   ): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
     const p = pr.state;
-    p.dexterity = dexterity;
+    p.strength = strength;
     p.vitality = vitality;
+    p.dexterity = dexterity;
+    p.intelligence = intelligence;
+    p.faith = faith;
     p.attributePoints = attributePoints;
 
     const def = HERO_CLASSES[p.heroClass];
     const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-    const vitBonus = (p.vitality - 10) * 5;
+    const vitBonus = (p.vitality || 0) * 6;
     const oldMax = p.maxHp;
     p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
     p.hp += p.maxHp - oldMax;
@@ -834,11 +851,15 @@ export class GameRoom {
     return {};
   }
 
-  private computeDamageMult(p: PlayerState): number {
+  private computeDamageMult(p: PlayerState, category: 'physical' | 'arcane' | 'divine' = 'physical'): number {
     let mult = 1 + (p.level - 1) * 0.1;
-    // Dexterity bonus: +1% damage per point above 10
-    const dexBonus = Math.max(0, (p.dexterity - 10) * 0.012);
-    mult += dexBonus;
+    if (category === 'physical') {
+      mult *= (1 + (p.strength || 0) * 0.03);
+    } else if (category === 'arcane') {
+      mult *= (1 + (p.intelligence || 0) * 0.03);
+    } else if (category === 'divine') {
+      mult *= (1 + (p.faith || 0) * 0.03);
+    }
     if (p.relics.includes('sunfire_signet')) mult *= 1.24;
     return mult;
   }
@@ -1180,7 +1201,8 @@ export class GameRoom {
       }
 
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const hasteFactor = p.hasteMs > 0 ? 0.8 : 1;
+        const dexSpeedMult = 1 + (p.dexterity || 0) * 0.012;
+        const hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
@@ -1995,8 +2017,11 @@ export class GameRoom {
 
   private firePrimaryAttack(p: PlayerState): void {
     const def = HERO_CLASSES[p.heroClass];
-    const mult = this.computeDamageMult(p);
-    const hasCrit = p.relics.includes('keen_arrowhead') && Math.random() < 0.25;
+    const category: 'physical' | 'arcane' | 'divine' =
+      p.heroClass === 'arcanist' ? 'arcane' : p.heroClass === 'cleric' ? 'divine' : 'physical';
+    const mult = this.computeDamageMult(p, category);
+    const critChance = Math.min(0.55, 0.10 + (p.dexterity || 0) * 0.008 + (p.relics.includes('keen_arrowhead') ? 0.25 : 0));
+    const hasCrit = Math.random() < critChance;
     const critMult = hasCrit ? 1.75 : 1.0;
     const dmg = Math.round(def.damage * mult * critMult);
     const extraCount = p.relics.includes('twinstring_charm') ? 1 : 0;
@@ -2463,21 +2488,39 @@ export class GameRoom {
   }
 
   private grantXp(p: PlayerState, amount: number): void {
+    if (p.level >= 100) {
+      p.level = 100;
+      p.xp = 0;
+      return;
+    }
     p.xp += amount;
-    while (p.xp >= p.nextXp) {
+    while (p.xp >= p.nextXp && p.level < 100) {
       p.xp -= p.nextXp;
       p.level += 1;
-      p.attributePoints += 2; // Give 2 points per level
-      p.nextXp = Math.round(p.nextXp * 1.35);
-      
+      if (p.level <= 100) {
+        p.attributePoints += 2;
+      }
+      p.nextXp = p.level >= 100 ? 999999 : Math.round(p.nextXp * 1.35);
+      if (p.level >= 100) {
+        p.level = 100;
+        p.xp = 0;
+        p.nextXp = 999999;
+        break;
+      }
+
       const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-      const vitBonus = (p.vitality - 10) * 5; // Vitality bonus: +5 HP per point above 10
+      const vitBonus = (p.vitality || 0) * 6;
       const oldMax = p.maxHp;
       p.maxHp = HERO_CLASSES[p.heroClass].maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
-      p.hp += (p.maxHp - oldMax); // Keep current HP relative to max
+      p.hp += (p.maxHp - oldMax);
       p.hp = Math.min(p.maxHp, p.hp + 24);
 
       this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, '#F4D378');
+    }
+    if (p.level >= 100) {
+      p.level = 100;
+      p.xp = 0;
+      p.nextXp = 999999;
     }
   }
 

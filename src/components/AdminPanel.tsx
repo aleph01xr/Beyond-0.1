@@ -72,7 +72,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             className="stone-button w-8 h-8 flex items-center justify-center text-xs font-mono font-bold text-white shrink-0 cursor-pointer"
             title="Close Admin Console"
           >
-            
+            ✕
           </button>
         </div>
 
@@ -126,27 +126,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     }
                     className={`p-3.5 stone-plaque text-left flex items-center justify-between gap-3 border transition-all cursor-pointer ${
                       me.godMode
-                        ? 'border-[#FACC15] bg-[#3A3320] shadow-[0_0_15px_rgba(250,204,21,0.2)]'
+                        ? 'border-[#FACC15] bg-[#423a1a]'
                         : 'border-[#383548] hover:border-[#D9AA52]/60'
                     }`}
                   >
                     <div>
-                      <div className="font-display font-bold text-sm text-[#FCD34D] flex items-center gap-1.5">
+                      <div className={`font-display font-bold text-sm flex items-center gap-1.5 ${me.godMode ? 'text-[#FCD34D]' : 'text-[#A19FAF]'}`}>
                         <span>God Mode (Invincible)</span>
                       </div>
                       <p className="text-[11px] text-[#A19FAF] mt-0.5">
                         Absorbs 100% of all incoming physical & elemental damage.
                       </p>
                     </div>
-                    <span
+                    <div
                       className={`text-[10px] font-mono font-bold px-2.5 py-1 border shrink-0 ${
                         me.godMode
-                          ? 'bg-[#FACC15] text-[#111219] border-[#FEF08A]'
+                          ? 'bg-[#FACC15] text-[#111219] border-[#85632e]'
                           : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
                       }`}
                     >
                       {me.godMode ? 'ACTIVE' : 'OFF'}
-                    </span>
+                    </div>
                   </button>
 
                   <button
@@ -159,90 +159,131 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     }
                     className={`p-3.5 stone-plaque text-left flex items-center justify-between gap-3 border transition-all cursor-pointer ${
                       me.speedBoost
-                        ? 'border-[#34D399] bg-[#1A382C] shadow-[0_0_15px_rgba(52,211,153,0.2)]'
+                        ? 'border-[#34D399] bg-[#1a3325]'
                         : 'border-[#383548] hover:border-[#D9AA52]/60'
                     }`}
                   >
                     <div>
-                      <div className="font-display font-bold text-sm text-[#34D399] flex items-center gap-1.5">
+                      <div className={`font-display font-bold text-sm flex items-center gap-1.5 ${me.speedBoost ? 'text-[#34D399]' : 'text-[#A19FAF]'}`}>
                         <span>Swiftness (+80% Speed)</span>
                       </div>
                       <p className="text-[11px] text-[#A19FAF] mt-0.5">
                         Massively increases movement velocity across all floor biomes.
                       </p>
                     </div>
-                    <span
+                    <div
                       className={`text-[10px] font-mono font-bold px-2.5 py-1 border shrink-0 ${
                         me.speedBoost
-                          ? 'bg-[#34D399] text-[#111219] border-[#A7F3D0]'
+                          ? 'bg-[#34D399] text-[#111219] border-[#14532d]'
                           : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
                       }`}
                     >
                       {me.speedBoost ? 'ACTIVE' : 'OFF'}
-                    </span>
+                    </div>
                   </button>
                 </div>
               </div>
 
-              {/* Stat & Resource Boosters */}
+              {/* Resource Boosters */}
               <div>
                 <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                  Instant Stat & Resource Dispensers
+                  Resource & Wealth Dispensers
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                   <button
                     type="button"
-                    onClick={() =>
-                      handleCommand({
-                        type: 'admin:add_gold',
-                        amount: 1000,
-                      })
-                    }
-                    className="stone-button p-3 text-center flex flex-col items-center justify-center gap-1 border border-[#D9AA52]/50 hover:border-[#FACC15] cursor-pointer"
+                    onClick={() => handleCommand({ type: 'admin:add_gold', amount: 10000 })}
+                    className="stone-button stone-button-gold p-3 h-auto"
                   >
-                    <span className="font-display font-bold text-sm text-[#FCD34D]">
-                      +1,000 Gold
-                    </span>
-                    <span className="text-[10px] text-[#A19FAF] font-mono">
-                      Current: {me.gold}g
-                    </span>
+                    <div className="flex flex-col items-center">
+                      <span className="font-display font-bold text-sm">+10,000 Gold</span>
+                      <span className="text-[10px] opacity-80 font-mono">Current: {me.gold}g</span>
+                    </div>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() =>
-                      handleCommand({
-                        type: 'admin:add_potions',
-                        amount: 5,
-                      })
-                    }
-                    className="stone-button p-3 text-center flex flex-col items-center justify-center gap-1 border border-[#EF4444]/50 hover:border-[#F87171] cursor-pointer"
+                    onClick={() => handleCommand({ type: 'admin:add_potions', amount: 10 })}
+                    className="stone-button stone-button-red p-3 h-auto"
                   >
-                    <span className="font-display font-bold text-sm text-[#F87171]">
-                      +5 Potions
-                    </span>
-                    <span className="text-[10px] text-[#A19FAF] font-mono">
-                      Current: {me.potions}
-                    </span>
+                    <div className="flex flex-col items-center">
+                      <span className="font-display font-bold text-sm">+10 Potions</span>
+                      <span className="text-[10px] opacity-80 font-mono">Current: {me.potions}</span>
+                    </div>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() =>
-                      handleCommand({
-                        type: 'admin:set_level',
-                        level: 10,
-                      })
-                    }
-                    className="stone-button p-3 text-center flex flex-col items-center justify-center gap-1 border border-[#C084FC]/50 hover:border-[#E9D5FF] cursor-pointer"
+                    onClick={() => handleCommand({ type: 'admin:add_attribute_points', amount: 50 })}
+                    className="stone-button stone-button-blue p-3 h-auto"
                   >
-                    <span className="font-display font-bold text-sm text-[#E9D5FF]">
-                      Level 10 (Max)
-                    </span>
-                    <span className="text-[10px] text-[#A19FAF] font-mono">
-                      Current: Lv.{me.level}
-                    </span>
+                    <div className="flex flex-col items-center">
+                      <span className="font-display font-bold text-sm">+50 Attr Pts</span>
+                      <span className="text-[10px] opacity-80 font-mono">Current: {me.attributePoints}</span>
+                    </div>
                   </button>
+                </div>
+              </div>
+
+              {/* Progression & Leveling */}
+              <div>
+                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                  Progression & Leveling Overrides
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleCommand({ type: 'admin:set_level', level: 100 })}
+                    className="stone-button stone-button-blue p-3 h-auto"
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="font-display font-bold text-sm">Set Level 100 (Cap)</span>
+                      <span className="text-[10px] opacity-80 font-mono">Current: Lv.{me.level}</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCommand({ type: 'admin:set_level', level: 1 })}
+                    className="stone-button stone-button-dark p-3 h-auto text-white"
+                  >
+                    <div className="flex flex-col items-center">
+                      <span className="font-display font-bold text-sm">Reset to Level 1</span>
+                      <span className="text-[10px] opacity-80 font-mono">Resets XP & Level</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Direct Attribute Injection */}
+              <div>
+                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+                  Direct Attribute Injection
+                </h3>
+                <p className="text-[10px] text-[#A19FAF] mb-2 font-mono italic">
+                  Note: These buttons simulate spending a point to test incremental gains.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {[
+                    { key: 'strength', label: 'STR', color: '#EF4444' },
+                    { key: 'vitality', label: 'VIT', color: '#10B981' },
+                    { key: 'dexterity', label: 'DEX', color: '#38BDF8' },
+                    { key: 'intelligence', label: 'INT', color: '#818CF8' },
+                    { key: 'faith', label: 'FTH', color: '#FDE047' },
+                  ].map((attr) => (
+                    <button
+                      key={attr.key}
+                      type="button"
+                      onClick={() => handleCommand({ type: 'player:spend_attribute', attribute: attr.key as any })}
+                      className="stone-button stone-button-dark p-2 h-auto text-white border-none shadow-none ring-1 ring-[#383548] hover:ring-[#D9AA52]"
+                    >
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-bold" style={{ color: attr.color }}>{attr.label}</span>
+                        <span className="text-[11px] font-mono font-bold">{(me as any)[attr.key] || 0}</span>
+                        <span className="text-[9px] text-[#A19FAF] mt-0.5">+1</span>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
@@ -434,7 +475,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       type: 'admin:spawn_dummy',
                     })
                   }
-                  className="stone-button w-full py-3 font-display text-sm font-semibold text-[#FCD34D] border border-[#D9AA52]/60 hover:border-[#FACC15] cursor-pointer flex items-center justify-center gap-2"
+                  className="stone-button stone-button-gold w-full py-4 text-base"
                 >
                   <span>Spawn Combat Dummy at Current Position</span>
                 </button>
@@ -455,7 +496,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               sfx.playUiClick();
               onClose();
             }}
-            className="stone-button px-4 py-1.5 font-display font-semibold text-xs text-white cursor-pointer"
+            className="stone-button stone-button-dark px-6 py-1.5 text-xs text-white"
           >
             Close Console
           </button>

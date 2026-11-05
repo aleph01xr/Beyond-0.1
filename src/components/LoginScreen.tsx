@@ -341,23 +341,22 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
                         sfx.playUiClick();
                         setPreferredClass(cid);
                       }}
-                      className={`p-2 text-left border-2 transition-all cursor-pointer flex items-center gap-2.5 ${
+                      className={`stone-button h-auto items-start p-2 text-left transition-all gap-2.5 ${
                         active
-                          ? 'bg-[#2E2B38] border-[#F59E0B] text-white shadow-md'
-                          : 'bg-[#201F29]/90 border-[#383648] text-[#B3B1BD] hover:border-[#5A5870]'
+                          ? 'stone-button-gold'
+                          : 'stone-button-dark'
                       }`}
                     >
-                      <PixelHeroPreview heroClass={cid} size={40} />
-                      <div className="min-w-0 flex-1">
+                      <div className="shrink-0 p-1 bg-black/20">
+                        <PixelHeroPreview heroClass={cid} size={40} />
+                      </div>
+                      <div className="min-w-0 flex-1 text-left">
                         <div className="flex items-center justify-between gap-1">
-                          <span className="font-display text-xs sm:text-sm font-semibold text-white truncate">
+                          <span className={`font-display text-xs sm:text-sm font-semibold truncate ${active ? 'text-black' : 'text-white'}`}>
                             {c.name}
                           </span>
-                          <span className="text-[9px] font-mono uppercase tracking-wider text-[#FCD34D] px-1 py-0.5 bg-[#171622] border border-[#3E3C50]">
-                            {c.roleBadge}
-                          </span>
                         </div>
-                        <p className="text-[10px] text-[#9A98AA] font-mono truncate">
+                        <p className={`text-[10px] font-mono truncate ${active ? 'text-black/70' : 'text-[#9A98AA]'}`}>
                           {c.weapon}
                         </p>
                       </div>
@@ -370,12 +369,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
               {(() => {
                 const cur = HERO_CLASSES[preferredClass];
                 return (
-                  <div className="p-2.5 bg-[#1C1B26] border border-[#3A384C] text-[11px] space-y-1">
-                    <div className="flex items-center justify-between text-white font-medium">
+                  <div className="stone-plaque p-3 text-[11px] space-y-1.5">
+                    <div className="flex items-center justify-between text-[#FCD34D] font-display font-bold text-xs">
                       <span>{cur.title}</span>
-                      <span className="text-[#A7F3D0] font-mono">HP {cur.maxHp} · DMG {cur.damage}</span>
+                      <span className="text-[#4ADE80] font-mono font-bold">HP {cur.maxHp} · DMG {cur.damage}</span>
                     </div>
-                    <p className="text-[#B9B7C7] text-[10.5px] leading-snug">
+                    <p className="text-[#E2E8F0] text-[10.5px] leading-snug">
                       <span className="text-[#FDE047] font-semibold">{cur.passiveName}:</span> {cur.passiveDesc}
                     </p>
                   </div>
@@ -393,7 +392,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
             <button
               type="submit"
               disabled={loading}
-              className="stone-button w-full sm:w-[75%] h-11 sm:h-12 flex items-center justify-center font-display text-lg sm:text-xl font-medium tracking-wide text-[#F7F7FA] drop-shadow-[0_2px_0_#46454E] cursor-pointer disabled:opacity-60 whitespace-nowrap"
+              className="stone-button stone-button-gold w-full sm:w-[75%] h-14 text-xl"
             >
               {loading
                 ? 'Connecting...'
@@ -405,22 +404,20 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
         </form>
 
         {/* Bottom Mode Switch Links */}
-        <div className="flex flex-wrap items-center justify-center gap-3 pt-2 font-display text-xs sm:text-sm text-[#D4D2DC]">
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
           {mode === 'login' ? (
-            <>
-              <button
-                type="button"
-                onClick={() => switchMode('register')}
-                className="hover:text-white transition-colors cursor-pointer whitespace-nowrap min-h-[36px] flex items-center"
-              >
-                &gt; Create Account
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1"
+            >
+              &gt; Create Account
+            </button>
           ) : (
             <button
               type="button"
               onClick={() => switchMode('login')}
-              className="hover:text-white transition-colors cursor-pointer whitespace-nowrap min-h-[36px] flex items-center"
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1"
             >
               &gt; Back to Log In
             </button>
