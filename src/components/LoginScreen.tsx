@@ -3,8 +3,9 @@ import { getApiEndpoint } from '../client/apiConfig.ts';
 import { sfx } from '../client/sound.ts';
 import { HERO_CLASSES, type HeroClassId, type UserProfile } from '../shared/types.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
+import loginBgUrl from '../assets/images/beyond_login_courtyard_1793596400177.jpg';
 
-const LOGIN_BG_SRC = '/src/assets/images/beyond_login_courtyard_1793596400177.jpg';
+const LOGIN_BG_SRC = loginBgUrl;
 
 interface LoginScreenProps {
   onAuthenticated: (token: string, user: UserProfile) => void;

@@ -473,28 +473,48 @@ async function startServer() {
     console.error('CRITICAL: ALLOWED_ORIGINS is configured but all entries were rejected as malformed.');
   }
 
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    let isAllowed = false;
+  function isOriginAllowed(origin: string | undefined, hostHeader: string | undefined): boolean {
+    if (!origin) return true; // Same-origin, curl, server-to-server
 
-    if (!origin) {
-      // Not a cross-origin browser request (same-origin, curl, server-side)
-      isAllowed = true;
-    } else {
-      if (allowedOrigins.length > 0) {
-        // Strict exact match
-        isAllowed = allowedOrigins.includes(origin);
-      } else if (!isProduction) {
-        // Development defaults: localhost, loopback, and AI Studio development/preview proxy
-        isAllowed = origin === 'http://localhost:3000' || 
-                    origin === 'http://127.0.0.1:3000' ||
-                    origin === 'http://localhost:5173' ||
-                    (origin.startsWith('https://') && origin.endsWith('.run.app'));
-      } else {
-        // Production with NO allowed origins set: Fail Safe (deny all cross-origin)
-        isAllowed = false;
+    if (allowedOrigins.length > 0) {
+      if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+        return true;
       }
     }
+
+    try {
+      const url = new URL(origin);
+      const hostname = url.hostname.toLowerCase();
+
+      // Same-origin request (the website calling its own backend server)
+      if (hostHeader) {
+        const cleanHost = hostHeader.split(':')[0].toLowerCase();
+        if (hostname === cleanHost) return true;
+      }
+
+      // Localhost & loopback
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return true;
+      }
+
+      // Deployed platforms (Render, Google Cloud Run / AI Studio preview, Vercel)
+      if (
+        hostname.endsWith('.onrender.com') ||
+        hostname.endsWith('.run.app') ||
+        hostname.endsWith('.vercel.app')
+      ) {
+        return true;
+      }
+    } catch {
+      return false;
+    }
+
+    return !isProduction;
+  }
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const isAllowed = isOriginAllowed(origin, req.headers.host);
 
     if (isAllowed && origin) {
       res.header('Access-Control-Allow-Origin', origin);
@@ -766,22 +786,7 @@ async function startServer() {
   wss.on('connection', (ws, req) => {
     // --- WebSocket Handshake Origin Validation ---
     const origin = req.headers.origin;
-    let originAllowed = false;
-
-    if (!origin) {
-      originAllowed = true; // Non-browser client
-    } else {
-      if (allowedOrigins.length > 0) {
-        originAllowed = allowedOrigins.includes(origin);
-      } else if (!isProduction) {
-        originAllowed = origin === 'http://localhost:3000' || 
-                        origin === 'http://127.0.0.1:3000' ||
-                        origin === 'http://localhost:5173' ||
-                        (origin.startsWith('https://') && origin.endsWith('.run.app'));
-      } else {
-        originAllowed = false;
-      }
-    }
+    const originAllowed = isOriginAllowed(origin, req.headers.host);
 
     if (!originAllowed) {
       console.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
@@ -1098,7 +1103,7 @@ async function startServer() {
     });
   }
 
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Beyond Co-op Server listening on http://0.0.0.0:${PORT}`);
   });
