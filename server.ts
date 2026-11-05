@@ -249,7 +249,7 @@ async function initStorage(): Promise<void> {
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       const list = JSON.parse(data) as AccountRecord[];
       for (const rec of list) {
-        // Skip publicly known test account in production even if present in file
+        // STRICT: Never load 'wanderer' in production
         if (isProduction && rec.usernameLower === 'wanderer') continue;
         
         accountsByLower.set(rec.usernameLower, rec);
@@ -261,7 +261,7 @@ async function initStorage(): Promise<void> {
     }
   }
 
-  // Seed default wanderer account locked as vanguard if no accounts exist (DEV ONLY)
+  // Seed default wanderer account locked as vanguard if no accounts exist (STRICT DEV ONLY)
   const isProduction = process.env.NODE_ENV === 'production';
   if (!isProduction && !accountsByLower.has('wanderer')) {
     createAccount('wanderer', 'beyond', 'vanguard');
@@ -450,24 +450,49 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // CORS middleware for authorized origins
+  // --- STRICT CORS CONFIGURATION ---
   const isProduction = process.env.NODE_ENV === 'production';
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+  const rawOrigins = process.env.ALLOWED_ORIGINS || '';
   
+  // Strict parser: rejects malformed, wildcards, and paths
+  const allowedOrigins = rawOrigins.split(',')
+    .map(o => o.trim())
+    .filter(o => {
+      if (!o) return false;
+      try {
+        if (o.includes('*')) return false; // Reject wildcards
+        const url = new URL(o);
+        // Ensure no path, query, or fragment, and protocol is valid
+        return url.origin === o && (url.protocol === 'http:' || url.protocol === 'https:');
+      } catch {
+        return false; // Malformed
+      }
+    });
+
+  if (rawOrigins && allowedOrigins.length === 0) {
+    console.error('CRITICAL: ALLOWED_ORIGINS is configured but all entries were rejected as malformed.');
+  }
+
   app.use((req, res, next) => {
-    const origin = req.headers.origin || '';
+    const origin = req.headers.origin;
     let isAllowed = false;
 
-    if (allowedOrigins.length > 0) {
-      isAllowed = allowedOrigins.includes(origin);
-    } else if (!isProduction) {
-      // In development, allow localhost/loopback if no origins specified
-      isAllowed = !origin || origin.includes('localhost') || origin.includes('127.0.0.1');
+    if (!origin) {
+      // Not a cross-origin browser request (same-origin, curl, server-side)
+      isAllowed = true;
     } else {
-      // In production, if no ALLOWED_ORIGINS are set, only allow same-origin requests.
-      // (Bypassing CORS headers for same-origin browser requests).
-      const host = req.headers.host || '';
-      isAllowed = !origin || origin.includes(host);
+      if (allowedOrigins.length > 0) {
+        // Strict exact match
+        isAllowed = allowedOrigins.includes(origin);
+      } else if (!isProduction) {
+        // Development defaults
+        isAllowed = origin === 'http://localhost:3000' || 
+                    origin === 'http://127.0.0.1:3000' ||
+                    origin === 'http://localhost:5173';
+      } else {
+        // Production with NO allowed origins set: Fail Safe (deny all cross-origin)
+        isAllowed = false;
+      }
     }
 
     if (isAllowed && origin) {
@@ -482,6 +507,13 @@ async function startServer() {
       res.sendStatus(204);
       return;
     }
+
+    if (origin && !isAllowed) {
+      console.warn(`Blocked CORS request from unauthorized origin: ${origin}`);
+      res.status(403).json({ error: 'CORS policy: Origin not allowed.' });
+      return;
+    }
+
     next();
   });
 
@@ -729,6 +761,30 @@ async function startServer() {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws, req) => {
+    // --- WebSocket Handshake Origin Validation ---
+    const origin = req.headers.origin;
+    let originAllowed = false;
+
+    if (!origin) {
+      originAllowed = true; // Non-browser client
+    } else {
+      if (allowedOrigins.length > 0) {
+        originAllowed = allowedOrigins.includes(origin);
+      } else if (!isProduction) {
+        originAllowed = origin === 'http://localhost:3000' || 
+                        origin === 'http://127.0.0.1:3000' ||
+                        origin === 'http://localhost:5173';
+      } else {
+        originAllowed = false;
+      }
+    }
+
+    if (!originAllowed) {
+      console.warn(`WebSocket connection rejected from unauthorized origin: ${origin}`);
+      ws.close(4003, 'Forbidden Origin');
+      return;
+    }
+
     // Strictly use Sec-WebSocket-Protocol for tokens (safer than URL parameters)
     const token = String(req.headers['sec-websocket-protocol'] || '').split(',')[0].trim();
     const session = sessionsByToken.get(token);
