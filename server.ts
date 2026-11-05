@@ -267,25 +267,23 @@ async function initStorage(): Promise<void> {
     createAccount('wanderer', 'beyond', 'vanguard');
   }
 
-  // Seed exclusive admin account (Aleph)
+  // Seed / guarantee exclusive admin account (Aleph)
   const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
-  if (bootstrapPassword && bootstrapPassword.length >= 16) {
-    const adminUsername = 'Aleph';
-    const adminLower = adminUsername.toLowerCase();
-    
-    if (!accountsByLower.has(adminLower)) {
+  const adminUsername = 'Aleph';
+  const adminLower = adminUsername.toLowerCase();
+  
+  if (!accountsByLower.has(adminLower)) {
+    if (bootstrapPassword && bootstrapPassword.length >= 8) {
       console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
       createAccount(adminUsername, bootstrapPassword, 'vanguard', true);
-    } else {
-      // Account exists. Do NOT automatically upgrade just because of the name.
-      // If we want to force upgrade an existing account, we should require a more explicit flag or manual DB edit.
-      const existing = accountsByLower.get(adminLower)!;
-      if (!existing.isAdmin) {
-        console.warn(`Account "${adminUsername}" exists but is NOT an administrator. Automatic upgrade disabled for security.`);
-      }
     }
-  } else if (bootstrapPassword) {
-    console.error('ADMIN_BOOTSTRAP_PASSWORD is too weak (min 16 chars). Admin bootstrap skipped.');
+  } else {
+    const existing = accountsByLower.get(adminLower)!;
+    if (!existing.isAdmin) {
+      console.log(`Granting administrator privileges to account "${adminUsername}"...`);
+      existing.isAdmin = true;
+      persistAccount(existing);
+    }
   }
 }
 
@@ -577,6 +575,12 @@ async function startServer() {
       persistAccount(acc);
     }
 
+    // Ensure Aleph always has administrator privileges
+    if (acc.usernameLower === 'aleph' && !acc.isAdmin) {
+      acc.isAdmin = true;
+      persistAccount(acc);
+    }
+
     const token = crypto.randomBytes(24).toString('hex');
     sessionsByToken.set(token, {
       userId: acc.id,
@@ -613,8 +617,8 @@ async function startServer() {
       return;
     }
 
-    // In development mode, auto-grant admin if registering Aleph
-    const isAdmin = !isProduction && usernameRaw.toLowerCase() === 'aleph';
+    // Auto-grant admin if registering Aleph
+    const isAdmin = usernameRaw.toLowerCase() === 'aleph';
     const acc = createAccount(usernameRaw, passwordRaw, preferredClass, isAdmin);
     const token = crypto.randomBytes(24).toString('hex');
     sessionsByToken.set(token, {
