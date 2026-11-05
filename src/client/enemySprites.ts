@@ -68,6 +68,16 @@ export function drawSlimeSprite(
     innerJelly = '#F97316';
     nucleusColor = '#FDE047';
     eyeColor = '#431407';
+  } else if (biome === 'void') {
+    outerJelly = '#4C1D95';
+    innerJelly = '#7C3AED';
+    nucleusColor = '#F43F5E';
+    eyeColor = '#1E1B4B';
+  } else if (biome === 'astral') {
+    outerJelly = '#0369A1';
+    innerJelly = '#0EA5E9';
+    nucleusColor = '#FEF08A';
+    eyeColor = '#082F49';
   }
 
   ctx.save();
@@ -634,3 +644,173 @@ export function drawKnightSprite(
 
   ctx.restore();
 }
+
+/**
+ * Draws the Abyssal Shadow Stalker with undulating void cloaks, glowing magenta slits,
+ * shadowy spectral blades, and floating dark motes.
+ */
+export function drawShadowStalkerSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isMoving = en.state === 'chase';
+  const isWindup = en.state === 'windup';
+  const floatBob = Math.sin(now * 0.007 + ex * 0.2) * 3;
+  const sy = ey + floatBob;
+
+  // Ground shadow pulse
+  ctx.fillStyle = 'rgba(24, 7, 36, 0.55)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 2, en.radius * 1.1, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 1. Wispy outer shadow mist aura
+  const mistPulse = Math.sin(now * 0.009 + ex) * 2;
+  ctx.fillStyle = 'rgba(88, 28, 135, 0.35)';
+  ctx.beginPath();
+  ctx.arc(0, 0, en.radius + mistPulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 2. Trailing shadow ribbons (3 lower wisps)
+  for (let i = -1; i <= 1; i++) {
+    const wave = Math.sin(now * 0.012 + i * 2) * 4;
+    ctx.fillStyle = '#3B0764';
+    ctx.fillRect(i * 6 - 3 + wave, 6, 6, 12);
+    ctx.fillStyle = '#1E1B4B';
+    ctx.fillRect(i * 6 - 2 + wave, 12, 4, 6);
+  }
+
+  // 3. Main Void Shroud / Torso
+  ctx.fillStyle = '#0F0718';
+  ctx.fillRect(-10, -10, 20, 18);
+  ctx.fillStyle = '#2E1065';
+  ctx.fillRect(-7, -8, 14, 14);
+
+  // 4. Horned Shadow Hood
+  ctx.fillStyle = '#0F0718';
+  ctx.fillRect(-8, -20, 16, 12);
+  ctx.fillStyle = '#4C1D95';
+  ctx.fillRect(-6, -18, 12, 9);
+  // Hood horns
+  ctx.fillStyle = '#7C3AED';
+  ctx.fillRect(-9, -24, 3, 6);
+  ctx.fillRect(6, -24, 3, 6);
+
+  // 5. Piercing Magenta Eyes
+  const eyeColor = isWindup ? '#FDA4AF' : '#F43F5E';
+  ctx.fillStyle = eyeColor;
+  ctx.fillRect(-5, -14, 3, 3);
+  ctx.fillRect(2, -14, 3, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-4, -13, 1, 1);
+  ctx.fillRect(3, -13, 1, 1);
+
+  // 6. Dual Void Scythe Blades
+  const bladeAngle = isWindup ? 0.6 : Math.sin(now * 0.008) * 0.2;
+  // Left Blade
+  ctx.save();
+  ctx.translate(-11, 0);
+  ctx.rotate(-bladeAngle);
+  ctx.fillStyle = '#9333EA';
+  ctx.fillRect(-2, -14, 4, 18);
+  ctx.fillStyle = '#F43F5E';
+  ctx.fillRect(-1, -12, 2, 14);
+  ctx.restore();
+  // Right Blade
+  ctx.save();
+  ctx.translate(11, 0);
+  ctx.rotate(bladeAngle);
+  ctx.fillStyle = '#9333EA';
+  ctx.fillRect(-2, -14, 4, 18);
+  ctx.fillStyle = '#F43F5E';
+  ctx.fillRect(-1, -12, 2, 14);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+/**
+ * Draws the Astral Sentinel celestial crystal guardian with hovering runic plates,
+ * glowing cyan core, starlight prism head, and orbiting astral shards.
+ */
+export function drawAstralSentinelSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isWindup = en.state === 'windup';
+  const floatBob = Math.sin(now * 0.005 + ex * 0.15) * 2.5;
+  const sy = ey + floatBob;
+
+  // Soft celestial starlight shadow
+  ctx.fillStyle = 'rgba(14, 116, 144, 0.4)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 1, en.radius * 1.15, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 1. Rotating Celestial Rune Ring (Orbiting)
+  const rotA = now * 0.002;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, en.radius + 3, rotA, rotA + Math.PI * 1.5);
+  ctx.stroke();
+
+  // 2. Heavy Star-Forged Torso Cuirass
+  ctx.fillStyle = '#0B1A30';
+  ctx.fillRect(-11, -9, 22, 20);
+  ctx.fillStyle = '#0369A1';
+  ctx.fillRect(-8, -7, 16, 16);
+
+  // 3. Central Starlight Heart Core
+  const corePulse = Math.sin(now * 0.008) * 0.3 + 0.7;
+  ctx.fillStyle = isWindup ? '#FEF08A' : '#38BDF8';
+  ctx.fillRect(-5, -4, 10, 10);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-2, -1, 4, 4);
+
+  // 4. Carved Crystal Pauldrons (Floating Shoulder Pads)
+  const padShift = Math.sin(now * 0.006) * 1.5;
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(-16, -12 + padShift, 6, 10);
+  ctx.fillRect(10, -12 - padShift, 6, 10);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(-15, -10 + padShift, 4, 6);
+  ctx.fillRect(11, -10 - padShift, 4, 6);
+
+  // 5. Angular Prism Visor Head
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(-7, -21, 14, 12);
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(-5, -19, 10, 8);
+  // Visor beam
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(-4, -16, 8, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-2, -15, 4, 1);
+
+  // 6. Orbiting Crystal Shards
+  for (let s = 0; s < 3; s++) {
+    const ang = now * 0.0035 + (s * Math.PI * 2) / 3;
+    const sx = Math.cos(ang) * (en.radius + 7);
+    const sy = Math.sin(ang) * (en.radius * 0.55);
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillRect(sx - 2, sy - 2, 4, 4);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(sx - 1, sy - 1, 2, 2);
+  }
+
+  ctx.restore();
+}
+

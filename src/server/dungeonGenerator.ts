@@ -34,22 +34,27 @@ const BIOMES: { id: BiomeId; title: string; bossNames: string[] }[] = [
   {
     id: 'courtyard',
     title: 'Highkeep Outer Bailey',
-    bossNames: ['Warden Malakor', 'Sir Vane the Hollow'],
+    bossNames: ['Warden Malakor'],
+  },
+  {
+    id: 'catacombs',
+    title: 'Sunken Crypt',
+    bossNames: ['Archlich Vaelor'],
   },
   {
     id: 'ember',
     title: 'Cindervault Bastion',
-    bossNames: ['Ignis, Cinder Sovereign', 'Pyrelord Kaelen'],
+    bossNames: ['Ignis, Cinder Sovereign'],
   },
   {
-    id: 'catacombs', // Reusing ID for now or using new one if types allow
+    id: 'void',
     title: 'Abyssal Shadow Chasm',
-    bossNames: ['Void-Eater Malice', 'Shadow Stalker'],
+    bossNames: ['Void-Eater Malice'],
   },
   {
-    id: 'courtyard', // Reusing ID for now or using new one if types allow
+    id: 'astral',
     title: 'Aetherial Void Spire',
-    bossNames: ['Archon of Nothingness', 'Star-Spawn Herald'],
+    bossNames: ['Archon of Nothingness'],
   },
 ];
 
@@ -348,8 +353,12 @@ export function generateDungeonFloor(
         floor === 1
           ? ['slime', 'goblin', 'skeleton']
           : floor === 2
-            ? ['goblin', 'skeleton', 'cultist', 'knight']
-            : ['skeleton', 'cultist', 'knight', 'slime'];
+            ? ['goblin', 'skeleton', 'cultist']
+            : floor === 3
+              ? ['skeleton', 'knight', 'cultist']
+              : floor === 4
+                ? ['cultist', 'shadow_stalker', 'skeleton']
+                : ['astral_sentinel', 'cultist', 'shadow_stalker'];
 
       for (let i = 0; i < enemyCount; i++) {
         const kind = pool[Math.floor(rng() * pool.length)];
@@ -398,10 +407,15 @@ export function generateDungeonFloor(
       boss.name = bossName;
       enemies.push(boss);
 
+      const bossMinion1: EnemyKind =
+        floor === 1 ? 'skeleton' : floor === 2 ? 'cultist' : floor === 3 ? 'knight' : floor === 4 ? 'shadow_stalker' : 'astral_sentinel';
+      const bossMinion2: EnemyKind =
+        floor === 1 ? 'goblin' : floor === 2 ? 'skeleton' : floor === 3 ? 'cultist' : floor === 4 ? 'cultist' : 'shadow_stalker';
+
       enemies.push(
         makeEnemy(
           `en_${floor}_${enemySeq++}`,
-          floor >= 2 ? 'cultist' : 'skeleton',
+          bossMinion1,
           room.id,
           centerWorldX - 86,
           centerWorldY - 56,
@@ -414,7 +428,7 @@ export function generateDungeonFloor(
       enemies.push(
         makeEnemy(
           `en_${floor}_${enemySeq++}`,
-          floor >= 2 ? 'knight' : 'goblin',
+          bossMinion2,
           room.id,
           centerWorldX + 86,
           centerWorldY + 56,
@@ -515,8 +529,28 @@ function getEnemyResistances(
         bleed: 0.30,
         tenacity: elite ? 0.35 : 0.25,
       };
+    case 'shadow_stalker':
+      return {
+        physical: elite ? 0.25 : 0.18,
+        fire: 0.10,
+        frost: 0.20,
+        lightning: -0.15, // fragile to shock
+        poison: 0.50,
+        bleed: 0.65, // spectral shadow substance
+        tenacity: elite ? 0.45 : 0.30,
+      };
+    case 'astral_sentinel':
+      return {
+        physical: elite ? 0.45 : 0.38, // hardened celestial crystal armor
+        fire: 0.30,
+        frost: 0.30,
+        lightning: 0.40,
+        poison: 0.70, // stone/crystal construct
+        bleed: 0.90,  // cannot bleed
+        tenacity: elite ? 0.55 : 0.40,
+      };
     case 'boss': {
-      if (biome === 'ember' || floor >= 3) {
+      if (biome === 'ember' || floor === 3) {
         return {
           physical: 0.30,
           fire: 0.75, // molten behemoth heavily resists fire
@@ -535,6 +569,26 @@ function getEnemyResistances(
           poison: 0.85, // undead
           bleed: 0.85,  // undead
           tenacity: 0.60,
+        };
+      } else if (biome === 'void' || floor === 4) {
+        return {
+          physical: 0.35,
+          fire: 0.30,
+          frost: 0.30,
+          lightning: 0.30,
+          poison: 0.60,
+          bleed: 0.70, // shadowy void entity resists bleed
+          tenacity: 0.70, // 70% CC duration reduction
+        };
+      } else if (biome === 'astral' || floor === 5) {
+        return {
+          physical: 0.40,
+          fire: 0.45,
+          frost: 0.45,
+          lightning: 0.50, // celestial entity resists elemental magic
+          poison: 0.50,
+          bleed: 0.40,
+          tenacity: 0.75, // 75% CC duration reduction
         };
       } else {
         return {
@@ -571,6 +625,8 @@ export function makeEnemy(
     skeleton: { name: 'Bone Marksman', hp: 52, radius: 13 },
     cultist: { name: 'Void Acolyte', hp: 68, radius: 14 },
     knight: { name: 'Dread Halberdier', hp: 105, radius: 16 },
+    shadow_stalker: { name: 'Abyssal Stalker', hp: 88, radius: 15 },
+    astral_sentinel: { name: 'Celestial Sentinel', hp: 122, radius: 17 },
     boss: { name: 'Warden Malakor', hp: 1350, radius: 28 },
   };
   const spec = baseStats[kind];

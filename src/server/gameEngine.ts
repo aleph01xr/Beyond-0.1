@@ -535,8 +535,11 @@ export class GameRoom {
             lines = [
               `Ah, ${p.username}! Care for a mug of our signature honeyed mead or a glass of spiced cider?`,
               classTip,
+              'Floor 1 is Highkeep Outer Bailey. Watch for Warden Malakor\'s crushing tower shield!',
               'Floor 2 is the Sunken Crypt. Archlich Vaelor casts necrotic soul frost that freezes anyone standing still.',
-              'Floor 3 is Cindervault—a searing inferno! Equip Cinder Heart and Runic Carapace relics if you find them.',
+              'Floor 3 is Cindervault Bastion—a searing inferno ruled by Ignis, Cinder Sovereign! Equip Cinder Heart and Runic Carapace relics if you find them.',
+              'Floor 4 is the Abyssal Shadow Chasm! Void-Eater Malice opens black holes that pull heroes into oblivion.',
+              'Floor 5 reaches the Aetherial Void Spire! The Archon of Nothingness unleashes devastating astral starlight novas.',
               'Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!',
             ];
           } else {
@@ -884,9 +887,19 @@ export class GameRoom {
           }
         }
         // Spawn 4 outward shockwave debris orbs
-        const isEmber = this.map.biome === 'ember' || this.floor >= 3;
+        const isEmber = this.map.biome === 'ember' || this.floor === 3;
         const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
-        const slamStyle = isEmber ? 'fireball' : isCatacombs ? 'voidorb' : 'bone';
+        const isVoid = this.map.biome === 'void' || this.floor === 4;
+        const isAstral = this.map.biome === 'astral' || this.floor === 5;
+        const slamStyle = isEmber
+          ? 'fireball'
+          : isVoid
+            ? 'voidorb'
+            : isAstral
+              ? 'arcane'
+              : isCatacombs
+                ? 'voidorb'
+                : 'bone';
         for (let k = 0; k < 4; k++) {
           const a = (k * Math.PI) / 2 + Math.PI / 4;
           this.spawnProjectile({
@@ -1261,6 +1274,62 @@ export class GameRoom {
           this.damagePlayer(nearest, baseHit + this.floor * 2);
           enemy.windupMs = enemy.kind === 'goblin' ? 850 : 1100;
         }
+      } else if (enemy.kind === 'shadow_stalker') {
+        // Fast, elusive void ambusher that dashes toward players
+        const spd = 138 * slowFactor;
+        if (nearestDist > enemy.radius + 14) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+        if (nearestDist <= enemy.radius + 24 && enemy.windupMs <= 0) {
+          let baseHit = 22;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+          this.damagePlayer(nearest, baseHit + this.floor * 2, 'physical');
+          // Inflict brief slow on hit
+          nearest.hasteMs = Math.min(nearest.hasteMs, 0);
+          enemy.windupMs = 800;
+        }
+      } else if (enemy.kind === 'astral_sentinel') {
+        // Heavy armored celestial construct that fires crystal starlight projectiles
+        const spd = 72 * slowFactor;
+        if (nearestDist < 140) {
+          this.moveWithCollision(
+            enemy,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        } else if (nearestDist > 240) {
+          this.moveWithCollision(
+            enemy,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        }
+
+        if (enemy.windupMs <= 0) {
+          // Double starlight arc volley
+          for (let k = -0.18; k <= 0.18; k += 0.36) {
+            const a = angle + k;
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'arcane',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 230,
+              vy: Math.sin(a) * 230,
+              angle: a,
+              radius: 6,
+              damage: 18 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 2000,
+            });
+          }
+          enemy.windupMs = 1850;
+        }
       } else if (enemy.kind === 'skeleton' || enemy.kind === 'cultist') {
         const spd = 82 * slowFactor;
         if (nearestDist < 120) {
@@ -1338,7 +1407,9 @@ export class GameRoom {
 
         const isEnraged = !!enemy.enraged;
         const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
-        const isEmber = this.map.biome === 'ember' || this.floor >= 3;
+        const isEmber = this.map.biome === 'ember' || this.floor === 3;
+        const isVoid = this.map.biome === 'void' || this.floor === 4;
+        const isAstral = this.map.biome === 'astral' || this.floor === 5;
         const baseSpd = isEnraged ? 142 : 110;
         const spd = baseSpd * slowFactor;
 
@@ -1393,7 +1464,7 @@ export class GameRoom {
               kind: 'boss_slam',
               x: nearest.x,
               y: nearest.y,
-              radius: isEmber ? 94 : isCatacombs ? 88 : 82,
+              radius: isAstral ? 104 : isVoid ? 98 : isEmber ? 94 : isCatacombs ? 88 : 82,
               ttlMs: isEnraged ? 700 : 850,
               maxTtlMs: isEnraged ? 700 : 850,
               ownerId: enemy.id,
@@ -1402,9 +1473,27 @@ export class GameRoom {
           } else {
             // 3. Bullet Hell Nova / Spread
             const offset = Math.random() * Math.PI;
-            const projCount = isEmber ? (isEnraged ? 18 : 14) : isCatacombs ? (isEnraged ? 16 : 12) : (isEnraged ? 14 : 10);
-            const projStyle = isCatacombs ? 'voidorb' : isEmber ? 'fireball' : 'bone';
-            const projSpeed = (isCatacombs ? 245 : isEmber ? 260 : 230) * (isEnraged ? 1.2 : 1.0);
+            const projCount = isAstral
+              ? isEnraged ? 22 : 18
+              : isVoid
+                ? isEnraged ? 20 : 16
+                : isEmber
+                  ? isEnraged ? 18 : 14
+                  : isCatacombs
+                    ? isEnraged ? 16 : 12
+                    : isEnraged ? 14 : 10;
+            const projStyle = isAstral
+              ? 'arcane'
+              : isVoid
+                ? 'voidorb'
+                : isCatacombs
+                  ? 'voidorb'
+                  : isEmber
+                    ? 'fireball'
+                    : 'bone';
+            const projSpeed =
+              (isAstral ? 280 : isVoid ? 270 : isEmber ? 260 : isCatacombs ? 245 : 230) *
+              (isEnraged ? 1.2 : 1.0);
 
             for (let k = 0; k < projCount; k++) {
               const a = offset + (k * Math.PI * 2) / projCount;
@@ -1739,8 +1828,18 @@ export class GameRoom {
 
   private summonBossAdds(boss: EnemyState): void {
     const isCatacombs = this.map.biome === 'catacombs' || this.floor === 2;
-    const isEmber = this.map.biome === 'ember' || this.floor >= 3;
-    const minionKind = isEmber ? 'knight' : isCatacombs ? 'cultist' : 'skeleton';
+    const isEmber = this.map.biome === 'ember' || this.floor === 3;
+    const isVoid = this.map.biome === 'void' || this.floor === 4;
+    const isAstral = this.map.biome === 'astral' || this.floor === 5;
+    const minionKind = isAstral
+      ? 'cultist'
+      : isVoid
+        ? 'skeleton'
+        : isEmber
+          ? 'knight'
+          : isCatacombs
+            ? 'cultist'
+            : 'skeleton';
     this.emitEvent('status', boss.x, boss.y - boss.radius - 20, '⚠️ REINFORCEMENTS!', '#F59E0B');
     this.pushSystemChat(`⚠️ ${boss.name} calls forth dungeon reinforcements!`);
 

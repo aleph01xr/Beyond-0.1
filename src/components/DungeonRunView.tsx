@@ -431,7 +431,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {/* Boss Health Bar */}
       {boss && (() => {
         const isCatacombs = map.biome === 'catacombs' || snapshot.floor === 2;
-        const isEmber = map.biome === 'ember' || snapshot.floor >= 3;
+        const isEmber = map.biome === 'ember' || snapshot.floor === 3;
+        const isVoid = map.biome === 'void' || snapshot.floor === 4;
+        const isAstral = map.biome === 'astral' || snapshot.floor === 5;
         const hpPct = Math.max(0, Math.min(100, (boss.hp / Math.max(1, boss.maxHp)) * 100));
 
         const theme = isCatacombs
@@ -454,15 +456,35 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 badge: 'CINDER SOVEREIGN',
                 badgeColor: 'text-[#FEF08A] border-[#D97706]',
               }
-            : {
-                border: 'border-[#6E2932]',
-                bg: 'bg-[#191822]/95',
-                barTrack: 'bg-[#2A171B]',
-                barFill: 'bg-[#DC2626]',
-                titleColor: 'text-[#FCA5A5]',
-                badge: 'WARDEN KNIGHT',
-                badgeColor: 'text-[#FDE68A] border-[#B45309]',
-              };
+            : isVoid
+              ? {
+                  border: 'border-[#9333EA]',
+                  bg: 'bg-[#180B28]/95',
+                  barTrack: 'bg-[#2B1242]',
+                  barFill: 'bg-gradient-to-r from-[#581C87] via-[#9333EA] to-[#F43F5E]',
+                  titleColor: 'text-[#F0ABFC]',
+                  badge: 'ABYSSAL VOID LORD',
+                  badgeColor: 'text-[#FDA4AF] border-[#E11D48]',
+                }
+              : isAstral
+                ? {
+                    border: 'border-[#0EA5E9]',
+                    bg: 'bg-[#0B1A30]/95',
+                    barTrack: 'bg-[#142A4A]',
+                    barFill: 'bg-gradient-to-r from-[#0284C7] via-[#38BDF8] to-[#FDE047]',
+                    titleColor: 'text-[#BAE6FD]',
+                    badge: 'CELESTIAL TITAN',
+                    badgeColor: 'text-[#FEF08A] border-[#EAB308]',
+                  }
+                : {
+                    border: 'border-[#6E2932]',
+                    bg: 'bg-[#191822]/95',
+                    barTrack: 'bg-[#2A171B]',
+                    barFill: 'bg-[#DC2626]',
+                    titleColor: 'text-[#FCA5A5]',
+                    badge: 'HIGHKEEP WARDEN',
+                    badgeColor: 'text-[#FDE68A] border-[#B45309]',
+                  };
 
         return (
           <div

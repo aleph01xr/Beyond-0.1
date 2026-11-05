@@ -2,7 +2,7 @@ export type HeroClassId = 'vanguard' | 'ranger' | 'arcanist' | 'cleric';
 
 export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
 
-export type BiomeId = 'courtyard' | 'catacombs' | 'ember';
+export type BiomeId = 'courtyard' | 'catacombs' | 'ember' | 'void' | 'astral';
 
 export interface HeroClassStats {
   survivability: number; // 1-5
@@ -390,7 +390,7 @@ export interface PlayerState {
   attributePoints: number;
 }
 
-export type EnemyKind = 'slime' | 'goblin' | 'skeleton' | 'cultist' | 'knight' | 'boss';
+export type EnemyKind = 'slime' | 'goblin' | 'skeleton' | 'cultist' | 'knight' | 'shadow_stalker' | 'astral_sentinel' | 'boss';
 
 export interface EnemyState {
   id: string;

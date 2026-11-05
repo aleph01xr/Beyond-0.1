@@ -485,10 +485,11 @@ async function startServer() {
         // Strict exact match
         isAllowed = allowedOrigins.includes(origin);
       } else if (!isProduction) {
-        // Development defaults
+        // Development defaults: localhost, loopback, and AI Studio development/preview proxy
         isAllowed = origin === 'http://localhost:3000' || 
                     origin === 'http://127.0.0.1:3000' ||
-                    origin === 'http://localhost:5173';
+                    origin === 'http://localhost:5173' ||
+                    (origin.startsWith('https://') && origin.endsWith('.run.app'));
       } else {
         // Production with NO allowed origins set: Fail Safe (deny all cross-origin)
         isAllowed = false;
@@ -592,7 +593,9 @@ async function startServer() {
       return;
     }
 
-    const acc = createAccount(usernameRaw, passwordRaw, preferredClass);
+    // In development mode, auto-grant admin if registering Aleph
+    const isAdmin = !isProduction && usernameRaw.toLowerCase() === 'aleph';
+    const acc = createAccount(usernameRaw, passwordRaw, preferredClass, isAdmin);
     const token = crypto.randomBytes(24).toString('hex');
     sessionsByToken.set(token, {
       userId: acc.id,
@@ -773,7 +776,8 @@ async function startServer() {
       } else if (!isProduction) {
         originAllowed = origin === 'http://localhost:3000' || 
                         origin === 'http://127.0.0.1:3000' ||
-                        origin === 'http://localhost:5173';
+                        origin === 'http://localhost:5173' ||
+                        (origin.startsWith('https://') && origin.endsWith('.run.app'));
       } else {
         originAllowed = false;
       }
