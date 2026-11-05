@@ -728,7 +728,7 @@ export function drawNpc(
     const iconBob = Math.sin(now * 0.01) * 2;
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('💬', x, y - 36 + iconBob);
+    ctx.fillText('', x, y - 36 + iconBob);
   }
 
   // Distinctive Name Badge & Interaction Prompt

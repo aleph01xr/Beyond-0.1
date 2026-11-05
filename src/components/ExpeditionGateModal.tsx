@@ -108,13 +108,13 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
           title="Close Gate (Esc)"
           aria-label="Close Gate"
         >
-          ✕
+          
         </button>
 
         {/* Header */}
         <div className="space-y-1.5 pr-10">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">🌀</span>
+            <span className="text-2xl"></span>
             <h2
               id="gate-title"
               className="font-display text-2xl sm:text-3xl font-bold text-[#FDE68A] tracking-wide"
@@ -131,7 +131,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
         {/* Character & Party Notice */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#1A1926] border border-[#3A384F] text-xs font-mono">
           <div className="flex items-center gap-2 text-[#E6E4EE]">
-            <span className="text-[#D9AA52]">⚔️ Embarking as:</span>
+            <span className="text-[#D9AA52]">️ Embarking as:</span>
             <span className="font-display text-white font-semibold">
               {defaultHostName}
             </span>
@@ -157,7 +157,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span>⚔️</span>
+            <span>️</span>
             <span>Launch Expedition</span>
           </button>
 
@@ -174,7 +174,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span>🗝️</span>
+            <span>️</span>
             <span>Join by Code</span>
           </button>
 
@@ -191,7 +191,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            <span>🧭</span>
+            <span></span>
             <span>Active Parties ({activeExpeditions.length})</span>
           </button>
         </div>
@@ -317,7 +317,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 type="submit"
                 className="stone-button px-6 py-2.5 font-display text-base text-white font-bold cursor-pointer shadow-lg flex items-center gap-2"
               >
-                <span>⚔️</span>
+                <span>️</span>
                 <span>Embark on Floor 1</span>
               </button>
             </div>

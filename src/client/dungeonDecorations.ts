@@ -226,7 +226,7 @@ export function drawDungeonPortal(
     ctx.save();
     ctx.font = '600 10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    const label = '🔒 SEALED · GUARDIAN AWAKE';
+    const label = ' SEALED · GUARDIAN AWAKE';
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = 'rgba(15, 15, 22, 0.8)';
     ctx.fillRect(roundPx - tw / 2 - 5, roundPy - 36, tw + 10, 14);
@@ -839,7 +839,7 @@ export function drawTrainingDummy(
   ctx.font = '700 10px "Plus Jakarta Sans", sans-serif';
   ctx.fillStyle = isHit ? '#FCD34D' : '#FDE68A';
   ctx.textAlign = 'center';
-  ctx.fillText('🎯 Training Dummy', x, y - 36);
+  ctx.fillText(' Training Dummy', x, y - 36);
 
   ctx.font = '600 8.5px "JetBrains Mono", monospace';
   if (dummy.totalDamageTaken && dummy.totalDamageTaken > 0) {

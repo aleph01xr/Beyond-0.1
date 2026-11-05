@@ -80,6 +80,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
+  const [menuTab, setMenuTab] = useState<'stats' | 'audio' | 'touch'>('stats');
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
@@ -294,7 +295,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           {isTavern ? (
             <>
               <span className="font-display text-sm sm:text-base text-[#FCD34D] font-bold whitespace-nowrap flex items-center gap-1.5">
-                <span>🍺</span> Sanctuary Tavern
+                <span></span> Sanctuary Tavern
               </span>
               <span aria-hidden="true" className="text-[#78768A]">·</span>
               <span className="text-emerald-400 font-semibold">Social Hub</span>
@@ -329,7 +330,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-gradient-to-r from-[#854D0E] to-[#A16207] hover:from-[#A16207] hover:to-[#CA8A04] border border-[#FACC15]/60 text-xs font-display font-semibold text-white transition-all shadow-md whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1.5 animate-pulse"
               title="Open Expedition Gate (Embark or Join Party)"
             >
-              <span>⚔️</span>
+              <span>️</span>
               <span className="hidden sm:inline">Expedition Gate</span>
               <span className="sm:hidden">Gate</span>
             </button>
@@ -372,18 +373,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             Chat ({chatMessages.length})
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              sfx.playUiClick();
-              setTouchSettingsOpen(true);
-            }}
-            title="Configure Joystick & Touch Controls"
-            className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1"
-          >
-            <span className="text-[#F4D378] text-[11px]">⚙️</span>
-            <span>Touch</span>
-          </button>
+
 
           <button
             type="button"
@@ -396,7 +386,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             aria-label={isMuted ? 'Unmute Sound' : 'Mute Sound'}
             className="px-2.5 py-1.5 sm:px-3 sm:py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] hover:border-[#D9AA52] text-xs font-medium text-[#E6E4EE] transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[36px] flex items-center gap-1"
           >
-            <span>{isMuted ? '🔇' : '🔊'}</span>
+            <span>{isMuted ? '' : ''}</span>
             <span className="hidden sm:inline">{isMuted ? 'Muted' : 'SFX'}</span>
           </button>
 
@@ -497,7 +487,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </span>
                 {boss.enraged ? (
                   <span className="text-[9px] px-1.5 py-0.2 bg-[#7F1D1D] text-[#FECACA] border border-[#DC2626] font-mono tracking-wider animate-pulse">
-                    🔥 ENRAGED
+                     ENRAGED
                   </span>
                 ) : (
                   <span
@@ -678,7 +668,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             }`}
           >
             <div className="text-[10px] font-mono text-[#BAE6FD]">
-              {isTavern && nearPortal ? '🌀 Portal' : '[E] Action'}
+              {isTavern && nearPortal ? ' Portal' : '[E] Action'}
             </div>
             <div className="font-display text-sm text-white whitespace-nowrap">
               {isTavern && nearPortal ? 'Expedition Gate' : 'Interact'}
@@ -841,7 +831,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                     : 'bg-[#293B33] border-[#4E8B67] text-[#D1FAE5]'
                 }`}
               >
-                <span>{isMuted ? '🔇 MUTED' : '🔊 ACTIVE'}</span>
+                <span>{isMuted ? ' MUTED' : ' ACTIVE'}</span>
               </button>
             </div>
 
@@ -849,7 +839,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             <div className="p-3.5 bg-[#201F2B] border border-[#3A384C] space-y-2.5">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-display text-white font-semibold flex items-center gap-1.5">
-                  <span>🔒</span> Soul Oath (Class Locked)
+                  <span></span> Soul Oath (Class Locked)
                 </span>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-[#FCD34D] px-1.5 py-0.5 bg-[#171622] border border-[#3E3C50]">
                   {myDef.roleBadge}
@@ -937,7 +927,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 <div className="p-3 bg-[#201F2B] border border-[#3A384C] space-y-2">
                   <div className="flex items-center justify-between text-xs font-mono">
                     <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
-                      <span>🛡️</span> Active Resistances
+                      <span>️</span> Active Resistances
                     </span>
                     <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
                   </div>
@@ -947,19 +937,19 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       <div className="text-white font-bold">+{phys}%</div>
                     </div>
                     <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#F97316]">🔥 Fire</div>
+                      <div className="text-[#F97316]"> Fire</div>
                       <div className="text-white font-bold">+{fire}%</div>
                     </div>
                     <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#38BDF8]">❄️ Frost</div>
+                      <div className="text-[#38BDF8]">️ Frost</div>
                       <div className="text-white font-bold">+{frost}%</div>
                     </div>
                     <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#FBBF24]">⚡ Shock</div>
+                      <div className="text-[#FBBF24]"> Shock</div>
                       <div className="text-white font-bold">+{shock}%</div>
                     </div>
                     <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#22C55E]">☣️ Poison</div>
+                      <div className="text-[#22C55E]">️ Poison</div>
                       <div className="text-white font-bold">+{poison}%</div>
                     </div>
                     <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
@@ -980,7 +970,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 }}
                 className="py-2.5 bg-[#292837] hover:bg-[#363548] border border-[#49475D] font-display text-sm text-[#F3F2F8] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5"
               >
-                <span>⚙️</span>
+                <span>️</span>
                 <span>Touch Controls Setup</span>
               </button>
               <button
@@ -1007,7 +997,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   }}
                   className="py-2.5 bg-[#1F2937] hover:bg-[#2E3B4E] border border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center gap-1.5 shadow"
                 >
-                  <span>🍺</span>
+                  <span></span>
                   <span>Return to Tavern Hub</span>
                 </button>
               )}
@@ -1032,7 +1022,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         if (!speakingNpc) return null;
         const isBram = speakingNpc.id === 'npc_bram';
         const isLena = speakingNpc.id === 'npc_lena';
-        const avatarEmoji = isBram ? '🍺' : isLena ? '🍻' : '⚔️';
+        const avatarEmoji = isBram ? '' : isLena ? '' : '️';
         const roleLabel = isBram
           ? 'Innkeeper & Host'
           : isLena
@@ -1131,7 +1121,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   }}
                   className="px-4 py-2 bg-[#1E293B] hover:bg-[#334155] border-2 border-[#38BDF8] font-display text-sm text-[#7DD3FC] cursor-pointer whitespace-nowrap min-h-[44px] flex items-center gap-1.5 shadow"
                 >
-                  <span>🍺</span>
+                  <span></span>
                   <span>Return to Tavern</span>
                 </button>
               )}
@@ -1154,7 +1144,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {isTavern && nearPortal && !expeditionGateOpen && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#38BDF8] shadow-2xl backdrop-blur-sm animate-bounce">
           <span className="font-display font-bold text-xs sm:text-sm text-[#7DD3FC] flex items-center gap-1.5">
-            🌀 Ancient Expedition Portal
+             Ancient Expedition Portal
           </span>
           <button
             type="button"

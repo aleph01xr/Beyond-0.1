@@ -323,7 +323,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
             <div className="space-y-2 pt-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-display text-white text-xs sm:text-sm font-semibold flex items-center gap-1.5">
-                  <span>🔒</span> Soul Oath (Locked to Account)
+                  <span></span> Soul Oath (Locked to Account)
                 </span>
                 <span className="text-[11px] text-[#FBBF24] font-mono">
                   Permanent Class Binding
@@ -383,7 +383,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
               })()}
 
               <p className="text-[10.5px] text-[#A5A3B5] text-center font-mono">
-                ⚠️ Each account is permanently bound to 1 class. To play another hero, create another adventurer account.
+                ️ Each account is permanently bound to 1 class. To play another hero, create another adventurer account.
               </p>
             </div>
           )}

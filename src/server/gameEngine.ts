@@ -365,7 +365,7 @@ export class GameRoom {
       'status',
       pr.state.x,
       pr.state.y - 28,
-      nextState ? '🌟 GOD MODE ON' : '🛡️ GOD MODE OFF',
+      nextState ? ' GOD MODE ON' : '️ GOD MODE OFF',
       nextState ? '#F59E0B' : '#64748B'
     );
     return nextState;
@@ -380,7 +380,7 @@ export class GameRoom {
       'status',
       pr.state.x,
       pr.state.y - 28,
-      nextState ? '⚡ SPEED BOOST ON' : '🏃 SPEED NORMAL',
+      nextState ? ' SPEED BOOST ON' : ' SPEED NORMAL',
       nextState ? '#10B981' : '#64748B'
     );
     return nextState;
@@ -411,7 +411,7 @@ export class GameRoom {
     const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
     p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp;
     p.hp = p.maxHp;
-    this.emitEvent('status', p.x, p.y - 26, `⚡ Level ${p.level} Set!`, '#F4D378');
+    this.emitEvent('status', p.x, p.y - 26, ` Level ${p.level} Set!`, '#F4D378');
   }
 
   public addPlayerRelic(playerId: string, relicId: string): void {
@@ -466,7 +466,7 @@ export class GameRoom {
       lastHitTimerMs: 0,
     };
     this.trainingDummies.push(dummy);
-    this.emitEvent('status', dummy.x, dummy.y - 20, '⚔️ Training Dummy Spawned', '#FBBF24');
+    this.emitEvent('status', dummy.x, dummy.y - 20, '️ Training Dummy Spawned', '#FBBF24');
   }
 
   private rollRelicChoices(owned: string[]): string[] {
@@ -567,7 +567,7 @@ export class GameRoom {
           npc.speakingMs = 5000;
 
           this.emitEvent('status', npc.x, npc.y - 28, `"${spoken}"`, '#FDE68A');
-          this.pushSystemChat(`💬 ${npc.name}: "${spoken}"`);
+          this.pushSystemChat(` ${npc.name}: "${spoken}"`);
         }
       }
 
@@ -576,8 +576,8 @@ export class GameRoom {
         if (dist <= 72) {
           dummy.totalDamageTaken = 0;
           dummy.lastHitTimerMs = 0;
-          this.emitEvent('status', dummy.x, dummy.y - 44, '🔄 Counter Reset', '#38BDF8');
-          this.pushSystemChat(`🎯 ${p.username} reset the Training Dummy damage tracker.`);
+          this.emitEvent('status', dummy.x, dummy.y - 44, ' Counter Reset', '#38BDF8');
+          this.pushSystemChat(` ${p.username} reset the Training Dummy damage tracker.`);
           return {};
         }
       }
@@ -868,7 +868,7 @@ export class GameRoom {
         dummy.lastHitTimerMs = Math.max(0, dummy.lastHitTimerMs - dtMs);
         if (dummy.lastHitTimerMs === 0 && dummy.totalDamageTaken && dummy.totalDamageTaken > 0) {
           dummy.totalDamageTaken = 0;
-          this.emitEvent('status', dummy.x, dummy.y - 44, '🔄 Counter Reset', '#94A3B8');
+          this.emitEvent('status', dummy.x, dummy.y - 44, ' Counter Reset', '#94A3B8');
         }
       }
     }
@@ -876,6 +876,94 @@ export class GameRoom {
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i];
       z.ttlMs -= dtMs;
+
+      if (z.kind === 'frost_nova' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (
+            !pr.state.downed &&
+            Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
+          ) {
+            this.damagePlayer(pr.state, 24 + this.floor * 4, 'elemental');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' FROST NOVA!', '#38BDF8');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'magma_pillar' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (
+            !pr.state.downed &&
+            Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
+          ) {
+            this.damagePlayer(pr.state, 28 + this.floor * 4, 'elemental');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' BURNING!', '#EF4444');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'singularity') {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = z.x - pr.state.x;
+            const dy = z.y - pr.state.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 6 && dist <= z.radius + 70) {
+              const pullSpd = 140 * (1 - dist / (z.radius + 70));
+              pr.state.x += (dx / dist) * pullSpd * dtSec;
+              pr.state.y += (dy / dist) * pullSpd * dtSec;
+            }
+          }
+        }
+        if (z.ttlMs <= 0) {
+          for (const pr of this.players.values()) {
+            if (
+              !pr.state.downed &&
+              Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
+            ) {
+              this.damagePlayer(pr.state, 32 + this.floor * 4, 'elemental');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' VOID BURST!', '#A855F7');
+            }
+          }
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+
+      if (z.kind === 'supernova') {
+        const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+        const currentRadius = z.radius * progress;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
+            if (Math.abs(dist - currentRadius) <= 18) {
+              this.damagePlayer(pr.state, 26 + this.floor * 4, 'elemental');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' SUPERNOVA!', '#F472B6');
+            }
+          }
+        }
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+
+      if (z.kind === 'starlight_beam' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (
+            !pr.state.downed &&
+            Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
+          ) {
+            this.damagePlayer(pr.state, 30 + this.floor * 4, 'elemental');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' STARBEAM!', '#38BDF8');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
 
       if (z.kind === 'boss_slam' && z.ttlMs <= 0) {
         for (const pr of this.players.values()) {
@@ -985,7 +1073,7 @@ export class GameRoom {
               if (ally.hp < ally.maxHp) {
                 const healAmt = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
-                this.emitEvent('heal', ally.x, ally.y - 18, `✨ Radiant Aura +${healAmt}`, '#FDE047');
+                this.emitEvent('heal', ally.x, ally.y - 18, ` Radiant Aura +${healAmt}`, '#FDE047');
               }
             }
           }
@@ -1144,13 +1232,13 @@ export class GameRoom {
           const rawBurn = 7 + this.floor;
           const burnDmg = Math.max(1, Math.round(rawBurn * (1 - res.fire)));
           enemy.hp -= burnDmg;
-          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `🔥 ${burnDmg}`, '#F97316');
+          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${burnDmg}`, '#F97316');
         }
         if (enemy.poisonedMs > 0) {
           const rawPoison = 5 + this.floor;
           const poisonDmg = Math.max(1, Math.round(rawPoison * (1 - res.poison)));
           enemy.hp -= poisonDmg;
-          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `🧪 ${poisonDmg}`, '#22C55E');
+          this.emitEvent('damage', enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${poisonDmg}`, '#22C55E');
         }
         if (enemy.bleedingMs > 0) {
           const moving = Math.hypot(enemy.vx, enemy.vy) > 8;
@@ -1390,8 +1478,8 @@ export class GameRoom {
         // Enrage transition when HP drops to <= 50%
         if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
           enemy.enraged = true;
-          this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 24, '⚔ ENRAGED! ⚔', '#EF4444');
-          this.pushSystemChat(`⚠️ ${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
+          this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 24, ' ENRAGED! ', '#EF4444');
+          this.pushSystemChat(`️ ${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
         }
 
         // Minion Summon thresholds: at 70% and 35% HP
@@ -1450,90 +1538,312 @@ export class GameRoom {
         if (enemy.windupMs <= 0) {
           const patternChoice = Math.random();
 
-          // 1. Charge attack (if player is distant)
-          if (nearestDist > 140 && patternChoice < 0.35) {
-            enemy.charging = true;
-            enemy.chargeAngle = angle;
-            enemy.chargeTimerMs = 580;
-            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'CHARGING!', '#F59E0B');
-            enemy.windupMs = isEnraged ? 700 : 950;
-          } else if (patternChoice < 0.70) {
-            // 2. Fast Ground Slam
-            this.zones.push({
-              id: this.nextId('zone'),
-              kind: 'boss_slam',
-              x: nearest.x,
-              y: nearest.y,
-              radius: isAstral ? 104 : isVoid ? 98 : isEmber ? 94 : isCatacombs ? 88 : 82,
-              ttlMs: isEnraged ? 700 : 850,
-              maxTtlMs: isEnraged ? 700 : 850,
-              ownerId: enemy.id,
-            });
-            enemy.windupMs = isEnraged ? 650 : 950;
-          } else {
-            // 3. Bullet Hell Nova / Spread
-            const offset = Math.random() * Math.PI;
-            const projCount = isAstral
-              ? isEnraged ? 22 : 18
-              : isVoid
-                ? isEnraged ? 20 : 16
-                : isEmber
-                  ? isEnraged ? 18 : 14
-                  : isCatacombs
-                    ? isEnraged ? 16 : 12
-                    : isEnraged ? 14 : 10;
-            const projStyle = isAstral
-              ? 'arcane'
-              : isVoid
-                ? 'voidorb'
-                : isCatacombs
-                  ? 'voidorb'
-                  : isEmber
-                    ? 'fireball'
-                    : 'bone';
-            const projSpeed =
-              (isAstral ? 280 : isVoid ? 270 : isEmber ? 260 : isCatacombs ? 245 : 230) *
-              (isEnraged ? 1.2 : 1.0);
-
-            for (let k = 0; k < projCount; k++) {
-              const a = offset + (k * Math.PI * 2) / projCount;
-              this.spawnProjectile({
-                ownerType: 'enemy',
-                ownerId: enemy.id,
-                style: projStyle,
-                x: enemy.x,
-                y: enemy.y,
-                vx: Math.cos(a) * projSpeed,
-                vy: Math.sin(a) * projSpeed,
-                angle: a,
-                radius: isEmber ? 8 : 7,
-                damage: 18 + this.floor * 4,
-                pierce: 1,
-                ttlMs: 2400,
-              });
-            }
-
-            // If enraged or floor >= 2, also fire 2 homing aimed shots directly at nearest player!
-            if (isEnraged || this.floor >= 2) {
-              for (let off = -0.16; off <= 0.16; off += 0.32) {
-                const aimA = angle + off;
+          if (this.floor === 1) {
+            // ==========================================
+            // FLOOR 1 BOSS: Warden Malakor (Outer Bailey)
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Shield Wall (Iron Bulwark stance: -60% damage for 3s)
+              enemy.shieldWallMs = 3000;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SHIELD WALL!', '#60A5FA');
+              // Front shockwave
+              for (let off = -0.3; off <= 0.3; off += 0.3) {
+                const a = angle + off;
                 this.spawnProjectile({
                   ownerType: 'enemy',
                   ownerId: enemy.id,
-                  style: projStyle,
+                  style: 'slash',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(aimA) * (projSpeed * 1.15),
-                  vy: Math.sin(aimA) * (projSpeed * 1.15),
-                  angle: aimA,
+                  vx: Math.cos(a) * 230,
+                  vy: Math.sin(a) * 230,
+                  angle: a,
+                  radius: 9,
+                  damage: 18,
+                  pierce: 1,
+                  ttlMs: 1400,
+                });
+              }
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.70) {
+              // 2. Vanguard Triple Cleave
+              for (let off = -0.28; off <= 0.28; off += 0.28) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'slash',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 260,
+                  vy: Math.sin(a) * 260,
+                  angle: a,
+                  radius: 10,
+                  damage: 22,
+                  pierce: 1,
+                  ttlMs: 1600,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CLEAVE!', '#EF4444');
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            } else {
+              // 3. Shield Rush Charge
+              enemy.charging = true;
+              enemy.chargeAngle = angle;
+              enemy.chargeTimerMs = 580;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'CHARGING!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 700 : 950;
+            }
+          } else if (this.floor === 2 || isCatacombs) {
+            // ==========================================
+            // FLOOR 2 BOSS: Archlich Vaelor (Sunken Crypt)
+            // ==========================================
+            if (patternChoice < 0.40) {
+              // 1. Frost Nova & Glacial Shackles (3 Frost Circles)
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                const offsetX = k === 0 ? 0 : k === 1 ? -40 : 40;
+                const offsetY = k === 0 ? 0 : k === 1 ? 30 : -30;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'frost_nova',
+                  x: targetState.x + offsetX,
+                  y: targetState.y + offsetY,
+                  radius: 72,
+                  ttlMs: 750,
+                  maxTtlMs: 750,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' FROST NOVA!', '#38BDF8');
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            } else if (patternChoice < 0.75) {
+              // 2. Seeking Soul Orb Volley (Homing Cyan Soul Wisps)
+              for (let k = 0; k < 6; k++) {
+                const a = angle + (k - 2.5) * 0.22;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 250,
+                  vy: Math.sin(a) * 250,
+                  angle: a,
                   radius: 8,
-                  damage: 22 + this.floor * 4,
+                  damage: 22,
+                  pierce: 1,
+                  ttlMs: 2200,
+                  slowOnHit: true,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SOUL HAIL!', '#A855F7');
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            } else {
+              // 3. Necrotic Death Ring
+              const count = isEnraged ? 16 : 12;
+              for (let k = 0; k < count; k++) {
+                const a = (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 230,
+                  vy: Math.sin(a) * 230,
+                  angle: a,
+                  radius: 7,
+                  damage: 20,
                   pierce: 1,
                   ttlMs: 2000,
                 });
               }
+              enemy.windupMs = isEnraged ? 800 : 1150;
             }
-            enemy.windupMs = isEnraged ? 750 : 1100;
+          } else if (this.floor === 3 || isEmber) {
+            // ==========================================
+            // FLOOR 3 BOSS: Ignis, Cinder Sovereign (Bastion)
+            // ==========================================
+            if (patternChoice < 0.40) {
+              // 1. Magma Eruption Pillars
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'magma_pillar',
+                  x: targetState.x + (Math.random() * 50 - 25),
+                  y: targetState.y + (Math.random() * 50 - 25),
+                  radius: 84,
+                  ttlMs: 650,
+                  maxTtlMs: 650,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' MAGMA ERUPTION!', '#EF4444');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.75) {
+              // 2. Ignis Firestorm Spiral
+              const count = isEnraged ? 18 : 14;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'fireball',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 270,
+                  vy: Math.sin(a) * 270,
+                  angle: a,
+                  radius: 9,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 2400,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FIRESTORM!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            } else {
+              // 3. Volcanic Core Slam
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'boss_slam',
+                x: nearest.x,
+                y: nearest.y,
+                radius: 96,
+                ttlMs: isEnraged ? 650 : 800,
+                maxTtlMs: isEnraged ? 650 : 800,
+                ownerId: enemy.id,
+              });
+              enemy.windupMs = isEnraged ? 650 : 950;
+            }
+          } else if (this.floor === 4 || isVoid) {
+            // ==========================================
+            // FLOOR 4 BOSS: Void-Eater Malice (Shadow Chasm)
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Gravitational Singularity (Pulls all heroes towards center!)
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'singularity',
+                x: nearest.x,
+                y: nearest.y,
+                radius: 115,
+                ttlMs: 1800,
+                maxTtlMs: 1800,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SINGULARITY!', '#A855F7');
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.70) {
+              // 2. Void Step Teleport & Scythe Arc
+              enemy.x = nearest.x + (Math.random() < 0.5 ? -90 : 90);
+              enemy.y = nearest.y + (Math.random() < 0.5 ? -90 : 90);
+              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
+              for (let off = -0.4; off <= 0.4; off += 0.2) {
+                const a = newAngle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 290,
+                  vy: Math.sin(a) * 290,
+                  angle: a,
+                  radius: 8,
+                  damage: 30,
+                  pierce: 1,
+                  ttlMs: 1800,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' VOID STEP!', '#E879F9');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              // 3. Abyssal Nova Spread
+              const count = isEnraged ? 20 : 16;
+              for (let k = 0; k < count; k++) {
+                const a = (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 280,
+                  vy: Math.sin(a) * 280,
+                  angle: a,
+                  radius: 8,
+                  damage: 28,
+                  pierce: 1,
+                  ttlMs: 2200,
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            }
+          } else {
+            // ==========================================
+            // FLOOR 5 BOSS: Archon of Nothingness (Void Spire)
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Celestial Supernova Ring (Expanding cosmic shockwave)
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'supernova',
+                x: enemy.x,
+                y: enemy.y,
+                radius: 140,
+                ttlMs: 1200,
+                maxTtlMs: 1200,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SUPERNOVA NOVA!', '#F472B6');
+              enemy.windupMs = isEnraged ? 850 : 1250;
+            } else if (patternChoice < 0.70) {
+              // 2. Orbital Starlight Beams (4 targeted beams)
+              for (let k = 0; k < 4; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'starlight_beam',
+                  x: targetState.x + (Math.random() * 60 - 30),
+                  y: targetState.y + (Math.random() * 60 - 30),
+                  radius: 70,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' STARBEAM CASCADE!', '#38BDF8');
+              enemy.windupMs = isEnraged ? 750 : 1050;
+            } else {
+              // 3. Cosmic Arc Spiral
+              const count = isEnraged ? 22 : 18;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'arcane',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 310,
+                  vy: Math.sin(a) * 310,
+                  angle: a,
+                  radius: 8,
+                  damage: 32,
+                  pierce: 1,
+                  ttlMs: 2400,
+                });
+              }
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            }
           }
         }
       }
@@ -1779,7 +2089,7 @@ export class GameRoom {
               maxTtlMs: 3000,
               ownerId: p.id,
             });
-            this.emitEvent('status', riftX, riftY - 18, '✨ Star Rift', '#C084FC');
+            this.emitEvent('status', riftX, riftY - 18, ' Star Rift', '#C084FC');
           }
         }
         this.spawnProjectile({
@@ -1840,8 +2150,8 @@ export class GameRoom {
           : isCatacombs
             ? 'cultist'
             : 'skeleton';
-    this.emitEvent('status', boss.x, boss.y - boss.radius - 20, '⚠️ REINFORCEMENTS!', '#F59E0B');
-    this.pushSystemChat(`⚠️ ${boss.name} calls forth dungeon reinforcements!`);
+    this.emitEvent('status', boss.x, boss.y - boss.radius - 20, '️ REINFORCEMENTS!', '#F59E0B');
+    this.pushSystemChat(`️ ${boss.name} calls forth dungeon reinforcements!`);
 
     for (let i = 0; i < 2; i++) {
       let addX = boss.x + (i === 0 ? -50 : 50);
@@ -1888,13 +2198,19 @@ export class GameRoom {
     const physRes = Math.min(0.75, Math.max(-0.5, res.physical));
     let finalDmg = Math.max(1, Math.round(rawAmount * (1 - physRes) * markBonus));
 
+    // Warden Malakor Shield Wall Damage Mitigation (-60%)
+    if (enemy.shieldWallMs && enemy.shieldWallMs > 0) {
+      finalDmg = Math.max(1, Math.round(finalDmg * 0.4));
+      this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 16, ' BLOCKED! (-60%)', '#60A5FA');
+    }
+
     // Ranger Class Passive: Eagle Keenness (+25% Longshot Crit Damage beyond 180px)
     if (attacker && attacker.heroClass === 'ranger') {
       const distToTarget = Math.hypot(enemy.x - attacker.x, enemy.y - attacker.y);
       if (distToTarget >= 180) {
         finalDmg = Math.round(finalDmg * 1.25);
         isCrit = true;
-        this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 22, '🦅 LONGSHOT! (+25%)', '#34D399');
+        this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 22, ' LONGSHOT! (+25%)', '#34D399');
       }
     }
 
@@ -1904,7 +2220,7 @@ export class GameRoom {
       enemy.frozenMs = 0;
       finalDmg = Math.round(finalDmg * 1.6);
       shattered = true;
-      this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 20, '❄ SHATTER!', '#38BDF8');
+      this.emitEvent('crit', enemy.x, enemy.y - enemy.radius - 20, ' SHATTER!', '#38BDF8');
 
       // AoE Frost Shatter wave to adjacent enemies
       for (const other of this.enemies) {
@@ -1930,7 +2246,7 @@ export class GameRoom {
         if (enemy.stunnedMs > 0 || enemy.burnedMs > 0 || enemy.frozenMs > 0) {
           if (attacker.shield < 60) {
             attacker.shield = Math.min(60, attacker.shield + 3);
-            this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+3 Shield)', '#93C5FD');
+            this.emitEvent('status', attacker.x, attacker.y - 20, '️ Iron Will (+3 Shield)', '#93C5FD');
           }
         }
       }
@@ -2004,7 +2320,7 @@ export class GameRoom {
           const otherRes = other.resistances ? other.resistances.lightning : 0;
           const arcDmg = Math.max(1, Math.round(finalDmg * 0.45 * (1 - otherRes)));
           other.hp -= arcDmg;
-          this.emitEvent('damage', other.x, other.y - 12, `⚡ ${arcDmg}`, '#FBBF24');
+          this.emitEvent('damage', other.x, other.y - 12, ` ${arcDmg}`, '#FBBF24');
           arcs--;
           if (other.hp <= 0) {
             this.processEnemyDeath(other, attacker);
@@ -2040,7 +2356,7 @@ export class GameRoom {
       if (distToTarget >= 180) {
         finalDmg = Math.round(finalDmg * 1.25);
         isCrit = true;
-        this.emitEvent('crit', dummy.x, dummy.y - 42, '🦅 LONGSHOT! (+25%)', '#34D399');
+        this.emitEvent('crit', dummy.x, dummy.y - 42, ' LONGSHOT! (+25%)', '#34D399');
       }
     }
 
@@ -2055,12 +2371,12 @@ export class GameRoom {
       if (attacker.heroClass === 'vanguard') {
         if (attacker.shield < 60) {
           attacker.shield = Math.min(60, attacker.shield + 3);
-          this.emitEvent('status', attacker.x, attacker.y - 20, '🛡️ Iron Will (+3 Shield)', '#93C5FD');
+          this.emitEvent('status', attacker.x, attacker.y - 20, '️ Iron Will (+3 Shield)', '#93C5FD');
         }
       }
     }
 
-    const text = isCrit ? `💥 ${finalDmg} CRIT!` : `${finalDmg}`;
+    const text = isCrit ? ` ${finalDmg} CRIT!` : `${finalDmg}`;
     const color = isCrit ? '#FEF08A' : '#FCD34D';
     this.emitEvent(
       isCrit ? 'crit' : 'damage',
@@ -2073,29 +2389,29 @@ export class GameRoom {
     // Relic synergies practice feedback
     if (attacker) {
       if (attacker.relics.includes('cinder_heart') && (isCrit || rawAmount >= 24)) {
-        this.emitEvent('status', dummy.x, dummy.y - 42, '🔥 IGNITED!', '#F97316');
+        this.emitEvent('status', dummy.x, dummy.y - 42, ' IGNITED!', '#F97316');
       }
       if (attacker.relics.includes('rimefrost_shard') && Math.random() < 0.25) {
-        this.emitEvent('status', dummy.x, dummy.y - 42, '❄️ CHILLED!', '#38BDF8');
+        this.emitEvent('status', dummy.x, dummy.y - 42, '️ CHILLED!', '#38BDF8');
       }
       if (attacker.relics.includes('stormcaller_lodestone')) {
         const pr = this.players.get(attacker.id);
         if (pr) {
           pr.attackCount = (pr.attackCount || 0) + 1;
           if (pr.attackCount % 3 === 0) {
-            this.emitEvent('status', dummy.x, dummy.y - 42, '⚡ SHOCKED!', '#FBBF24');
+            this.emitEvent('status', dummy.x, dummy.y - 42, ' SHOCKED!', '#FBBF24');
             // Arc to other dummy if nearby
             for (const other of this.trainingDummies) {
               if (other.id !== dummy.id && Math.hypot(other.x - dummy.x, other.y - dummy.y) <= 350) {
                 this.damageDummy(other, Math.round(finalDmg * 0.5), attacker, false);
-                this.emitEvent('status', other.x, other.y - 26, '⚡ Arc Shock', '#FBBF24');
+                this.emitEvent('status', other.x, other.y - 26, ' Arc Shock', '#FBBF24');
               }
             }
           }
         }
       }
       if (attacker.relics.includes('viper_crucible')) {
-        this.emitEvent('status', dummy.x, dummy.y - 42, '🧪 POISONED!', '#22C55E');
+        this.emitEvent('status', dummy.x, dummy.y - 42, ' POISONED!', '#22C55E');
       }
       if (attacker.relics.includes('bloodletter_talisman')) {
         this.emitEvent('status', dummy.x, dummy.y - 42, '🩸 LACERATED!', '#DC2626');
@@ -2116,7 +2432,7 @@ export class GameRoom {
       }
       if (attacker.heroClass === 'ranger') {
         attacker.hasteMs = Math.max(attacker.hasteMs, 2500);
-        this.emitEvent('status', attacker.x, attacker.y - 22, '⚡ EAGLE SWIFTNESS!', '#4ADE80');
+        this.emitEvent('status', attacker.x, attacker.y - 22, ' EAGLE SWIFTNESS!', '#4ADE80');
       }
     }
 
@@ -2199,7 +2515,7 @@ export class GameRoom {
 
     if (p.heroClass === 'vanguard') {
       dmg = Math.max(1, Math.round(dmg * 0.85));
-      this.emitEvent('status', p.x, p.y - 28, '🛡️ Iron Will (-15%)', '#CBD5E1');
+      this.emitEvent('status', p.x, p.y - 28, '️ Iron Will (-15%)', '#CBD5E1');
     }
 
     const inAegis = this.zones.some(

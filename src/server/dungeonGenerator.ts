@@ -627,10 +627,10 @@ export function makeEnemy(
     knight: { name: 'Dread Halberdier', hp: 105, radius: 16 },
     shadow_stalker: { name: 'Abyssal Stalker', hp: 88, radius: 15 },
     astral_sentinel: { name: 'Celestial Sentinel', hp: 122, radius: 17 },
-    boss: { name: 'Warden Malakor', hp: 1350, radius: 28 },
+    boss: { name: 'Warden Malakor', hp: 950, radius: 28 },
   };
   const spec = baseStats[kind];
-  const eliteMult = kind === 'boss' ? (1 + (floor - 1) * 0.6) : elite ? 1.55 : 1;
+  const eliteMult = kind === 'boss' ? (1 + (floor - 1) * 0.28) : elite ? 1.55 : 1;
   const maxHp = Math.round(spec.hp * hpScale * eliteMult);
   return {
     id,

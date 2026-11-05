@@ -713,6 +713,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const isVoid = map.biome === 'void' || map.floor === 4;
           const isAstral = map.biome === 'astral' || map.floor === 5;
 
+          ctx.save();
           if (isCatacombs) {
             // Sunken Crypt: Necrotic Soul Well stasis circle
             ctx.fillStyle = 'rgba(126, 34, 206, 0.22)';
@@ -720,34 +721,48 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Expanding cyan rune ring
-            ctx.strokeStyle = 'rgba(34, 211, 238, 0.85)';
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Inner spectral square rune
-            ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(z.x - 14, z.y - 14, 28, 28);
-          } else if (isEmber) {
-            // Cindervault: Volcanic Magma Eruption crater
-            ctx.fillStyle = 'rgba(234, 88, 12, 0.26)';
+            // Hazard warning border
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.75)';
+            ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.stroke();
 
-            // Expanding incandescent shockwave
-            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            // Expanding cyan rune ring (fill countdown gauge)
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.95)';
             ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Molten core ring
-            ctx.strokeStyle = 'rgba(220, 38, 38, 0.8)';
+            // Inner spectral square rune
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
             ctx.lineWidth = 1.5;
+            ctx.strokeRect(z.x - 16, z.y - 16, 32, 32);
+          } else if (isEmber) {
+            // Cindervault: Volcanic Magma Eruption crater
+            ctx.fillStyle = 'rgba(234, 88, 12, 0.28)';
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Outer danger rim
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Expanding incandescent shockwave (fill countdown gauge)
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Molten core ring
+            ctx.strokeStyle = 'rgba(249, 115, 22, 0.9)';
+            ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * 0.5 * progress, 0, Math.PI * 2);
             ctx.stroke();
@@ -758,13 +773,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.strokeStyle = 'rgba(244, 63, 94, 0.9)';
+            // Outer dark rim
+            ctx.strokeStyle = 'rgba(147, 51, 234, 0.85)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Expanding crimson energy shockwave
+            ctx.strokeStyle = 'rgba(244, 63, 94, 0.95)';
             ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
             ctx.stroke();
 
-            ctx.strokeStyle = 'rgba(147, 51, 234, 0.8)';
+            // Inner collapsing void ring
+            ctx.strokeStyle = 'rgba(232, 121, 249, 0.85)';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * (1 - progress), 0, Math.PI * 2);
@@ -776,29 +800,247 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
+            // Outer starlight boundary
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Expanding golden nova shockwave
             ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 3.5;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
             ctx.stroke();
 
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+            // Inner sky-blue core ring
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
             ctx.lineWidth = 2;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * 0.6 * progress, 0, Math.PI * 2);
             ctx.stroke();
           } else {
-            // Highkeep: Heavy stone ground slam
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+            // Highkeep: Heavy stone ground slam & heavy threat area
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = 'rgba(248, 113, 113, 0.9)';
-            ctx.lineWidth = 2;
+
+            // Outer danger rim
+            ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Expanding gold impact wave
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+            ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
             ctx.stroke();
           }
+          ctx.restore();
+        } else if (z.kind === 'frost_nova') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          ctx.save();
+          // Frost nova ground fill
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.24)';
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Outer cyan perimeter rim
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Shrinking radial warning timer ring (shows exact time left before freeze blast!)
+          const shrinkR = Math.max(4, z.radius * (1 - progress));
+          ctx.strokeStyle = 'rgba(186, 230, 253, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Rotating 8-point frost star glyph emblem
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.rotate(now * 0.003);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-18, 0); ctx.lineTo(18, 0);
+          ctx.moveTo(0, -18); ctx.lineTo(0, 18);
+          ctx.moveTo(-12, -12); ctx.lineTo(12, 12);
+          ctx.moveTo(-12, 12); ctx.lineTo(12, -12);
+          ctx.stroke();
+          ctx.restore();
+          ctx.restore();
+
+          particleManager.spawnFrostNovaMotes(z.x, z.y, z.radius, now);
+        } else if (z.kind === 'magma_pillar') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          ctx.save();
+          // Molten earth ground fill
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Outer fiery danger rim
+          ctx.strokeStyle = 'rgba(249, 115, 22, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Incandescent expanding eruption fill gauge
+          ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.restore();
+          particleManager.spawnMagmaEmbers(z.x, z.y, z.radius, now);
+        } else if (z.kind === 'singularity') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          const rotAngle = now * 0.006;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // Outer gravitational distortion field with warning border
+          ctx.fillStyle = 'rgba(147, 51, 234, 0.32)';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(192, 132, 252, 0.9)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Inward pull vector field indicators (8 arrows pointing toward center)
+          ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
+          ctx.lineWidth = 1.8;
+          for (let a = 0; a < 8; a++) {
+            const ang = (a * Math.PI) / 4 + now * 0.002;
+            const rOuter = z.radius * 0.9;
+            const rInner = z.radius * 0.45;
+            const x1 = Math.cos(ang) * rOuter;
+            const y1 = Math.sin(ang) * rOuter;
+            const x2 = Math.cos(ang) * rInner;
+            const y2 = Math.sin(ang) * rInner;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          }
+
+          // Dual counter-rotating accretion disks
+          ctx.rotate(rotAngle);
+          ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * (1 - progress * 0.4), 0, Math.PI * 1.5);
+          ctx.stroke();
+
+          ctx.rotate(-rotAngle * 2.2);
+          ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.6, 0, Math.PI * 1.5);
+          ctx.stroke();
+
+          // Pitch black void core
+          ctx.fillStyle = '#0F0B1E';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.38, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+          particleManager.spawnSingularityInwardWisps(z.x, z.y, z.radius, now);
+        } else if (z.kind === 'supernova') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          const currentRadius = z.radius * progress;
+          ctx.save();
+          // Outer cosmic shockwave ring
+          ctx.strokeStyle = 'rgba(244, 114, 182, 0.95)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, currentRadius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, Math.max(2, currentRadius - 8), 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Outer boundary threat outline
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.7)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+
+          particleManager.spawnSupernovaGlints(z.x, z.y, currentRadius, now);
+        } else if (z.kind === 'starlight_beam') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          ctx.save();
+          // Target lock-on ground circle
+          ctx.fillStyle = 'rgba(253, 224, 71, 0.22)';
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(250, 204, 21, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Shrinking lock-on countdown ring
+          const lockR = Math.max(4, z.radius * (1 - progress));
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, lockR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Rotating crosshair reticle ticks
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.rotate(now * 0.004);
+          ctx.strokeStyle = 'rgba(253, 224, 71, 0.9)';
+          ctx.lineWidth = 2;
+          for (let c = 0; c < 4; c++) {
+            const cAng = (c * Math.PI) / 2;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(cAng) * (z.radius - 8), Math.sin(cAng) * (z.radius - 8));
+            ctx.lineTo(Math.cos(cAng) * (z.radius + 6), Math.sin(cAng) * (z.radius + 6));
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          // Heavenly beam pillar indicator
+          const beamGrad = ctx.createLinearGradient(z.x, z.y - 140, z.x, z.y);
+          beamGrad.addColorStop(0, 'rgba(253, 224, 71, 0)');
+          beamGrad.addColorStop(1, 'rgba(253, 224, 71, 0.45)');
+          ctx.fillStyle = beamGrad;
+          ctx.fillRect(z.x - z.radius * 0.5, z.y - 140, z.radius, 140);
+          ctx.restore();
         }
       }
 
@@ -882,13 +1124,140 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else if (en.kind === 'astral_sentinel') {
           drawAstralSentinelSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'boss') {
-          // Boss shadow
+          // Boss ground shadow
           ctx.fillStyle = 'rgba(0,0,0,0.48)';
           ctx.fillRect(ex - en.radius + 2, ey + en.radius - 3, (en.radius - 2) * 2, 6);
+
           const isCatacombs = map.biome === 'catacombs' || map.floor === 2;
           const isEmber = map.biome === 'ember' || map.floor === 3;
           const isVoid = map.biome === 'void' || map.floor === 4;
           const isAstral = map.biome === 'astral' || map.floor === 5;
+
+          // ==============================================================
+          // BOSS CHARGE RUNWAY TRAJECTORY TELEGRAPH
+          // ==============================================================
+          if (en.charging) {
+            ctx.save();
+            const cAngle = en.chargeAngle ?? 0;
+            const runwayLen = 180;
+            const runwayW = en.radius * 2 + 12;
+
+            ctx.translate(ex, ey);
+            ctx.rotate(cAngle);
+
+            // Glowing hazard runway strip fill
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+            ctx.fillRect(0, -runwayW / 2, runwayLen, runwayW);
+
+            // Striped hazard borders
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(0, -runwayW / 2);
+            ctx.lineTo(runwayLen, -runwayW / 2);
+            ctx.moveTo(0, runwayW / 2);
+            ctx.lineTo(runwayLen, runwayW / 2);
+            ctx.stroke();
+
+            // Animated directional chevron arrows >>>
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            ctx.lineWidth = 2.5;
+            for (let c = 30; c < runwayLen; c += 40) {
+              const animOffset = (now * 0.12) % 40;
+              const cx = (c + animOffset) % runwayLen;
+              ctx.beginPath();
+              ctx.moveTo(cx - 10, -10);
+              ctx.lineTo(cx, 0);
+              ctx.lineTo(cx - 10, 10);
+              ctx.stroke();
+            }
+
+            // Impact danger circle at end of runway
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+            ctx.beginPath();
+            ctx.arc(runwayLen, 0, runwayW / 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+
+            ctx.restore();
+          }
+
+          // ==============================================================
+          // BOSS WINDUP / CASTING GROUND AURA & TIMER RING
+          // ==============================================================
+          if (en.windupMs > 0) {
+            ctx.save();
+            const windupRatio = Math.max(0, Math.min(1, en.windupMs / 1200));
+            const auraR = en.radius + 18;
+
+            const elemColor = isCatacombs
+              ? '#38BDF8'
+              : isEmber
+                ? '#F97316'
+                : isVoid
+                  ? '#E879F9'
+                  : isAstral
+                    ? '#38BDF8'
+                    : '#F59E0B';
+
+            // Pulsing elemental ground circle
+            ctx.fillStyle = isCatacombs
+              ? 'rgba(56, 189, 248, 0.22)'
+              : isEmber
+                ? 'rgba(249, 115, 22, 0.25)'
+                : isVoid
+                  ? 'rgba(232, 121, 249, 0.25)'
+                  : isAstral
+                    ? 'rgba(56, 189, 248, 0.22)'
+                    : 'rgba(245, 158, 11, 0.22)';
+            ctx.beginPath();
+            ctx.arc(ex, ey + 10, auraR, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Outer danger rim stroke
+            ctx.strokeStyle = elemColor;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey + 10, auraR, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Shrinking windup countdown arc ring
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            ctx.arc(
+              ex,
+              ey + 10,
+              auraR + 4,
+              -Math.PI / 2,
+              -Math.PI / 2 + Math.PI * 2 * (1 - windupRatio)
+            );
+            ctx.stroke();
+
+            ctx.restore();
+          }
+
+          // Shield Wall Barrier Stance
+          if (en.shieldWallMs && en.shieldWallMs > 0) {
+            ctx.strokeStyle = 'rgba(96, 165, 250, 0.95)';
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey, en.radius + 12, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(147, 197, 253, 0.26)';
+            ctx.fill();
+
+            // Fortified shield emblem arc
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(ex, ey, en.radius + 6, 0, Math.PI * 2);
+            ctx.stroke();
+
+            particleManager.spawnBossShieldSparks(ex, ey, now);
+          }
 
           if (isCatacombs) {
             // ==============================================================
@@ -1476,19 +1845,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     ? '#BAE6FD'
                     : '#FCA5A5';
           ctx.fillText(
-            en.enraged ? `🔥 ${en.name} [ENRAGED] 🔥` : en.name,
+            en.enraged ? ` ${en.name} [ENRAGED] ` : en.name,
             ex,
             ey - en.radius - 21
           );
 
-          // Enraged Fiery Pulsing Aura
+          // Enraged Fiery Pulsing Aura & Shockwave Burst
           if (en.enraged) {
             ctx.save();
-            const pulse = Math.sin(now * 0.015) * 3.5;
+            const pulse = Math.sin(now * 0.015) * 4;
             ctx.strokeStyle = '#EF4444';
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(ex, ey, en.radius + 5 + pulse, 0, Math.PI * 2);
+            ctx.arc(ex, ey, en.radius + 6 + pulse, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Inner gold pulse ring
+            ctx.strokeStyle = '#FBBF24';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey, en.radius + 2 + pulse * 0.5, 0, Math.PI * 2);
             ctx.stroke();
 
             // Rising rage fire embers
@@ -1500,6 +1876,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ctx.beginPath();
               ctx.arc(fx, fy, 3, 0, Math.PI * 2);
               ctx.fill();
+            }
+
+            if (Math.random() < 0.25) {
+              particleManager.spawnBossEnrageBurst(ex, ey, now);
             }
             ctx.restore();
           }
@@ -1520,12 +1900,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Active Status Badges beneath health bar
         const activeStatuses: { icon: string; color: string }[] = [];
-        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: '🔥', color: '#F97316' });
-        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: '❄️', color: '#38BDF8' });
-        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: '⚡', color: '#FBBF24' });
-        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: '☣️', color: '#22C55E' });
+        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#F97316' });
+        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: '️', color: '#38BDF8' });
+        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#FBBF24' });
+        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: '️', color: '#22C55E' });
         if ((en.bleedingMs ?? 0) > 0) activeStatuses.push({ icon: '🩸', color: '#EF4444' });
-        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: '💫', color: '#EAB308' });
+        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#EAB308' });
 
         if (activeStatuses.length > 0) {
           ctx.save();
@@ -2200,9 +2580,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.font = '800 13px "JetBrains Mono", monospace';
           ctx.textAlign = 'center';
           ctx.fillStyle = '#111219';
-          ctx.fillText(`⚡ ${ft.text}!`, 1, 1);
+          ctx.fillText(` ${ft.text}!`, 1, 1);
           ctx.fillStyle = '#FEF08A';
-          ctx.fillText(`⚡ ${ft.text}!`, 0, 0);
+          ctx.fillText(` ${ft.text}!`, 0, 0);
         } else if (ft.kind === 'status') {
           // Styled Status / Speech Badge
           ctx.translate(ft.x, floatY);

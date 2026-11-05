@@ -72,7 +72,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             className="stone-button w-8 h-8 flex items-center justify-center text-xs font-mono font-bold text-white shrink-0 cursor-pointer"
             title="Close Admin Console"
           >
-            ✕
+            
           </button>
         </div>
 

@@ -1044,12 +1044,12 @@ async function startServer() {
             acc.dexterity = (acc.dexterity || 10) + 1;
             acc.attributePoints -= 1;
             persistAccount(acc);
-            room.pushSystemChat(`✨ ${acc.username} increased DEXTERITY to ${acc.dexterity}.`);
+            room.pushSystemChat(` ${acc.username} increased DEXTERITY to ${acc.dexterity}.`);
           } else if (msg.attribute === 'vitality') {
             acc.vitality = (acc.vitality || 10) + 1;
             acc.attributePoints -= 1;
             persistAccount(acc);
-            room.pushSystemChat(`✨ ${acc.username} increased VITALITY to ${acc.vitality}.`);
+            room.pushSystemChat(` ${acc.username} increased VITALITY to ${acc.vitality}.`);
           }
           
           // Force immediate update in game engine runtime state

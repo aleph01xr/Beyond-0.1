@@ -423,6 +423,8 @@ export interface EnemyState {
   chargeAngle?: number;
   chargeTimerMs?: number;
   summonWave?: number;
+  shieldWallMs?: number;
+  abilityCdMs?: number;
 }
 
 export interface ProjectileState {
@@ -455,7 +457,17 @@ export interface PropState {
 
 export interface FieldZoneState {
   id: string;
-  kind: 'aegis_dome' | 'solar_beacon' | 'chrono_well' | 'boss_slam' | 'star_rift';
+  kind:
+    | 'aegis_dome'
+    | 'solar_beacon'
+    | 'chrono_well'
+    | 'boss_slam'
+    | 'star_rift'
+    | 'frost_nova'
+    | 'magma_pillar'
+    | 'singularity'
+    | 'supernova'
+    | 'starlight_beam';
   x: number;
   y: number;
   radius: number;

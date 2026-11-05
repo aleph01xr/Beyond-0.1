@@ -9,6 +9,12 @@ import {
   type UserProfile,
 } from '../shared/types.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
+import {
+  loadSavedTouchSettings,
+  saveTouchSettings,
+  type TouchSettings,
+} from './TouchControls.tsx';
+import { TouchSettingsModal } from './TouchSettingsModal.tsx';
 
 interface SanctuaryLobbyProps {
   user: UserProfile;
@@ -47,6 +53,17 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [joinCode, setJoinCode] = useState('');
   const [muted, setMuted] = useState(() => sfx.isMuted());
   const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
+
+  // Touch & SFX Menu Modal state
+  const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
+  const [touchSettingsOpen, setTouchSettingsOpen] = useState(false);
+  const [forceTouchGamepad, setForceTouchGamepad] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('beyond_force_touch') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     sfx.startTavernAmbience();
@@ -157,7 +174,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             onClick={handleEnterTavern}
             className="px-3.5 py-1.5 sm:px-4 sm:py-2 bg-[#2D231C] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-display text-xs sm:text-sm font-semibold whitespace-nowrap shrink-0 cursor-pointer min-h-[44px] flex items-center gap-1.5"
           >
-            <span>🍻</span> Tavern Hub
+            <span></span> Tavern Hub
           </button>
           <button
             type="button"
@@ -203,6 +220,16 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             <button
               type="button"
               onClick={() => {
+                sfx.playUiClick();
+                setTouchSettingsOpen(true);
+              }}
+              className="px-3.5 py-1.5 bg-[#2B2938] border border-[#58556D] hover:border-[#F4D378] text-white font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
+            >
+              <span>Touch &amp; SFX Settings</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
                 sfx.unlockAudio();
                 if (muted) {
                   sfx.startTavernAmbience(true);
@@ -215,7 +242,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               }}
               className="px-3.5 py-1.5 bg-[#2B2119] border border-[#D9AA52]/60 hover:border-[#D9AA52] text-[#FCD34D] font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer min-h-[40px] flex items-center gap-1.5"
             >
-              <span>🔥</span> Hearth Ambience: {muted ? 'Off' : 'On'}
+              <span>Hearth Ambience: {muted ? 'Off' : 'On'}</span>
             </button>
             <button
               type="button"
@@ -245,11 +272,11 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             {/* Tavern Banner Card */}
             <div className="p-6 sm:p-7 bg-gradient-to-r from-[#2A231C] via-[#22202B] to-[#1D1C26] border-2 border-[#D9AA52] flex flex-col md:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden">
               <div className="absolute -right-6 -bottom-6 opacity-10 text-9xl pointer-events-none select-none font-display">
-                🍺
+                
               </div>
               <div className="space-y-2 text-center md:text-left z-10">
                 <div className="inline-flex items-center gap-2 px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs font-semibold">
-                  <span>🍻</span> Multiplayer Social Hub
+                  <span></span> Multiplayer Social Hub
                 </div>
                 <h2 className="font-display text-2xl sm:text-3xl font-bold text-white">
                   Sanctuary Tavern & Training Ground
@@ -367,7 +394,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     </span>
                   </div>
                   <div className="px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs flex items-center gap-1.5">
-                    <span>🔒</span> Permanent Soul Oath
+                    <span></span> Permanent Soul Oath
                   </div>
                 </div>
 
@@ -400,7 +427,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     </p>
 
                     <p className="text-[11px] text-[#8C8A9E] font-mono pt-1">
-                      🔒 This account is locked to this class. To play as another hero class, create a separate adventurer account.
+                       This account is locked to this class. To play as another hero class, create a separate adventurer account.
                     </p>
                   </div>
                 </div>
@@ -517,7 +544,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               <div className="p-3 bg-[#242332] border border-[#D9AA52]/40 text-xs text-[#E6E4EE] font-mono shrink-0">
                 <div className="text-[#9E9CAE] text-[11px]">Your Sworn Account Oath:</div>
                 <div className="text-sm font-display text-[#FCD34D] font-bold flex items-center gap-1.5 mt-0.5">
-                  <span>🔒</span> {currentClassDef.name} — {currentClassDef.title}
+                  <span></span> {currentClassDef.name} — {currentClassDef.title}
                 </div>
               </div>
             </div>
@@ -547,7 +574,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                       </div>
                       {isMyClass ? (
                         <div className="px-2.5 py-1 bg-[#D9AA52]/20 border border-[#D9AA52] text-[#FCD34D] font-mono text-xs font-semibold flex items-center gap-1">
-                          <span>🔒</span> Your Account Class
+                          <span></span> Your Account Class
                         </div>
                       ) : (
                         <div className="px-2 py-0.5 bg-[#171622] border border-[#38364A] text-[#868498] font-mono text-[11px]">
@@ -624,7 +651,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     <div className="pt-2 border-t border-[#2C2B3B] space-y-1.5">
                       <div className="flex items-center justify-between text-[11px] font-mono text-[#E2E8F0]">
                         <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
-                          <span>🛡️</span> Innate Resistances
+                          <span>️</span> Innate Resistances
                         </span>
                         <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
                       </div>
@@ -634,19 +661,19 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                           <span className="font-semibold text-white">+{Math.round(c.resistances.physical * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#F97316]">🔥 Fire</span>
+                          <span className="text-[#F97316]"> Fire</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.fire * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#38BDF8]">❄️ Frost</span>
+                          <span className="text-[#38BDF8]">️ Frost</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.frost * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#FBBF24]">⚡ Shock</span>
+                          <span className="text-[#FBBF24]"> Shock</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.lightning * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#22C55E]">☣️ Poison</span>
+                          <span className="text-[#22C55E]">️ Poison</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.poison * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
@@ -660,7 +687,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     <div className="space-y-2.5 pt-2 border-t border-[#2C2B3B] text-xs leading-relaxed">
                       <div className="p-2.5 bg-[#1B1A26] border border-[#2D2C3D]">
                         <span className="font-semibold text-[#FDE047] font-mono">
-                          ★ Passive — {c.passiveName}:
+                           Passive — {c.passiveName}:
                         </span>{' '}
                         <span className="text-[#C7C5D6]">{c.passiveDesc}</span>
                       </div>
@@ -687,11 +714,11 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     <div className="pt-1">
                       {isMyClass ? (
                         <div className="w-full py-2.5 px-4 bg-[#D9AA52] text-[#181820] font-display font-semibold text-sm text-center flex items-center justify-center gap-1.5 shadow-md">
-                          <span>🔒</span> Your Active Expedition Class (Ready to Delve)
+                          <span></span> Your Active Expedition Class (Ready to Delve)
                         </div>
                       ) : (
                         <div className="w-full py-2 px-3 bg-[#1A1924] border border-[#333244] text-[#9E9CAE] font-mono text-xs text-center">
-                          🔒 Account Locked. To play {c.name}, create a new adventurer account.
+                           Account Locked. To play {c.name}, create a new adventurer account.
                         </div>
                       )}
                     </div>
@@ -717,12 +744,12 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
             {/* Status Effects Mechanics Guide */}
             <div className="bg-[#1C1C27] border border-[#2F2E40] p-4 sm:p-5 space-y-3">
               <h3 className="font-display text-base text-[#D9AA52] flex items-center gap-2">
-                <span>⚡</span> Elemental &amp; Combat Status Afflictions
+                <span></span> Elemental &amp; Combat Status Afflictions
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div className="p-3 bg-[#13131A] border-l-2 border-[#F97316] space-y-1">
                   <div className="font-display text-sm text-[#F97316] font-semibold flex items-center gap-1.5">
-                    <span>🔥</span> Burn (Ignite)
+                    <span></span> Burn (Ignite)
                   </div>
                   <p className="text-xs text-[#C7C5D6] leading-relaxed">
                     Ticks fire damage every 0.65s based on your attack power. Extinguishes over 4 seconds.
@@ -731,7 +758,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <div className="p-3 bg-[#13131A] border-l-2 border-[#38BDF8] space-y-1">
                   <div className="font-display text-sm text-[#38BDF8] font-semibold flex items-center gap-1.5">
-                    <span>❄️</span> Freeze &amp; Shatter
+                    <span>️</span> Freeze &amp; Shatter
                   </div>
                   <p className="text-xs text-[#C7C5D6] leading-relaxed">
                     Immobilizes the target completely. Hitting a frozen target triggers <strong className="text-white">Shatter</strong> (+60% damage + frost burst to adjacent foes).
@@ -740,7 +767,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <div className="p-3 bg-[#13131A] border-l-2 border-[#FBBF24] space-y-1">
                   <div className="font-display text-sm text-[#FBBF24] font-semibold flex items-center gap-1.5">
-                    <span>⚡</span> Shock &amp; Chain Lightning
+                    <span></span> Shock &amp; Chain Lightning
                   </div>
                   <p className="text-xs text-[#C7C5D6] leading-relaxed">
                     Electrocutes the foe. The 3rd hit discharges a high-voltage lightning arc jumping to up to 3 nearby enemies.
@@ -749,7 +776,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <div className="p-3 bg-[#13131A] border-l-2 border-[#22C55E] space-y-1">
                   <div className="font-display text-sm text-[#22C55E] font-semibold flex items-center gap-1.5">
-                    <span>☣️</span> Acid Poison &amp; Weaken
+                    <span>️</span> Acid Poison &amp; Weaken
                   </div>
                   <p className="text-xs text-[#C7C5D6] leading-relaxed">
                     Corrosive venom ticks for 5 seconds and weakens afflicted enemies, reducing their attack damage by 30%.
@@ -767,7 +794,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <div className="p-3 bg-[#13131A] border-l-2 border-[#EAB308] space-y-1">
                   <div className="font-display text-sm text-[#EAB308] font-semibold flex items-center gap-1.5">
-                    <span>💫</span> Concussive Stun
+                    <span></span> Concussive Stun
                   </div>
                   <p className="text-xs text-[#C7C5D6] leading-relaxed">
                     Disorients and completely incapacitates monsters, preventing all attacks and movement.
@@ -854,7 +881,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                     {isStatusRelic && (
                       <div className="text-[10px] font-mono tracking-wider text-[#FCD34D] uppercase">
-                        ⚡ Inflicts Status Affliction
+                         Inflicts Status Affliction
                       </div>
                     )}
 
@@ -920,6 +947,26 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
           </section>
         )}
       </main>
+
+      {touchSettingsOpen && (
+        <TouchSettingsModal
+          settings={touchSettings}
+          forceTouchGamepad={forceTouchGamepad}
+          onUpdateSettings={(newSettings) => {
+            setTouchSettings(newSettings);
+            saveTouchSettings(newSettings);
+          }}
+          onToggleForceGamepad={(forced) => {
+            setForceTouchGamepad(forced);
+            try {
+              localStorage.setItem('beyond_force_touch', String(forced));
+            } catch {
+              // ignore
+            }
+          }}
+          onClose={() => setTouchSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 };

@@ -175,6 +175,153 @@ export class ParticleManager {
     }
   }
 
+  public spawnBossShieldSparks(bx: number, by: number, now: number): void {
+    if (Math.random() < 0.45) {
+      const angle = Math.random() * Math.PI * 2;
+      this.particles.push({
+        x: bx + Math.cos(angle) * 32,
+        y: by + Math.sin(angle) * 32,
+        vx: Math.cos(angle) * 45 + (Math.random() - 0.5) * 20,
+        vy: Math.sin(angle) * 45 - 20,
+        color: Math.random() > 0.5 ? '#60A5FA' : '#93C5FD',
+        secondaryColor: '#FFFFFF',
+        size: 1.8 + Math.random() * 1.5,
+        bornAt: now,
+        maxAgeMs: 350 + Math.random() * 200,
+        friction: 0.92,
+        shape: 'spark',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnFrostNovaMotes(fx: number, fy: number, radius: number, now: number): void {
+    if (Math.random() < 0.35) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * radius;
+      this.particles.push({
+        x: fx + Math.cos(a) * r,
+        y: fy + Math.sin(a) * r,
+        vx: (Math.random() - 0.5) * 15,
+        vy: -25 - Math.random() * 25,
+        color: Math.random() > 0.5 ? '#38BDF8' : '#BAE6FD',
+        secondaryColor: '#E0F2FE',
+        size: 1.6 + Math.random() * 1.6,
+        bornAt: now,
+        maxAgeMs: 500 + Math.random() * 250,
+        friction: 0.95,
+        shape: 'star',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnMagmaEmbers(mx: number, my: number, radius: number, now: number): void {
+    if (Math.random() < 0.4) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * radius * 0.8;
+      this.particles.push({
+        x: mx + Math.cos(a) * r,
+        y: my + Math.sin(a) * r,
+        vx: (Math.random() - 0.5) * 20,
+        vy: -35 - Math.random() * 35,
+        color: Math.random() > 0.5 ? '#F97316' : '#EF4444',
+        secondaryColor: '#FEF08A',
+        size: 2.0 + Math.random() * 1.8,
+        bornAt: now,
+        maxAgeMs: 550 + Math.random() * 300,
+        gravity: -20,
+        friction: 0.94,
+        shape: 'square',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnSingularityInwardWisps(sx: number, sy: number, radius: number, now: number): void {
+    if (Math.random() < 0.5) {
+      const a = Math.random() * Math.PI * 2;
+      const dist = radius + 20 + Math.random() * 30;
+      this.particles.push({
+        x: sx + Math.cos(a) * dist,
+        y: sy + Math.sin(a) * dist,
+        vx: -Math.cos(a) * 75,
+        vy: -Math.sin(a) * 75,
+        color: Math.random() > 0.5 ? '#C084FC' : '#E879F9',
+        secondaryColor: '#581C87',
+        size: 2.2 + Math.random() * 1.5,
+        bornAt: now,
+        maxAgeMs: 450 + Math.random() * 200,
+        friction: 0.93,
+        shape: 'star',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnSupernovaGlints(sx: number, sy: number, radius: number, now: number): void {
+    if (Math.random() < 0.4) {
+      const a = Math.random() * Math.PI * 2;
+      this.particles.push({
+        x: sx + Math.cos(a) * radius,
+        y: sy + Math.sin(a) * radius,
+        vx: Math.cos(a) * 40 + (Math.random() - 0.5) * 15,
+        vy: Math.sin(a) * 40 + (Math.random() - 0.5) * 15,
+        color: Math.random() > 0.5 ? '#F472B6' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        size: 2.2 + Math.random() * 1.8,
+        bornAt: now,
+        maxAgeMs: 400 + Math.random() * 200,
+        friction: 0.91,
+        shape: 'star',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnBossEnrageBurst(bx: number, by: number, now: number): void {
+    for (let i = 0; i < 32; i++) {
+      const a = (i * Math.PI * 2) / 32 + (Math.random() - 0.5) * 0.2;
+      const speed = 120 + Math.random() * 180;
+      this.particles.push({
+        x: bx,
+        y: by,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed - 30,
+        color: i % 2 === 0 ? '#EF4444' : '#FDE047',
+        secondaryColor: '#F97316',
+        size: 2.5 + Math.random() * 2,
+        bornAt: now,
+        maxAgeMs: 600 + Math.random() * 300,
+        gravity: 80,
+        friction: 0.92,
+        shape: 'star',
+        glow: true,
+      });
+    }
+  }
+
+  public spawnCleaveShockwaveSparks(x: number, y: number, angle: number, now: number): void {
+    for (let i = 0; i < 6; i++) {
+      const spread = angle + (Math.random() - 0.5) * 0.6;
+      const speed = 140 + Math.random() * 120;
+      this.particles.push({
+        x,
+        y,
+        vx: Math.cos(spread) * speed,
+        vy: Math.sin(spread) * speed,
+        color: Math.random() > 0.5 ? '#F59E0B' : '#FEF08A',
+        secondaryColor: '#FFFFFF',
+        size: 2.0 + Math.random() * 1.5,
+        bornAt: now,
+        maxAgeMs: 280 + Math.random() * 150,
+        friction: 0.9,
+        shape: 'spark',
+        glow: true,
+      });
+    }
+  }
+
   public spawnVaultGleam(vx: number, vy: number, active: boolean, now: number): void {
     if (active && Math.random() < 0.25) {
       this.particles.push({
