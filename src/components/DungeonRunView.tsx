@@ -313,6 +313,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 Floor {snapshot.floor}: {map.biomeTitle.split(' ')[0]}
               </span>
               <span aria-hidden="true" className="text-[#78768A]">·</span>
+              <span className="text-[#FCD34D] font-mono text-xs font-bold">
+                {me?.level >= MAX_LEVEL ? 'MAX LEVEL' : `Lv. ${me?.level || 1}`}
+              </span>
+              <span aria-hidden="true" className="text-[#78768A]">·</span>
               <span className="hidden sm:inline">{snapshot.difficulty}</span>
               <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">·</span>
               <span>{formatTime(snapshot.elapsedSec)}</span>
@@ -690,9 +694,21 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </div>
           </button>
 
-          <div className="px-3 py-1 font-mono text-xs tabular-nums text-[#E5E3F0]">
+          <div className="px-3 py-1 font-mono text-xs tabular-nums text-[#E5E3F0] space-y-1">
             <div className="text-[#F4D378]">{me.gold} Gold</div>
             <div className="text-[#A5A3B8]">{me.relics.length} Relics</div>
+            <div className="w-24 h-2 bg-[#12111A] border border-[#3C3A52] relative overflow-hidden">
+              {me.level >= MAX_LEVEL ? (
+                <div className="absolute inset-0 bg-[#FCD34D] text-[#181820] text-[7px] font-bold flex items-center justify-center">
+                  MAX LEVEL
+                </div>
+              ) : (
+                <div 
+                  className="h-full bg-gradient-to-r from-[#D9AA52] to-[#FDE68A]" 
+                  style={{ width: `${Math.min(100, (me.xp / Math.max(1, me.nextXp)) * 100)}%` }} 
+                />
+              )}
+            </div>
           </div>
         </div>
       )}

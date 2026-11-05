@@ -334,6 +334,23 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
       {/* RIGHT ACTION CLUSTER */}
       <div className="pointer-events-auto absolute right-2.5 sm:right-5 bottom-2.5 sm:bottom-5 flex flex-col items-end gap-2.5">
+        {/* Progression Status Bar (Mobile) */}
+        <div className="flex flex-col items-end gap-1 mb-1 pr-1">
+          <div className="text-[9px] font-mono font-bold text-[#FCD34D] bg-[#181822]/60 px-1.5 py-0.5 border border-[#3C3A4D]">
+            {player.level >= 100 ? 'MAX LEVEL' : `LV.${player.level}`}
+          </div>
+          <div className="w-20 h-1.5 bg-[#12111A]/80 border border-[#3C3A52] relative overflow-hidden">
+            {player.level >= 100 ? (
+              <div className="absolute inset-0 bg-[#FCD34D]" />
+            ) : (
+              <div 
+                className="h-full bg-gradient-to-r from-[#D9AA52] to-[#FDE68A]" 
+                style={{ width: `${Math.min(100, (player.xp / Math.max(1, player.nextXp)) * 100)}%` }} 
+              />
+            )}
+          </div>
+        </div>
+
         {/* Upper Utility Row */}
         <div className="flex items-center gap-2">
           {/* Settings Gear */}

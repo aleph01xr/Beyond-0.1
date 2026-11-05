@@ -143,17 +143,15 @@ export class GameRoom {
     this.startedAt = Date.now();
     for (const pr of this.players.values()) {
       const def = HERO_CLASSES[pr.state.heroClass];
-      pr.state.level = 1;
-      pr.state.xp = 0;
-      pr.state.nextXp = 80;
-      pr.state.strength = 0;
-      pr.state.vitality = 0;
-      pr.state.dexterity = 0;
-      pr.state.intelligence = 0;
-      pr.state.faith = 0;
-      pr.state.attributePoints = 0;
-      pr.state.maxHp = def.maxHp;
-      pr.state.hp = def.maxHp;
+      
+      // Preserve: level, xp, nextXp, strength, vitality, dexterity, intelligence, faith, attributePoints
+      
+      // Recalculate HP based on preserved stats
+      const bonusHp = pr.state.relics.includes('bastion_pauldron') ? 30 : 0;
+      const vitBonus = (pr.state.vitality || 0) * 6;
+      pr.state.maxHp = def.maxHp + (pr.state.level - 1) * 12 + bonusHp + vitBonus;
+      pr.state.hp = pr.state.maxHp;
+
       pr.state.shield = 0;
       pr.state.gold = 0;
       pr.state.potions = 2;
@@ -167,6 +165,8 @@ export class GameRoom {
       pr.state.revives = 0;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
+      // Note: We don't need to call onProgressionUpdateCallback here because nothing permanent changed,
+      // but we do it to ensure the frontend is in sync if it expects it.
       if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(pr.state.id, pr.state);
     }
     const restartFloor = this.roomId === 'TAVERN-HUB' ? 0 : 1;
@@ -440,6 +440,15 @@ export class GameRoom {
     p.level = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
     p.xp = 0;
     p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
+    
+    // Reset attributes for fresh level set
+    p.strength = 0;
+    p.vitality = 0;
+    p.dexterity = 0;
+    p.intelligence = 0;
+    p.faith = 0;
+    p.attributePoints = (p.level - 1) * 2;
+
     const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
     const vitBonus = (p.vitality || 0) * 6;
     p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;

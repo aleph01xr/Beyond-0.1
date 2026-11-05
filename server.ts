@@ -124,70 +124,98 @@ function saveAccountsToFile(): void {
   }
 }
 
+// Lock map to prevent concurrent writes to the same account
+const accountLocks = new Map<string, Promise<void>>();
+
 async function persistAccount(acc: AccountRecord): Promise<void> {
-  // Always update in-memory maps for 60fps real-time access
-  accountsByLower.set(acc.usernameLower, acc);
-  accountsById.set(acc.id, acc);
-
-  // Auto-backup to disk file
-  saveAccountsToFile();
-
-  // If PostgreSQL is configured, persist to database with ON CONFLICT upsert
-  if (dbPool) {
+  const lockKey = acc.id;
+  
+  // Wait for any existing write for this account to finish
+  const existingLock = accountLocks.get(lockKey) || Promise.resolve();
+  
+  const newLock = (async () => {
     try {
-      await dbPool.query(
-        `INSERT INTO accounts (
-          id, username, username_lower, password_hash, locked_class, preferred_class,
-          runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
-          level, xp,
-          strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
-        ON CONFLICT (username_lower) DO UPDATE SET
-          password_hash = EXCLUDED.password_hash,
-          locked_class = EXCLUDED.locked_class,
-          preferred_class = EXCLUDED.preferred_class,
-          runs_completed = EXCLUDED.runs_completed,
-          highest_floor = EXCLUDED.highest_floor,
-          total_kills = EXCLUDED.total_kills,
-          total_revives = EXCLUDED.total_revives,
-          gold = EXCLUDED.gold,
-          is_admin = EXCLUDED.is_admin,
-          level = EXCLUDED.level,
-          xp = EXCLUDED.xp,
-          strength = EXCLUDED.strength,
-          vitality = EXCLUDED.vitality,
-          dexterity = EXCLUDED.dexterity,
-          intelligence = EXCLUDED.intelligence,
-          faith = EXCLUDED.faith,
-          attribute_points = EXCLUDED.attribute_points,
-          updated_at = NOW();`,
-        [
-          acc.id,
-          acc.username,
-          acc.usernameLower,
-          acc.passwordHash,
-          acc.lockedClass,
-          acc.preferredClass,
-          acc.runsCompleted,
-          acc.highestFloor,
-          acc.totalKills,
-          acc.totalRevives,
-          acc.gold ?? 0,
-          !!acc.isAdmin,
-          acc.level || 1,
-          acc.xp || 0,
-          acc.strength || 0,
-          acc.vitality || 0,
-          acc.dexterity || 0,
-          acc.intelligence || 0,
-          acc.faith || 0,
-          acc.attributePoints || 0,
-        ]
-      );
+      await existingLock;
     } catch (err) {
-      console.error(`Postgres persist error for ${acc.username}:`, err);
+      // Ignore previous lock failures
     }
-  }
+    
+    // Update in-memory maps
+    accountsByLower.set(acc.usernameLower, acc);
+    accountsById.set(acc.id, acc);
+
+    // Auto-backup to disk file
+    saveAccountsToFile();
+
+    // Persist to PostgreSQL if available
+    if (dbPool) {
+      try {
+        await dbPool.query(
+          `INSERT INTO accounts (
+            id, username, username_lower, password_hash, locked_class, preferred_class,
+            runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
+            level, xp,
+            strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+          ON CONFLICT (username_lower) DO UPDATE SET
+            password_hash = EXCLUDED.password_hash,
+            locked_class = EXCLUDED.locked_class,
+            preferred_class = EXCLUDED.preferred_class,
+            runs_completed = EXCLUDED.runs_completed,
+            highest_floor = EXCLUDED.highest_floor,
+            total_kills = EXCLUDED.total_kills,
+            total_revives = EXCLUDED.total_revives,
+            gold = EXCLUDED.gold,
+            is_admin = EXCLUDED.is_admin,
+            level = EXCLUDED.level,
+            xp = EXCLUDED.xp,
+            strength = EXCLUDED.strength,
+            vitality = EXCLUDED.vitality,
+            dexterity = EXCLUDED.dexterity,
+            intelligence = EXCLUDED.intelligence,
+            faith = EXCLUDED.faith,
+            attribute_points = EXCLUDED.attribute_points,
+            updated_at = NOW();`,
+          [
+            acc.id,
+            acc.username,
+            acc.usernameLower,
+            acc.passwordHash,
+            acc.lockedClass,
+            acc.preferredClass,
+            acc.runsCompleted,
+            acc.highestFloor,
+            acc.totalKills,
+            acc.totalRevives,
+            acc.gold ?? 0,
+            !!acc.isAdmin,
+            acc.level || 1,
+            acc.xp || 0,
+            acc.strength || 0,
+            acc.vitality || 0,
+            acc.dexterity || 0,
+            acc.intelligence || 0,
+            acc.faith || 0,
+            acc.attributePoints || 0,
+          ]
+        );
+      } catch (err) {
+        console.error(`Postgres persist error for ${acc.username}:`, err);
+        throw err; // Propagate error
+      }
+    }
+  })();
+
+  accountLocks.set(lockKey, newLock);
+  
+  // Clean up lock map when done
+  newLock.finally(() => {
+    if (accountLocks.get(lockKey) === newLock) {
+      accountLocks.delete(lockKey);
+    }
+  });
+
+  return newLock;
 }
 
 async function initStorage(): Promise<void> {
@@ -459,31 +487,31 @@ function createManagedRoom(opts: {
     seed: opts.seed,
   });
 
-  room.onFloorClearedCallback = (playerIds, floor) => {
+  room.onFloorClearedCallback = async (playerIds, floor) => {
     for (const pid of playerIds) {
       const acc = accountsById.get(pid);
       if (acc) {
         acc.highestFloor = Math.max(acc.highestFloor, floor);
         if (floor >= 3) acc.runsCompleted += 1;
-        persistAccount(acc);
+        await persistAccount(acc).catch(err => console.error('Failed to persist floor clear:', err));
       }
     }
   };
-  room.onKillCallback = (pid) => {
+  room.onKillCallback = async (pid) => {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.totalKills += 1;
-      persistAccount(acc);
+      await persistAccount(acc).catch(err => console.error('Failed to persist kill:', err));
     }
   };
-  room.onReviveCallback = (pid) => {
+  room.onReviveCallback = async (pid) => {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.totalRevives += 1;
-      persistAccount(acc);
+      await persistAccount(acc).catch(err => console.error('Failed to persist revive:', err));
     }
   };
-  room.onProgressionUpdateCallback = (pid, state) => {
+  room.onProgressionUpdateCallback = async (pid, state) => {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.level = state.level;
@@ -494,7 +522,10 @@ function createManagedRoom(opts: {
       acc.intelligence = state.intelligence;
       acc.faith = state.faith;
       acc.attributePoints = state.attributePoints;
-      persistAccount(acc);
+      await persistAccount(acc).catch(err => {
+        console.error('CRITICAL: Failed to persist progression update:', err);
+        // We can't easily undo the runtime change here, but we've logged it.
+      });
     }
   };
 
@@ -907,7 +938,7 @@ async function startServer() {
     clients.add(client);
     broadcastRoomList();
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let msg: ClientMessage;
       try {
         msg = JSON.parse(String(raw)) as ClientMessage;
@@ -1063,7 +1094,7 @@ async function startServer() {
               : 'vanguard';
           acc.lockedClass = validClass;
           acc.preferredClass = validClass;
-          persistAccount(acc);
+          await persistAccount(acc);
           room.changeClass(acc.id, validClass);
           broadcastToRoom(room.roomId, {
             type: 'chat:message',
@@ -1114,18 +1145,6 @@ async function startServer() {
         if (acc.isAdmin) {
           const level = Math.floor(Number(msg.level));
           if (Number.isFinite(level) && level >= 1 && level <= MAX_LEVEL) {
-            acc.level = level;
-            acc.xp = 0;
-            // Award points for target level (2 per level up)
-            acc.attributePoints = (level - 1) * 2;
-            // Reset spent attributes? Usually cleaner for admin testing
-            acc.strength = 0;
-            acc.vitality = 0;
-            acc.dexterity = 0;
-            acc.intelligence = 0;
-            acc.faith = 0;
-            persistAccount(acc);
-            
             room.setPlayerLevel(acc.id, level);
             broadcastToRoom(room.roomId, {
               type: 'chat:message',
@@ -1161,21 +1180,32 @@ async function startServer() {
           const attr = msg.attribute;
           if (attr === 'strength' || attr === 'dexterity' || attr === 'vitality' || attr === 'intelligence' || attr === 'faith') {
             if ((acc[attr] || 0) < MAX_ATTRIBUTE) {
-              acc[attr] = (acc[attr] || 0) + 1;
-              acc.attributePoints -= 1;
-              persistAccount(acc);
-              room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
+              const oldAttr = acc[attr] || 0;
+              const oldPoints = acc.attributePoints;
               
-              // Force immediate update in game engine runtime state
-              room.updatePlayerAttributes(
-                acc.id,
-                acc.strength || 0,
-                acc.vitality || 0,
-                acc.dexterity || 0,
-                acc.intelligence || 0,
-                acc.faith || 0,
-                acc.attributePoints || 0
-              );
+              acc[attr] = oldAttr + 1;
+              acc.attributePoints = oldPoints - 1;
+              
+              try {
+                await persistAccount(acc);
+                room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
+                
+                // Force immediate update in game engine runtime state
+                room.updatePlayerAttributes(
+                  acc.id,
+                  acc.strength || 0,
+                  acc.vitality || 0,
+                  acc.dexterity || 0,
+                  acc.intelligence || 0,
+                  acc.faith || 0,
+                  acc.attributePoints || 0
+                );
+              } catch (err) {
+                // Rollback on failure
+                acc[attr] = oldAttr;
+                acc.attributePoints = oldPoints;
+                sendJson(ws, { type: 'error', message: 'Failed to save attribute allocation. Please try again.' });
+              }
             } else {
               sendJson(ws, { type: 'error', message: `${attr.toUpperCase()} is already at maximum level.` });
             }
@@ -1186,7 +1216,7 @@ async function startServer() {
           const amount = Math.floor(Number(msg.amount));
           if (Number.isFinite(amount) && amount > 0) {
             acc.attributePoints = (acc.attributePoints || 0) + amount;
-            persistAccount(acc);
+            await persistAccount(acc).catch(err => console.error('Failed to persist admin attribute points:', err));
             room.addPlayerAttributePoints(acc.id, amount);
           }
         }
@@ -1199,28 +1229,42 @@ async function startServer() {
           (acc.intelligence || 0) + 
           (acc.faith || 0);
         
+        const oldState = {
+          strength: acc.strength,
+          vitality: acc.vitality,
+          dexterity: acc.dexterity,
+          intelligence: acc.intelligence,
+          faith: acc.faith,
+          attributePoints: acc.attributePoints
+        };
+
         acc.attributePoints = (acc.attributePoints || 0) + spent;
-        
         acc.strength = 0;
         acc.vitality = 0;
         acc.dexterity = 0;
         acc.intelligence = 0;
         acc.faith = 0;
         
-        persistAccount(acc);
-        
-        // Sync with room state
-        room.updatePlayerAttributes(
-          acc.id,
-          acc.strength,
-          acc.vitality,
-          acc.dexterity,
-          acc.intelligence,
-          acc.faith,
-          acc.attributePoints
-        );
-        
-        room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
+        try {
+          await persistAccount(acc);
+          
+          // Sync with room state
+          room.updatePlayerAttributes(
+            acc.id,
+            acc.strength,
+            acc.vitality,
+            acc.dexterity,
+            acc.intelligence,
+            acc.faith,
+            acc.attributePoints
+          );
+          
+          room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
+        } catch (err) {
+          // Rollback
+          Object.assign(acc, oldState);
+          sendJson(ws, { type: 'error', message: 'Failed to reset attributes. Please try again.' });
+        }
         
         // Close dialogue if it was active
         const aleph = room.npcs.find(n => n.id === 'npc_aleph');
