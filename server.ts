@@ -8,6 +8,7 @@ import pg from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameRoom } from './src/server/gameEngine.ts';
 import type {
+  AccountRecord,
   ClientMessage,
   DifficultyTier,
   HeroClassId,
@@ -18,29 +19,6 @@ import { MAX_ATTRIBUTE, MAX_LEVEL } from './src/shared/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-interface AccountRecord {
-  id: string;
-  username: string;
-  usernameLower: string;
-  passwordHash: string;
-  lockedClass: HeroClassId;
-  preferredClass: HeroClassId;
-  runsCompleted: number;
-  highestFloor: number;
-  totalKills: number;
-  totalRevives: number;
-  gold?: number;
-  isAdmin?: boolean;
-  level?: number;
-  xp?: number;
-  strength?: number;
-  vitality?: number;
-  dexterity?: number;
-  intelligence?: number;
-  faith?: number;
-  attributePoints?: number;
-}
 
 const accountsByLower = new Map<string, AccountRecord>();
 const accountsById = new Map<string, AccountRecord>();
@@ -58,6 +36,7 @@ setInterval(clearExpiredSessions, 1000 * 60 * 60); // Clean up every hour
 
 const DATA_DIR = path.resolve(__dirname, 'data');
 const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
+const MIGRATIONS_FILE = path.join(DATA_DIR, 'migrations.json');
 
 const { Pool } = pg;
 let dbPool: pg.Pool | null = null;
@@ -136,18 +115,11 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
   const newLock = (async () => {
     try {
       await existingLock;
-    } catch (err) {
-      // Ignore previous lock failures
+    } catch {
+      // Ignore previous lock failures so subsequent writes still run in order
     }
-    
-    // Update in-memory maps
-    accountsByLower.set(acc.usernameLower, acc);
-    accountsById.set(acc.id, acc);
 
-    // Auto-backup to disk file
-    saveAccountsToFile();
-
-    // Persist to PostgreSQL if available
+    // Persist to PostgreSQL if available FIRST
     if (dbPool) {
       try {
         await dbPool.query(
@@ -201,19 +173,31 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
         );
       } catch (err) {
         console.error(`Postgres persist error for ${acc.username}:`, err);
-        throw err; // Propagate error
+        throw err; // Propagate error without updating backup file or in-memory maps
       }
     }
+
+    // Only commit to in-memory maps and disk backup if DB write succeeded (or in file storage mode)
+    accountsByLower.set(acc.usernameLower, acc);
+    accountsById.set(acc.id, acc);
+    saveAccountsToFile();
   })();
 
   accountLocks.set(lockKey, newLock);
   
-  // Clean up lock map when done
-  newLock.finally(() => {
-    if (accountLocks.get(lockKey) === newLock) {
-      accountLocks.delete(lockKey);
+  // Clean up lock map when done, ensuring cleanup does not trigger unhandled promise rejections
+  newLock.then(
+    () => {
+      if (accountLocks.get(lockKey) === newLock) {
+        accountLocks.delete(lockKey);
+      }
+    },
+    () => {
+      if (accountLocks.get(lockKey) === newLock) {
+        accountLocks.delete(lockKey);
+      }
     }
-  });
+  );
 
   return newLock;
 }
@@ -284,12 +268,34 @@ async function initStorage(): Promise<void> {
       `);
       console.log('Connected to PostgreSQL and verified schema.');
 
-      // Reset stats across all accounts
+      // Track and apply one-time schema migrations
       await dbPool.query(`
-        UPDATE accounts 
-        SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
-            attribute_points = (GREATEST(1, level) - 1) * 2;
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version VARCHAR(64) PRIMARY KEY,
+          applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
       `);
+
+      const migrationRes = await dbPool.query(
+        'SELECT 1 FROM schema_migrations WHERE version = $1',
+        ['20261106_reset_attributes']
+      );
+
+      if (migrationRes.rowCount === 0) {
+        console.log('[Migration] Running one-time global attribute reset in PostgreSQL...');
+        await dbPool.query(`
+          UPDATE accounts 
+          SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
+              attribute_points = (GREATEST(1, level) - 1) * 2;
+        `);
+        await dbPool.query(
+          'INSERT INTO schema_migrations (version) VALUES ($1)',
+          ['20261106_reset_attributes']
+        );
+        console.log('[Migration] Attribute reset migration completed successfully in PostgreSQL.');
+      } else {
+        console.log('[Migration] Attribute reset migration already applied. Preserving account attributes.');
+      }
 
       const res = await dbPool.query('SELECT * FROM accounts');
       for (const row of res.rows) {
@@ -309,12 +315,12 @@ async function initStorage(): Promise<void> {
           isAdmin: !!row.is_admin,
           level: lvl,
           xp: Number(row.xp) || 0,
-          strength: 0,
-          vitality: 0,
-          dexterity: 0,
-          intelligence: 0,
-          faith: 0,
-          attributePoints: (Math.max(1, lvl) - 1) * 2,
+          strength: Number(row.strength) || 0,
+          vitality: Number(row.vitality) || 0,
+          dexterity: Number(row.dexterity) || 0,
+          intelligence: Number(row.intelligence) || 0,
+          faith: Number(row.faith) || 0,
+          attributePoints: Number(row.attribute_points) || 0,
         };
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -331,23 +337,57 @@ async function initStorage(): Promise<void> {
       const isProduction = process.env.NODE_ENV === 'production';
       const data = fs.readFileSync(ACCOUNTS_FILE, 'utf8');
       const list = JSON.parse(data) as AccountRecord[];
+
+      let appliedMigrations: string[] = [];
+      if (fs.existsSync(MIGRATIONS_FILE)) {
+        try {
+          appliedMigrations = JSON.parse(fs.readFileSync(MIGRATIONS_FILE, 'utf8'));
+        } catch {
+          appliedMigrations = [];
+        }
+      }
+
+      const needsReset = !appliedMigrations.includes('20261106_reset_attributes');
+      if (needsReset) {
+        console.log('[JSON Storage] Applying one-time attribute reset migration...');
+      }
+
       for (const rec of list) {
         // STRICT: Never load 'wanderer' in production
         if (isProduction && rec.usernameLower === 'wanderer') continue;
         
-        rec.strength = 0;
-        rec.vitality = 0;
-        rec.dexterity = 0;
-        rec.intelligence = 0;
-        rec.faith = 0;
         rec.level = Number(rec.level) || 1;
         rec.xp = Number(rec.xp) || 0;
-        rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+
+        if (needsReset) {
+          rec.strength = 0;
+          rec.vitality = 0;
+          rec.dexterity = 0;
+          rec.intelligence = 0;
+          rec.faith = 0;
+          rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+        } else {
+          rec.strength = Number(rec.strength) || 0;
+          rec.vitality = Number(rec.vitality) || 0;
+          rec.dexterity = Number(rec.dexterity) || 0;
+          rec.intelligence = Number(rec.intelligence) || 0;
+          rec.faith = Number(rec.faith) || 0;
+          rec.attributePoints = Number(rec.attributePoints) || 0;
+        }
 
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
-      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), 'utf8');
+
+      if (needsReset) {
+        appliedMigrations.push('20261106_reset_attributes');
+        if (!fs.existsSync(DATA_DIR)) {
+          fs.mkdirSync(DATA_DIR, { recursive: true });
+        }
+        fs.writeFileSync(MIGRATIONS_FILE, JSON.stringify(appliedMigrations, null, 2), 'utf8');
+        fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), 'utf8');
+        console.log('[JSON Storage] One-time attribute reset applied and recorded.');
+      }
       console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
       console.error('Failed to load accounts from file:', err);
@@ -1225,6 +1265,18 @@ async function startServer() {
           }
         }
       } else if (msg.type === 'player:reset_attributes') {
+        // Validate that the player is in the Tavern Hub
+        if (room.roomId !== 'TAVERN-HUB') {
+          sendJson(ws, { type: 'error', message: 'Attributes can only be reset in the Sanctuary Tavern.' });
+          return;
+        }
+
+        // Verify that the player is within interaction range of Aleph
+        if (!room.isPlayerNearNpc(acc.id, 'npc_aleph', 85)) {
+          sendJson(ws, { type: 'error', message: 'You must be speaking with Aleph to reset your attributes.' });
+          return;
+        }
+
         // Correctly return spent points to the unspent pool instead of overwriting with level base
         const spent = 
           (acc.strength || 0) + 

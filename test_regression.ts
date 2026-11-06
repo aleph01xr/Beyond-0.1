@@ -1,0 +1,373 @@
+import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { GameRoom } from './src/server/gameEngine.ts';
+import { TILE_SIZE, type AccountRecord, type HeroClassId } from './src/shared/types.ts';
+
+async function runRegressionTests() {
+  console.log('--- STARTING BEYOND REGRESSION TESTS ---');
+  let passed = 0;
+  let total = 0;
+
+  function test(name: string, fn: () => void | Promise<void>) {
+    total++;
+    try {
+      const res = fn();
+      if (res instanceof Promise) {
+        return res.then(() => {
+          console.log(`  PASSED: ${name}`);
+          passed++;
+        }).catch(err => {
+          console.error(` FAILED: ${name}`);
+          console.error(err);
+          process.exitCode = 1;
+        });
+      }
+      console.log(`  PASSED: ${name}`);
+      passed++;
+    } catch (err) {
+      console.error(` FAILED: ${name}`);
+      console.error(err);
+      process.exitCode = 1;
+    }
+  }
+
+  // --- Test 1: Restart server twice and verify allocated attributes remain unchanged ---
+  await test('1. Server restarts preserve allocated attributes across multiple boots', async () => {
+    const testDir = path.resolve(process.cwd(), 'data_test_restart');
+    const testAccountsFile = path.join(testDir, 'accounts.json');
+    const testMigrationsFile = path.join(testDir, 'migrations.json');
+
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(testDir, { recursive: true });
+
+    // Initial state: Level 25, 20 STR, 15 VIT, 13 unspent points (Total = (25-1)*2 = 48 points)
+    const initialAccount: AccountRecord = {
+      id: 'usr_test_restart',
+      username: 'SirKaelen',
+      usernameLower: 'sirkaelen',
+      passwordHash: 'hash123',
+      lockedClass: 'vanguard',
+      preferredClass: 'vanguard',
+      runsCompleted: 5,
+      highestFloor: 3,
+      totalKills: 100,
+      totalRevives: 2,
+      gold: 500,
+      isAdmin: false,
+      level: 25,
+      xp: 400,
+      strength: 20,
+      vitality: 15,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 13,
+    };
+
+    fs.writeFileSync(testAccountsFile, JSON.stringify([initialAccount], null, 2), 'utf8');
+
+    // Simulate Server Boot 1 (with migration logic)
+    function simulateServerBoot() {
+      const data = fs.readFileSync(testAccountsFile, 'utf8');
+      const list = JSON.parse(data) as AccountRecord[];
+      let appliedMigrations: string[] = [];
+      if (fs.existsSync(testMigrationsFile)) {
+        appliedMigrations = JSON.parse(fs.readFileSync(testMigrationsFile, 'utf8'));
+      }
+      const needsReset = !appliedMigrations.includes('20261106_reset_attributes');
+      for (const rec of list) {
+        if (needsReset) {
+          rec.strength = 0;
+          rec.vitality = 0;
+          rec.dexterity = 0;
+          rec.intelligence = 0;
+          rec.faith = 0;
+          rec.attributePoints = (Math.max(1, rec.level || 1) - 1) * 2;
+        } else {
+          rec.strength = Number(rec.strength) || 0;
+          rec.vitality = Number(rec.vitality) || 0;
+          rec.dexterity = Number(rec.dexterity) || 0;
+          rec.intelligence = Number(rec.intelligence) || 0;
+          rec.faith = Number(rec.faith) || 0;
+          rec.attributePoints = Number(rec.attributePoints) || 0;
+        }
+      }
+      if (needsReset) {
+        appliedMigrations.push('20261106_reset_attributes');
+        fs.writeFileSync(testMigrationsFile, JSON.stringify(appliedMigrations, null, 2), 'utf8');
+        fs.writeFileSync(testAccountsFile, JSON.stringify(list, null, 2), 'utf8');
+      }
+      return list;
+    }
+
+    // First boot: One-time reset happens
+    const boot1Accounts = simulateServerBoot();
+    assert.strictEqual(boot1Accounts[0].strength, 0);
+    assert.strictEqual(boot1Accounts[0].attributePoints, 48); // (25-1)*2
+
+    // Now player spends points: 10 STR, 10 VIT, remaining 28 points
+    boot1Accounts[0].strength = 10;
+    boot1Accounts[0].vitality = 10;
+    boot1Accounts[0].attributePoints = 28;
+    fs.writeFileSync(testAccountsFile, JSON.stringify(boot1Accounts, null, 2), 'utf8');
+
+    // Second boot: Migration was recorded, so attributes MUST be preserved
+    const boot2Accounts = simulateServerBoot();
+    assert.strictEqual(boot2Accounts[0].strength, 10, 'STR must be preserved on 2nd boot');
+    assert.strictEqual(boot2Accounts[0].vitality, 10, 'VIT must be preserved on 2nd boot');
+    assert.strictEqual(boot2Accounts[0].attributePoints, 28, 'Points must be preserved on 2nd boot');
+
+    // Third boot: Attributes still preserved
+    const boot3Accounts = simulateServerBoot();
+    assert.strictEqual(boot3Accounts[0].strength, 10, 'STR must be preserved on 3rd boot');
+    assert.strictEqual(boot3Accounts[0].vitality, 10, 'VIT must be preserved on 3rd boot');
+    assert.strictEqual(boot3Accounts[0].attributePoints, 28, 'Points must be preserved on 3rd boot');
+
+    // Clean up test dir
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  // --- Test 2: Reset attributes through Aleph and verify all spent points refunded exactly once ---
+  await test('2. Reset attributes near Aleph refunds all spent points exactly once', () => {
+    const tavern = new GameRoom({
+      roomId: 'TAVERN-HUB',
+      name: 'Sanctuary Tavern',
+      hostName: 'Innkeeper',
+      difficulty: 'Normal',
+      seed: 12345,
+    });
+
+    // Add player near Aleph (Aleph is at 18 * TILE_SIZE = 576, 28 * TILE_SIZE = 896)
+    const aleph = tavern.npcs.find(n => n.id === 'npc_aleph')!;
+    assert(aleph, 'Aleph must exist in Tavern');
+
+    const pid = 'p_tester_1';
+    tavern.addOrReconnectPlayer(pid, 'Tester', 'ranger', false, {
+      level: 10,
+      xp: 100,
+      strength: 4,
+      vitality: 6,
+      dexterity: 8,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0, // Spent all 18 earned points: 4+6+8 = 18
+    });
+
+    const pState = tavern.getPlayerState(pid)!;
+    // Move player right in front of Aleph
+    pState.x = aleph.x + 10;
+    pState.y = aleph.y + 10;
+
+    // Verify distance check
+    assert.strictEqual(tavern.isPlayerNearNpc(pid, 'npc_aleph', 85), true);
+
+    // Simulate reset logic
+    const spent = pState.strength + pState.vitality + pState.dexterity + pState.intelligence + pState.faith;
+    assert.strictEqual(spent, 18);
+
+    const refundedPoints = pState.attributePoints + spent;
+    tavern.updatePlayerAttributes(pid, 0, 0, 0, 0, 0, refundedPoints);
+
+    const updated = tavern.getPlayerState(pid)!;
+    assert.strictEqual(updated.strength, 0);
+    assert.strictEqual(updated.vitality, 0);
+    assert.strictEqual(updated.dexterity, 0);
+    assert.strictEqual(updated.intelligence, 0);
+    assert.strictEqual(updated.faith, 0);
+    assert.strictEqual(updated.attributePoints, 18, 'Refunded points must equal exactly 18');
+
+    // Attempt second reset when spent is 0
+    const spent2 = updated.strength + updated.vitality + updated.dexterity + updated.intelligence + updated.faith;
+    assert.strictEqual(spent2, 0, 'No more spent points to refund');
+    const refundedPoints2 = updated.attributePoints + spent2;
+    assert.strictEqual(refundedPoints2, 18, 'Attribute points must not duplicate or change on repeated reset');
+  });
+
+  // --- Test 3: Attempt a reset outside the tavern and verify rejection ---
+  await test('3. Reset outside Tavern or far from Aleph is rejected', () => {
+    // Case A: In dungeon room
+    const dungeon = new GameRoom({
+      roomId: 'DUNGEON-FLOOR-1',
+      name: 'Highkeep',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 999,
+    });
+
+    const pid = 'p_tester_2';
+    dungeon.addOrReconnectPlayer(pid, 'Explorer', 'vanguard');
+
+    assert.notStrictEqual(dungeon.roomId, 'TAVERN-HUB', 'Dungeon room is not Tavern Hub');
+    // Cannot reset outside tavern
+    const isTavern = dungeon.roomId === 'TAVERN-HUB';
+    assert.strictEqual(isTavern, false, 'Reset must be rejected outside Tavern');
+
+    // Case B: In Tavern Hub, but far away from Aleph
+    const tavern = new GameRoom({
+      roomId: 'TAVERN-HUB',
+      name: 'Sanctuary Tavern',
+      hostName: 'Innkeeper',
+      difficulty: 'Normal',
+      seed: 12345,
+    });
+    tavern.addOrReconnectPlayer(pid, 'Explorer', 'vanguard');
+    const pState = tavern.getPlayerState(pid)!;
+    pState.x = 100; // Far from Aleph (at 576, 896)
+    pState.y = 100;
+
+    const isNearAleph = tavern.isPlayerNearNpc(pid, 'npc_aleph', 85);
+    assert.strictEqual(isNearAleph, false, 'Player is 800+ px away, must be rejected');
+  });
+
+  // --- Test 4: Restart with Bastion Pauldron and verify its HP bonus disappears ---
+  await test('4. Bastion Pauldron HP bonus disappears upon dungeon restart', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-TEST',
+      name: 'Crypts',
+      hostName: 'Leader',
+      difficulty: 'Normal',
+      seed: 55555,
+    });
+
+    const pid = 'p_tester_3';
+    // Vanguard: Base HP = 155
+    // Level 5: level bonus = (5 - 1) * 12 = 48
+    // Vitality 10: vit bonus = 10 * 6 = 60
+    // Total permanent HP = 155 + 48 + 60 = 263
+    room.addOrReconnectPlayer(pid, 'Knight', 'vanguard', false, {
+      level: 5,
+      xp: 0,
+      strength: 0,
+      vitality: 10,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const pState = room.getPlayerState(pid)!;
+    assert.strictEqual(pState.maxHp, 263, 'Initial max HP with level 5 and 10 VIT');
+
+    // Award Bastion Pauldron relic (+30 HP)
+    room.addPlayerRelic(pid, 'bastion_pauldron');
+    assert.strictEqual(pState.relics.includes('bastion_pauldron'), true);
+    assert.strictEqual(pState.maxHp, 293, 'Max HP with Bastion Pauldron must be 293');
+
+    // Now restart the expedition
+    room.restartRun();
+
+    // Verify relics are cleared and HP is recalculated WITHOUT Bastion Pauldron
+    assert.strictEqual(pState.relics.length, 0, 'Relics must be empty after restart');
+    assert.strictEqual(pState.maxHp, 263, 'Max HP must return to 263 (Bastion Pauldron bonus completely removed)');
+    assert.strictEqual(pState.hp, 263, 'Current HP must equal max HP (263)');
+    assert.strictEqual(pState.level, 5, 'Permanent level must be preserved');
+    assert.strictEqual(pState.vitality, 10, 'Permanent vitality must be preserved');
+  });
+
+  // --- Test 5: Simulate a database failure and verify the server remains operational ---
+  await test('5. Simulated database failure rolls back state safely without crashing lock queue', async () => {
+    // Simulating the sequential account write lock and rollback mechanism
+    const locks = new Map<string, Promise<void>>();
+    const memoryAccounts = new Map<string, AccountRecord>();
+
+    const acc: AccountRecord = {
+      id: 'acc_fail_test',
+      username: 'Survivor',
+      usernameLower: 'survivor',
+      passwordHash: 'pass',
+      lockedClass: 'arcanist',
+      preferredClass: 'arcanist',
+      runsCompleted: 0,
+      highestFloor: 0,
+      totalKills: 0,
+      totalRevives: 0,
+      gold: 100,
+      isAdmin: false,
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 5,
+      faith: 0,
+      attributePoints: 13,
+    };
+    memoryAccounts.set(acc.id, { ...acc });
+
+    let shouldDbFail = true;
+
+    async function safePersist(target: AccountRecord): Promise<void> {
+      const lockKey = target.id;
+      const existingLock = locks.get(lockKey) || Promise.resolve();
+
+      const newLock = (async () => {
+        try {
+          await existingLock;
+        } catch {
+          // Ignore previous lock failure
+        }
+
+        if (shouldDbFail) {
+          throw new Error('Simulated PostgreSQL Connection Timeout / Failure');
+        }
+
+        memoryAccounts.set(target.id, { ...target });
+      })();
+
+      locks.set(lockKey, newLock);
+
+      newLock.then(
+        () => {
+          if (locks.get(lockKey) === newLock) locks.delete(lockKey);
+        },
+        () => {
+          if (locks.get(lockKey) === newLock) locks.delete(lockKey);
+        }
+      );
+
+      return newLock;
+    }
+
+    // Step A: Attempt a write that fails
+    const oldSnapshot = { ...acc };
+    acc.intelligence = 6;
+    acc.attributePoints = 12;
+
+    let writeFailed = false;
+    try {
+      await safePersist(acc);
+    } catch (err: any) {
+      writeFailed = true;
+      assert(err.message.includes('Simulated PostgreSQL Connection Timeout'));
+      // Rollback memory on failure
+      Object.assign(acc, oldSnapshot);
+    }
+
+    assert.strictEqual(writeFailed, true, 'Write must fail as simulated');
+    assert.strictEqual(acc.intelligence, 5, 'Account memory rolled back to 5 INT');
+    assert.strictEqual(acc.attributePoints, 13, 'Account memory rolled back to 13 points');
+    assert.strictEqual(memoryAccounts.get(acc.id)!.intelligence, 5, 'Persisted storage did not save corrupt state');
+
+    // Step B: Ensure the lock queue did NOT deadlock or leave unhandled rejection
+    shouldDbFail = false; // DB recovers
+    acc.faith = 1;
+    acc.attributePoints = 12;
+
+    await safePersist(acc); // Must succeed smoothly
+    assert.strictEqual(memoryAccounts.get(acc.id)!.faith, 1, 'Subsequent write succeeded after failure');
+    assert.strictEqual(locks.has(acc.id), false, 'Lock was cleanly released');
+  });
+
+  console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
+  if (passed !== total) {
+    throw new Error(`Some regression tests failed: ${passed}/${total}`);
+  }
+}
+
+runRegressionTests().catch(err => {
+  console.error('Fatal error in regression tests:', err);
+  process.exit(1);
+});

@@ -1094,13 +1094,6 @@ var GameRoom = class _GameRoom {
     this.status = "playing";
     this.startedAt = Date.now();
     for (const pr of this.players.values()) {
-      pr.state.maxHp = _GameRoom.computePlayerMaxHp(
-        pr.state.heroClass,
-        pr.state.level,
-        pr.state.vitality,
-        pr.state.relics
-      );
-      pr.state.hp = pr.state.maxHp;
       pr.state.shield = 0;
       pr.state.gold = 0;
       pr.state.potions = 2;
@@ -1114,7 +1107,13 @@ var GameRoom = class _GameRoom {
       pr.state.revives = 0;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
-      if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(pr.state.id, pr.state);
+      pr.state.maxHp = _GameRoom.computePlayerMaxHp(
+        pr.state.heroClass,
+        pr.state.level,
+        pr.state.vitality,
+        pr.state.relics
+      );
+      pr.state.hp = pr.state.maxHp;
     }
     const restartFloor = this.roomId === "TAVERN-HUB" ? 0 : 1;
     this.loadFloor(restartFloor, this.players.size);
@@ -1223,6 +1222,18 @@ var GameRoom = class _GameRoom {
   }
   hasPlayer(playerId) {
     return this.players.has(playerId);
+  }
+  getPlayerState(playerId) {
+    return this.players.get(playerId)?.state;
+  }
+  isPlayerNearNpc(playerId, npcIdOrName, maxDistance = 85) {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return false;
+    const target = this.npcs.find(
+      (n) => n.id === npcIdOrName || n.name.toLowerCase() === npcIdOrName.toLowerCase()
+    );
+    if (!target) return false;
+    return Math.hypot(target.x - p.x, target.y - p.y) <= maxDistance;
   }
   pushChat(sender, text, system = false) {
     const msg = {
@@ -3439,6 +3450,7 @@ function clearExpiredSessions() {
 setInterval(clearExpiredSessions, 1e3 * 60 * 60);
 var DATA_DIR = path.resolve(__dirname, "data");
 var ACCOUNTS_FILE = path.join(DATA_DIR, "accounts.json");
+var MIGRATIONS_FILE = path.join(DATA_DIR, "migrations.json");
 var { Pool } = pg;
 var dbPool = null;
 if (process.env.DATABASE_URL) {
@@ -3503,11 +3515,8 @@ async function persistAccount(acc) {
   const newLock = (async () => {
     try {
       await existingLock;
-    } catch (err) {
+    } catch {
     }
-    accountsByLower.set(acc.usernameLower, acc);
-    accountsById.set(acc.id, acc);
-    saveAccountsToFile();
     if (dbPool) {
       try {
         await dbPool.query(
@@ -3564,13 +3573,23 @@ async function persistAccount(acc) {
         throw err;
       }
     }
+    accountsByLower.set(acc.usernameLower, acc);
+    accountsById.set(acc.id, acc);
+    saveAccountsToFile();
   })();
   accountLocks.set(lockKey, newLock);
-  newLock.finally(() => {
-    if (accountLocks.get(lockKey) === newLock) {
-      accountLocks.delete(lockKey);
+  newLock.then(
+    () => {
+      if (accountLocks.get(lockKey) === newLock) {
+        accountLocks.delete(lockKey);
+      }
+    },
+    () => {
+      if (accountLocks.get(lockKey) === newLock) {
+        accountLocks.delete(lockKey);
+      }
     }
-  });
+  );
   return newLock;
 }
 async function initStorage() {
@@ -3638,10 +3657,30 @@ async function initStorage() {
       `);
       console.log("Connected to PostgreSQL and verified schema.");
       await dbPool.query(`
-        UPDATE accounts 
-        SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
-            attribute_points = (GREATEST(1, level) - 1) * 2;
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          version VARCHAR(64) PRIMARY KEY,
+          applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
       `);
+      const migrationRes = await dbPool.query(
+        "SELECT 1 FROM schema_migrations WHERE version = $1",
+        ["20261106_reset_attributes"]
+      );
+      if (migrationRes.rowCount === 0) {
+        console.log("[Migration] Running one-time global attribute reset in PostgreSQL...");
+        await dbPool.query(`
+          UPDATE accounts 
+          SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
+              attribute_points = (GREATEST(1, level) - 1) * 2;
+        `);
+        await dbPool.query(
+          "INSERT INTO schema_migrations (version) VALUES ($1)",
+          ["20261106_reset_attributes"]
+        );
+        console.log("[Migration] Attribute reset migration completed successfully in PostgreSQL.");
+      } else {
+        console.log("[Migration] Attribute reset migration already applied. Preserving account attributes.");
+      }
       const res = await dbPool.query("SELECT * FROM accounts");
       for (const row of res.rows) {
         const lvl = Number(row.level) || 1;
@@ -3660,12 +3699,12 @@ async function initStorage() {
           isAdmin: !!row.is_admin,
           level: lvl,
           xp: Number(row.xp) || 0,
-          strength: 0,
-          vitality: 0,
-          dexterity: 0,
-          intelligence: 0,
-          faith: 0,
-          attributePoints: (Math.max(1, lvl) - 1) * 2
+          strength: Number(row.strength) || 0,
+          vitality: Number(row.vitality) || 0,
+          dexterity: Number(row.dexterity) || 0,
+          intelligence: Number(row.intelligence) || 0,
+          faith: Number(row.faith) || 0,
+          attributePoints: Number(row.attribute_points) || 0
         };
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -3680,20 +3719,49 @@ async function initStorage() {
       const isProduction2 = process.env.NODE_ENV === "production";
       const data = fs.readFileSync(ACCOUNTS_FILE, "utf8");
       const list = JSON.parse(data);
+      let appliedMigrations = [];
+      if (fs.existsSync(MIGRATIONS_FILE)) {
+        try {
+          appliedMigrations = JSON.parse(fs.readFileSync(MIGRATIONS_FILE, "utf8"));
+        } catch {
+          appliedMigrations = [];
+        }
+      }
+      const needsReset = !appliedMigrations.includes("20261106_reset_attributes");
+      if (needsReset) {
+        console.log("[JSON Storage] Applying one-time attribute reset migration...");
+      }
       for (const rec of list) {
         if (isProduction2 && rec.usernameLower === "wanderer") continue;
-        rec.strength = 0;
-        rec.vitality = 0;
-        rec.dexterity = 0;
-        rec.intelligence = 0;
-        rec.faith = 0;
         rec.level = Number(rec.level) || 1;
         rec.xp = Number(rec.xp) || 0;
-        rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+        if (needsReset) {
+          rec.strength = 0;
+          rec.vitality = 0;
+          rec.dexterity = 0;
+          rec.intelligence = 0;
+          rec.faith = 0;
+          rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+        } else {
+          rec.strength = Number(rec.strength) || 0;
+          rec.vitality = Number(rec.vitality) || 0;
+          rec.dexterity = Number(rec.dexterity) || 0;
+          rec.intelligence = Number(rec.intelligence) || 0;
+          rec.faith = Number(rec.faith) || 0;
+          rec.attributePoints = Number(rec.attributePoints) || 0;
+        }
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
-      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), "utf8");
+      if (needsReset) {
+        appliedMigrations.push("20261106_reset_attributes");
+        if (!fs.existsSync(DATA_DIR)) {
+          fs.mkdirSync(DATA_DIR, { recursive: true });
+        }
+        fs.writeFileSync(MIGRATIONS_FILE, JSON.stringify(appliedMigrations, null, 2), "utf8");
+        fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), "utf8");
+        console.log("[JSON Storage] One-time attribute reset applied and recorded.");
+      }
       console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
       console.error("Failed to load accounts from file:", err);
@@ -4430,6 +4498,14 @@ async function startServer() {
           }
         }
       } else if (msg.type === "player:reset_attributes") {
+        if (room.roomId !== "TAVERN-HUB") {
+          sendJson(ws, { type: "error", message: "Attributes can only be reset in the Sanctuary Tavern." });
+          return;
+        }
+        if (!room.isPlayerNearNpc(acc.id, "npc_aleph", 85)) {
+          sendJson(ws, { type: "error", message: "You must be speaking with Aleph to reset your attributes." });
+          return;
+        }
         const spent = (acc.strength || 0) + (acc.vitality || 0) + (acc.dexterity || 0) + (acc.intelligence || 0) + (acc.faith || 0);
         const oldState = {
           strength: acc.strength,

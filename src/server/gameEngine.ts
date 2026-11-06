@@ -157,16 +157,8 @@ export class GameRoom {
     this.startedAt = Date.now();
     for (const pr of this.players.values()) {
       // Preserve: level, xp, nextXp, strength, vitality, dexterity, intelligence, faith, attributePoints
-      
-      // Recalculate HP based on preserved stats using unified formula
-      pr.state.maxHp = GameRoom.computePlayerMaxHp(
-        pr.state.heroClass,
-        pr.state.level,
-        pr.state.vitality,
-        pr.state.relics
-      );
-      pr.state.hp = pr.state.maxHp;
 
+      // Clear run-specific temporary state and relics BEFORE recalculating HP
       pr.state.shield = 0;
       pr.state.gold = 0;
       pr.state.potions = 2;
@@ -180,9 +172,15 @@ export class GameRoom {
       pr.state.revives = 0;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
-      // Note: We don't need to call onProgressionUpdateCallback here because nothing permanent changed,
-      // but we do it to ensure the frontend is in sync if it expects it.
-      if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(pr.state.id, pr.state);
+
+      // Recalculate HP based on preserved permanent stats (relics are now empty, removing Bastion Pauldron bonus)
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(
+        pr.state.heroClass,
+        pr.state.level,
+        pr.state.vitality,
+        pr.state.relics
+      );
+      pr.state.hp = pr.state.maxHp;
     }
     const restartFloor = this.roomId === 'TAVERN-HUB' ? 0 : 1;
     this.loadFloor(restartFloor, this.players.size);
@@ -318,6 +316,20 @@ export class GameRoom {
 
   public hasPlayer(playerId: string): boolean {
     return this.players.has(playerId);
+  }
+
+  public getPlayerState(playerId: string): PlayerState | undefined {
+    return this.players.get(playerId)?.state;
+  }
+
+  public isPlayerNearNpc(playerId: string, npcIdOrName: string, maxDistance = 85): boolean {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return false;
+    const target = this.npcs.find(
+      (n) => n.id === npcIdOrName || n.name.toLowerCase() === npcIdOrName.toLowerCase()
+    );
+    if (!target) return false;
+    return Math.hypot(target.x - p.x, target.y - p.y) <= maxDistance;
   }
 
   public pushChat(sender: string, text: string, system = false): ChatMessage {

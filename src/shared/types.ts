@@ -6,6 +6,29 @@ export type BiomeId = 'courtyard' | 'catacombs' | 'ember' | 'void' | 'astral';
 export const MAX_LEVEL = 100;
 export const MAX_ATTRIBUTE = 100;
 
+export interface AccountRecord {
+  id: string;
+  username: string;
+  usernameLower: string;
+  passwordHash: string;
+  lockedClass: HeroClassId;
+  preferredClass: HeroClassId;
+  runsCompleted: number;
+  highestFloor: number;
+  totalKills: number;
+  totalRevives: number;
+  gold?: number;
+  isAdmin?: boolean;
+  level?: number;
+  xp?: number;
+  strength?: number;
+  vitality?: number;
+  dexterity?: number;
+  intelligence?: number;
+  faith?: number;
+  attributePoints?: number;
+}
+
 export interface HeroClassStats {
   survivability: number; // 1-5
   damage: number;        // 1-5
