@@ -697,6 +697,385 @@ async function runRegressionTests() {
     assert.strictEqual(ally.hp, Math.round(ally.maxHp * 0.45), 'Revived ally has exactly 45% maxHp');
   });
 
+  // Helper to create test enemy
+  function createTestEnemy(id: string, type: string, name: string, x: number, y: number, hp: number, res: any) {
+    return {
+      id,
+      type,
+      name,
+      x,
+      y,
+      hp,
+      maxHp: hp,
+      resistances: res,
+      moveSpeed: 1,
+      attackPower: 10,
+      attackRange: 30,
+      attackCooldownMs: 0,
+      maxCooldownMs: 1000,
+      state: 'idle',
+      targetPlayerId: null,
+      hitAnimMs: 0,
+      isBoss: false,
+      stunnedMs: 0,
+      slowedMs: 0,
+      frozenMs: 0,
+      burnedMs: 0,
+      burnInflicterId: null as string | null,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      markedMs: 0,
+    };
+  }
+
+  // --- Test 15: Physical attack against physical-resistant enemy (Knight) ---
+  test('15. Vanguard/Ranger physical attacks respect physical resistance of enemy', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PHYS-RES',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7777,
+    });
+
+    const playerId = 'phys_attacker';
+    room.addOrReconnectPlayer(playerId, 'VanguardHero', 'vanguard', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+
+    // Knight has 0.25 physical resistance
+    const knight = createTestEnemy('e_knight', 'knight', 'Death Knight', 110, 110, 500, { physical: 0.25 });
+    room.enemies.push(knight as any);
+
+    const baseDamage = 100;
+    // Physical res 0.25 => damage = 100 * (1 - 0.25) = 75
+    const actualDamage = room.damageEnemy(knight as any, baseDamage, p, 'physical');
+    assert.strictEqual(actualDamage, 75, 'Base 100 damage against 0.25 phys res enemy must deal 75 damage');
+    assert.strictEqual(knight.hp, 425);
+  });
+
+  // --- Test 16: Arcane attack against arcane resistance ---
+  test('16. Arcanist arcane attacks respect enemy arcane resistance', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-ARCANE-RES',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 8888,
+    });
+
+    const playerId = 'arcane_attacker';
+    room.addOrReconnectPlayer(playerId, 'MageHero', 'arcanist', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+
+    // Astral Sentinel has 0.35 arcane resistance
+    const sentinel = createTestEnemy('e_sentinel', 'astral_sentinel', 'Astral Sentinel', 110, 110, 500, { arcane: 0.35 });
+    room.enemies.push(sentinel as any);
+
+    const baseDamage = 100;
+    // Arcane res 0.35 => damage = 100 * (1 - 0.35) = 65
+    const actualDamage = room.damageEnemy(sentinel as any, baseDamage, p, 'arcane');
+    assert.strictEqual(actualDamage, 65, 'Base 100 arcane damage against 0.35 arcane res enemy must deal 65 damage');
+  });
+
+  // --- Test 17: Divine attack against divine-vulnerable enemy ---
+  test('17. Cleric divine attacks exploit divine vulnerability (-0.25 divine res)', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-DIVINE-VULN',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 9999,
+    });
+
+    const playerId = 'divine_attacker';
+    room.addOrReconnectPlayer(playerId, 'HolySmiter', 'cleric', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+
+    // Skeleton has -0.25 divine resistance (vulnerability)
+    const skeleton = createTestEnemy('e_skel', 'skeleton', 'Skeleton', 110, 110, 500, { divine: -0.25 });
+    room.enemies.push(skeleton as any);
+
+    const baseDamage = 100;
+    // Divine res -0.25 => damage = 100 * (1 - (-0.25)) = 125
+    const actualDamage = room.damageEnemy(skeleton as any, baseDamage, p, 'divine');
+    assert.strictEqual(actualDamage, 125, 'Base 100 divine damage against -0.25 divine res skeleton must deal 125 damage');
+  });
+
+  // --- Test 18: Marked enemy vulnerability ---
+  test('18. Marked enemy receives 1.35x damage bonus', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-MARK-TEST',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 1234,
+    });
+
+    const playerId = 'ranger_marker';
+    room.addOrReconnectPlayer(playerId, 'RangerMark', 'ranger', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+
+    const slime = createTestEnemy('e_slime', 'slime', 'Slime', 110, 110, 500, { physical: 0 });
+    slime.markedMs = 5000;
+    room.enemies.push(slime as any);
+
+    const baseDamage = 100;
+    // Slime has 0 physical res. Marked bonus = 1.35x => 100 * 1.35 = 135
+    const actualDamage = room.damageEnemy(slime as any, baseDamage, p, 'physical');
+    assert.strictEqual(actualDamage, 135, 'Base 100 physical damage against marked slime must deal 135 damage');
+  });
+
+  // --- Test 19: Frost Shatter AoE respecting frost resistance & tracking damage ---
+  test('19. Frost Shatter AoE respects secondary target frost resistance and tracks damage', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-FROST-AOE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 2345,
+    });
+
+    const playerId = 'frost_mage';
+    room.addOrReconnectPlayer(playerId, 'FrostMage', 'arcanist', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+    p.damageDealt = 0;
+
+    // Primary target: frozen slime
+    const t1 = createTestEnemy('e_t1', 'slime', 'Target 1', 110, 110, 500, { frost: 0 });
+    t1.frozenMs = 3000; // Frozen target triggers Frost Shatter
+
+    // Secondary target: Goblin (frost res = 0.05)
+    const t2 = createTestEnemy('e_t2', 'goblin', 'Target 2', 130, 110, 500, { frost: 0.05 });
+    room.enemies.push(t1 as any, t2 as any);
+
+    const mainDmg = room.damageEnemy(t1 as any, 100, p, 'frost');
+    assert(p.damageDealt > mainDmg, 'Damage dealt must include Frost Shatter AoE damage');
+    assert.strictEqual(t2.hp, 439, 'Secondary target must take 61 frost damage (500 - 61 = 439)');
+  });
+
+  // --- Test 20: Chain Lightning respecting lightning resistance & tracking damage ---
+  test('20. Chain Lightning respects secondary target lightning resistance and tracks damage', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-CHAIN-LIGHTNING',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 3456,
+    });
+
+    const playerId = 'spark_mage';
+    room.addOrReconnectPlayer(playerId, 'Sparky', 'arcanist', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(playerId)!;
+    p.x = 100; p.y = 100;
+    p.damageDealt = 0;
+
+    // Primary target: shocked slime
+    const t1 = createTestEnemy('e_t1', 'slime', 'Target 1', 110, 110, 500, { lightning: 0 });
+    t1.shockedMs = 3000;
+
+    // Secondary target (within 130px): Skeleton (lightning res = 0.0)
+    const t2 = createTestEnemy('e_t2', 'skeleton', 'Target 2', 140, 110, 500, { lightning: 0.0 });
+    room.enemies.push(t1 as any, t2 as any);
+
+    const mainDmg = room.damageEnemy(t1 as any, 100, p, 'lightning');
+    assert(p.damageDealt > mainDmg, 'Damage dealt must include Chain Lightning arc damage');
+    assert.strictEqual(t2.hp, 455, 'Secondary target must take 45 lightning damage (500 - 45 = 455)');
+  });
+
+  // --- Test 21: Status DoTs (Burn, Poison, Bleed) respecting elemental resistances ---
+  test('21. Status DoTs (Burn, Poison, Bleed) respect target resistances', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-DOT-TEST',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 4567,
+    });
+
+    const playerId = 'dot_applier';
+    room.addOrReconnectPlayer(playerId, 'DoTMaster', 'arcanist');
+    const p = room.getPlayerState(playerId)!;
+
+    // Target with fire res 0.20 (Cultist)
+    const cultist = createTestEnemy('e_cultist', 'cultist', 'Cultist', 110, 110, 500, { fire: 0.20 });
+    cultist.burnedMs = 3000;
+    cultist.burnInflicterId = p.id;
+    room.enemies.push(cultist as any);
+
+    // Tick 1000ms: Base burn = 8. Cultist fire res 0.20 => 8 * (1 - 0.20) = 6.4 -> 6 damage.
+    room.tick(1000);
+    assert.strictEqual(cultist.hp, 494, 'Burn DoT tick must be reduced by 0.20 fire resistance to 6 damage (500 - 6 = 494)');
+  });
+
+  // --- Test 22: Player physical and elemental damage mitigation ---
+  test('22. Player damage mitigation handles armor, Vanguard passive, Aegis Dome, and shields', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PLAYER-MITIGATION',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 5678,
+    });
+
+    const pid = 'vanguard_tank';
+    room.addOrReconnectPlayer(pid, 'Tanker', 'vanguard', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(pid)!;
+    p.hp = 200;
+    p.shield = 50;
+
+    // Aegis Dome zone active
+    room.zones.push({
+      id: 'z_aegis',
+      kind: 'aegis_dome',
+      x: p.x,
+      y: p.y,
+      radius: 150,
+      durationMs: 5000,
+    } as any);
+
+    // Base Vanguard phys res = 0.28. 100 * (1 - 0.28) = 72.
+    // Vanguard passive (-15%): 72 * 0.85 = 61. Aegis Dome (-35%): 61 * 0.65 = 40.
+    const dmgDealt = room.damagePlayer(p, 100, 'physical');
+    assert.strictEqual(dmgDealt, 40, '100 phys damage mitigated by armor + Vanguard passive + Aegis Dome to 40');
+    assert.strictEqual(p.shield, 10, '50 shield absorbed 40 damage, leaving 10 shield');
+    assert.strictEqual(p.hp, 200, 'HP remains untouched at 200');
+  });
+
+  // --- Test 23: Relic stacking and resistance cap at 75% ---
+  test('23. Relic stacking (Runic Carapace + Thorned Aegis) caps mitigation at 75%', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-RELIC-CAP',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 6789,
+    });
+
+    const pid = 'relic_tank';
+    room.addOrReconnectPlayer(pid, 'SuperTank', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+    p.hp = 500;
+    p.relics.push('runic_carapace', 'thorned_aegis');
+
+    // Vanguard base (0.28) + Carapace (0.15) + Thorned Aegis (0.10) = 0.53 physical resistance.
+    // Base damage = 1000 physical. 1000 * (1 - 0.53) = 470. Vanguard passive (-15%): 470 * 0.85 = 400 damage.
+    const dmgDealt = room.damagePlayer(p, 1000, 'physical');
+    assert.strictEqual(dmgDealt, 400, '1000 phys damage mitigated by 0.53 resistance + Vanguard passive to 400');
+  });
+
+  // --- Test 24: Verifying no duplicate damage scaling multipliers ---
+  test('24. Damage scaling helper applies stat and level multipliers exactly once', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-NO-DUP-SCALING',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7890,
+    });
+
+    const pid = 'scaling_check';
+    // Ranger level 10 (+90% level scaling = 1.9x), DEX 10 (+30% stat scaling = 1.3x)
+    room.addOrReconnectPlayer(pid, 'RangerScaler', 'ranger', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 10,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const p = room.getPlayerState(pid)!;
+    p.x = 110; p.y = 110; // Position next to slime so Longshot (+25%) does not trigger
+    const slime = createTestEnemy('e_slime', 'slime', 'Slime', 110, 110, 1000, { physical: 0 });
+    room.enemies.push(slime as any);
+
+    // Base attack damage = 10.
+    // Scaled base damage using computeDamageMult = 10 * (1 + (10-1)*0.10) * (1 + 10*0.03) = 10 * 1.9 * 1.3 = 24.7 -> 25
+    const scaledBaseDmg = Math.round(10 * room.computeDamageMult(p, 'physical'));
+    assert.strictEqual(scaledBaseDmg, 25);
+
+    const actualDmg = room.damageEnemy(slime as any, scaledBaseDmg, p, 'physical');
+    assert.strictEqual(actualDmg, 25, 'Base 10 damage scaled to 25 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 25 damage without duplicate scaling');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);
@@ -707,3 +1086,4 @@ runRegressionTests().catch(err => {
   console.error('Fatal error in regression tests:', err);
   process.exit(1);
 });
+

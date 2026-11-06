@@ -488,6 +488,8 @@ function getEnemyResistances(
         poison: 0.60,
         bleed: 0.90, // slimes cannot bleed
         tenacity: 0.05,
+        arcane: 0.15,
+        divine: 0.10,
       };
     case 'goblin':
       return {
@@ -498,6 +500,8 @@ function getEnemyResistances(
         poison: 0.20,
         bleed: 0.10,
         tenacity: elite ? 0.15 : 0.05,
+        arcane: 0.05,
+        divine: 0.05,
       };
     case 'skeleton':
       return {
@@ -508,6 +512,8 @@ function getEnemyResistances(
         poison: 0.95, // undead has no poison susceptibility
         bleed: 0.95,  // cannot bleed
         tenacity: elite ? 0.20 : 0.10,
+        arcane: 0.15,
+        divine: -0.25, // undead vulnerable to divine holy light
       };
     case 'cultist':
       return {
@@ -518,6 +524,8 @@ function getEnemyResistances(
         poison: 0.25,
         bleed: 0.10,
         tenacity: elite ? 0.25 : 0.15,
+        arcane: 0.30,
+        divine: -0.15, // dark cultist vulnerable to holy light
       };
     case 'knight':
       return {
@@ -528,6 +536,8 @@ function getEnemyResistances(
         poison: 0.20,
         bleed: 0.30,
         tenacity: elite ? 0.35 : 0.25,
+        arcane: 0.10,
+        divine: 0.10,
       };
     case 'shadow_stalker':
       return {
@@ -538,6 +548,8 @@ function getEnemyResistances(
         poison: 0.50,
         bleed: 0.65, // spectral shadow substance
         tenacity: elite ? 0.45 : 0.30,
+        arcane: 0.25,
+        divine: -0.20, // shadow entity vulnerable to divine light
       };
     case 'astral_sentinel':
       return {
@@ -548,6 +560,8 @@ function getEnemyResistances(
         poison: 0.70, // stone/crystal construct
         bleed: 0.90,  // cannot bleed
         tenacity: elite ? 0.55 : 0.40,
+        arcane: 0.40,
+        divine: 0.30,
       };
     case 'boss': {
       if (biome === 'ember' || floor === 3) {
@@ -559,6 +573,8 @@ function getEnemyResistances(
           poison: 0.40,
           bleed: 0.35,
           tenacity: 0.65, // 65% CC duration reduction
+          arcane: 0.20,
+          divine: 0.15,
         };
       } else if (biome === 'catacombs' || floor === 2) {
         return {
@@ -569,6 +585,8 @@ function getEnemyResistances(
           poison: 0.85, // undead
           bleed: 0.85,  // undead
           tenacity: 0.60,
+          arcane: 0.25,
+          divine: -0.30, // Arch-Lich vulnerable to divine holy light
         };
       } else if (biome === 'void' || floor === 4) {
         return {
@@ -579,6 +597,8 @@ function getEnemyResistances(
           poison: 0.60,
           bleed: 0.70, // shadowy void entity resists bleed
           tenacity: 0.70, // 70% CC duration reduction
+          arcane: 0.35,
+          divine: -0.20, // Void boss vulnerable to divine light
         };
       } else if (biome === 'astral' || floor === 5) {
         return {
@@ -589,6 +609,8 @@ function getEnemyResistances(
           poison: 0.50,
           bleed: 0.40,
           tenacity: 0.75, // 75% CC duration reduction
+          arcane: 0.45,
+          divine: 0.40,
         };
       } else {
         return {
@@ -599,6 +621,8 @@ function getEnemyResistances(
           poison: 0.45,
           bleed: 0.30,
           tenacity: 0.55,
+          arcane: 0.20,
+          divine: 0.10,
         };
       }
     }

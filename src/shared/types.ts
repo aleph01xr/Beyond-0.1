@@ -46,6 +46,8 @@ export interface CombatResistances {
   bleed: number;      // reduces Bleed tick damage & duration
 }
 
+export type DamageCategory = 'physical' | 'arcane' | 'divine' | 'fire' | 'frost' | 'lightning' | 'poison' | 'bleed';
+
 export interface EnemyResistances {
   physical: number;
   fire: number;
@@ -54,6 +56,8 @@ export interface EnemyResistances {
   poison: number;
   bleed: number;
   tenacity: number;   // crowd control reduction (Freeze/Stun duration scaling)
+  arcane?: number;    // magical/arcane damage mitigation
+  divine?: number;    // holy/divine damage mitigation
 }
 
 export interface HeroClassDef {
