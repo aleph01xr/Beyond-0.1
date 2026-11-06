@@ -859,8 +859,6 @@ export class GameRoom {
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
 
-      const dmgMult = this.computeDamageMult(p);
-
       if (p.relics.includes('oathbound_censer')) {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
@@ -870,6 +868,7 @@ export class GameRoom {
       }
 
       if (p.heroClass === 'vanguard') {
+        const dmgMult = this.computeDamageMult(p, 'physical');
         const dashDist = 92;
         this.moveWithCollision(
           p,
@@ -886,7 +885,7 @@ export class GameRoom {
         for (const enemy of this.enemies) {
           if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 84) {
             enemy.stunnedMs = 1700;
-            this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false);
+            this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false, 'physical');
           }
         }
         for (const dummy of this.trainingDummies) {
@@ -895,6 +894,7 @@ export class GameRoom {
           }
         }
       } else if (p.heroClass === 'ranger') {
+        const dmgMult = this.computeDamageMult(p, 'physical');
         const baseDmg = Math.round(18 * dmgMult);
         for (let i = -2; i <= 2; i++) {
           const ang = p.aimAngle + i * 0.14;
@@ -915,6 +915,7 @@ export class GameRoom {
           });
         }
       } else if (p.heroClass === 'arcanist') {
+        const dmgMult = this.computeDamageMult(p, 'arcane');
         const baseDmg = Math.round(24 * dmgMult);
         for (let i = 0; i < 8; i++) {
           const ang = (i * Math.PI) / 4;
@@ -934,6 +935,7 @@ export class GameRoom {
           });
         }
       } else if (p.heroClass === 'cleric') {
+        const dmgMult = this.computeDamageMult(p, 'divine');
         const baseHeal = 36;
         const heal = this.computeHealingAmount(baseHeal, p);
         for (const ally of this.players.values()) {
@@ -944,7 +946,7 @@ export class GameRoom {
         }
         for (const enemy of this.enemies) {
           if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 135) {
-            this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false);
+            this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false, 'divine');
           }
         }
         for (const dummy of this.trainingDummies) {

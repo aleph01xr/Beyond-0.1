@@ -650,7 +650,9 @@ function getEnemyResistances(kind, elite, floor, biome) {
         poison: 0.6,
         bleed: 0.9,
         // slimes cannot bleed
-        tenacity: 0.05
+        tenacity: 0.05,
+        arcane: 0.15,
+        divine: 0.1
       };
     case "goblin":
       return {
@@ -660,7 +662,9 @@ function getEnemyResistances(kind, elite, floor, biome) {
         lightning: 0.05,
         poison: 0.2,
         bleed: 0.1,
-        tenacity: elite ? 0.15 : 0.05
+        tenacity: elite ? 0.15 : 0.05,
+        arcane: 0.05,
+        divine: 0.05
       };
     case "skeleton":
       return {
@@ -673,7 +677,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
         // undead has no poison susceptibility
         bleed: 0.95,
         // cannot bleed
-        tenacity: elite ? 0.2 : 0.1
+        tenacity: elite ? 0.2 : 0.1,
+        arcane: 0.15,
+        divine: -0.25
+        // undead vulnerable to divine holy light
       };
     case "cultist":
       return {
@@ -683,7 +690,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
         lightning: 0.35,
         poison: 0.25,
         bleed: 0.1,
-        tenacity: elite ? 0.25 : 0.15
+        tenacity: elite ? 0.25 : 0.15,
+        arcane: 0.3,
+        divine: -0.15
+        // dark cultist vulnerable to holy light
       };
     case "knight":
       return {
@@ -695,7 +705,9 @@ function getEnemyResistances(kind, elite, floor, biome) {
         // metal conducts shock
         poison: 0.2,
         bleed: 0.3,
-        tenacity: elite ? 0.35 : 0.25
+        tenacity: elite ? 0.35 : 0.25,
+        arcane: 0.1,
+        divine: 0.1
       };
     case "shadow_stalker":
       return {
@@ -707,7 +719,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
         poison: 0.5,
         bleed: 0.65,
         // spectral shadow substance
-        tenacity: elite ? 0.45 : 0.3
+        tenacity: elite ? 0.45 : 0.3,
+        arcane: 0.25,
+        divine: -0.2
+        // shadow entity vulnerable to divine light
       };
     case "astral_sentinel":
       return {
@@ -720,7 +735,9 @@ function getEnemyResistances(kind, elite, floor, biome) {
         // stone/crystal construct
         bleed: 0.9,
         // cannot bleed
-        tenacity: elite ? 0.55 : 0.4
+        tenacity: elite ? 0.55 : 0.4,
+        arcane: 0.4,
+        divine: 0.3
       };
     case "boss": {
       if (biome === "ember" || floor === 3) {
@@ -733,8 +750,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
           lightning: 0.25,
           poison: 0.4,
           bleed: 0.35,
-          tenacity: 0.65
+          tenacity: 0.65,
           // 65% CC duration reduction
+          arcane: 0.2,
+          divine: 0.15
         };
       } else if (biome === "catacombs" || floor === 2) {
         return {
@@ -747,7 +766,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
           // undead
           bleed: 0.85,
           // undead
-          tenacity: 0.6
+          tenacity: 0.6,
+          arcane: 0.25,
+          divine: -0.3
+          // Arch-Lich vulnerable to divine holy light
         };
       } else if (biome === "void" || floor === 4) {
         return {
@@ -758,8 +780,11 @@ function getEnemyResistances(kind, elite, floor, biome) {
           poison: 0.6,
           bleed: 0.7,
           // shadowy void entity resists bleed
-          tenacity: 0.7
+          tenacity: 0.7,
           // 70% CC duration reduction
+          arcane: 0.35,
+          divine: -0.2
+          // Void boss vulnerable to divine light
         };
       } else if (biome === "astral" || floor === 5) {
         return {
@@ -770,8 +795,10 @@ function getEnemyResistances(kind, elite, floor, biome) {
           // celestial entity resists elemental magic
           poison: 0.5,
           bleed: 0.4,
-          tenacity: 0.75
+          tenacity: 0.75,
           // 75% CC duration reduction
+          arcane: 0.45,
+          divine: 0.4
         };
       } else {
         return {
@@ -781,7 +808,9 @@ function getEnemyResistances(kind, elite, floor, biome) {
           lightning: 0.2,
           poison: 0.45,
           bleed: 0.3,
-          tenacity: 0.55
+          tenacity: 0.55,
+          arcane: 0.2,
+          divine: 0.1
         };
       }
     }
@@ -1053,6 +1082,43 @@ var GameRoom = class _GameRoom {
   }
   computeHealingAmount(baseHealing, healer) {
     return _GameRoom.computeHealingAmount(baseHealing, healer);
+  }
+  static getEnemyResistance(res, category) {
+    if (!res) return 0;
+    let rawRes = 0;
+    switch (category) {
+      case "physical":
+        rawRes = res.physical ?? 0;
+        break;
+      case "arcane":
+        rawRes = res.arcane ?? ((res.fire ?? 0) + (res.frost ?? 0) + (res.lightning ?? 0)) / 3;
+        break;
+      case "divine":
+        rawRes = res.divine ?? ((res.fire ?? 0) + (res.lightning ?? 0)) / 2;
+        break;
+      case "fire":
+        rawRes = res.fire ?? 0;
+        break;
+      case "frost":
+        rawRes = res.frost ?? 0;
+        break;
+      case "lightning":
+        rawRes = res.lightning ?? 0;
+        break;
+      case "poison":
+        rawRes = res.poison ?? 0;
+        break;
+      case "bleed":
+        rawRes = res.bleed ?? 0;
+        break;
+      default:
+        rawRes = res.physical ?? 0;
+        break;
+    }
+    return Math.min(0.75, Math.max(-0.5, rawRes));
+  }
+  getEnemyResistance(res, category) {
+    return _GameRoom.getEnemyResistance(res, category);
   }
   nextId(prefix) {
     return `${prefix}_${this.entitySeq++}`;
@@ -1635,7 +1701,6 @@ var GameRoom = class _GameRoom {
       p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
-      const dmgMult = this.computeDamageMult(p);
       if (p.relics.includes("oathbound_censer")) {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
@@ -1644,6 +1709,7 @@ var GameRoom = class _GameRoom {
         }
       }
       if (p.heroClass === "vanguard") {
+        const dmgMult = this.computeDamageMult(p, "physical");
         const dashDist = 92;
         this.moveWithCollision(
           p,
@@ -1660,7 +1726,7 @@ var GameRoom = class _GameRoom {
         for (const enemy of this.enemies) {
           if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 84) {
             enemy.stunnedMs = 1700;
-            this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false);
+            this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false, "physical");
           }
         }
         for (const dummy of this.trainingDummies) {
@@ -1669,6 +1735,7 @@ var GameRoom = class _GameRoom {
           }
         }
       } else if (p.heroClass === "ranger") {
+        const dmgMult = this.computeDamageMult(p, "physical");
         const baseDmg = Math.round(18 * dmgMult);
         for (let i = -2; i <= 2; i++) {
           const ang = p.aimAngle + i * 0.14;
@@ -1689,6 +1756,7 @@ var GameRoom = class _GameRoom {
           });
         }
       } else if (p.heroClass === "arcanist") {
+        const dmgMult = this.computeDamageMult(p, "arcane");
         const baseDmg = Math.round(24 * dmgMult);
         for (let i = 0; i < 8; i++) {
           const ang = i * Math.PI / 4;
@@ -1708,6 +1776,7 @@ var GameRoom = class _GameRoom {
           });
         }
       } else if (p.heroClass === "cleric") {
+        const dmgMult = this.computeDamageMult(p, "divine");
         const baseHeal = 36;
         const heal = this.computeHealingAmount(baseHeal, p);
         for (const ally of this.players.values()) {
@@ -1718,7 +1787,7 @@ var GameRoom = class _GameRoom {
         }
         for (const enemy of this.enemies) {
           if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 135) {
-            this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false);
+            this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false, "divine");
           }
         }
         for (const dummy of this.trainingDummies) {
@@ -1789,11 +1858,15 @@ var GameRoom = class _GameRoom {
   computeDamageMult(p, category = "physical") {
     let mult = 1 + (p.level - 1) * 0.1;
     if (category === "physical") {
-      mult *= 1 + (p.strength || 0) * 0.03;
+      const physStat = p.heroClass === "ranger" ? p.dexterity || 0 : p.strength || 0;
+      mult *= 1 + physStat * 0.03;
     } else if (category === "arcane") {
       mult *= 1 + (p.intelligence || 0) * 0.03;
     } else if (category === "divine") {
       mult *= 1 + (p.faith || 0) * 0.03;
+    } else {
+      const mainStat = p.heroClass === "ranger" ? p.dexterity || 0 : p.heroClass === "arcanist" ? p.intelligence || 0 : p.heroClass === "cleric" ? p.faith || 0 : p.strength || 0;
+      mult *= 1 + mainStat * 0.03;
     }
     if (p.relics.includes("sunfire_signet")) mult *= 1.24;
     return mult;
@@ -2116,31 +2189,25 @@ var GameRoom = class _GameRoom {
       enemy.poisonedMs = Math.max(0, enemy.poisonedMs - dtMs);
       enemy.bleedingMs = Math.max(0, enemy.bleedingMs - dtMs);
       if (pulseDotNow && enemy.hp > 0) {
-        const res = enemy.resistances || {
-          physical: 0,
-          fire: 0,
-          frost: 0,
-          lightning: 0,
-          poison: 0,
-          bleed: 0,
-          tenacity: 0
-        };
         if (enemy.burnedMs > 0) {
           const rawBurn = 7 + this.floor;
-          const burnDmg = Math.max(1, Math.round(rawBurn * (1 - res.fire)));
+          const fireRes = _GameRoom.getEnemyResistance(enemy.resistances, "fire");
+          const burnDmg = Math.max(1, Math.round(rawBurn * (1 - fireRes)));
           enemy.hp -= burnDmg;
           this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${burnDmg}`, "#F97316");
         }
         if (enemy.poisonedMs > 0) {
           const rawPoison = 5 + this.floor;
-          const poisonDmg = Math.max(1, Math.round(rawPoison * (1 - res.poison)));
+          const poisonRes = _GameRoom.getEnemyResistance(enemy.resistances, "poison");
+          const poisonDmg = Math.max(1, Math.round(rawPoison * (1 - poisonRes)));
           enemy.hp -= poisonDmg;
           this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${poisonDmg}`, "#22C55E");
         }
         if (enemy.bleedingMs > 0) {
           const moving = Math.hypot(enemy.vx, enemy.vy) > 8;
           const rawBleed = (moving ? 14 : 7) + this.floor;
-          const bleedDmg = Math.max(1, Math.round(rawBleed * (1 - res.bleed)));
+          const bleedRes = _GameRoom.getEnemyResistance(enemy.resistances, "bleed");
+          const bleedDmg = Math.max(1, Math.round(rawBleed * (1 - bleedRes)));
           enemy.hp -= bleedDmg;
           this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `\u{1FA78} ${bleedDmg}`, "#DC2626");
         }
@@ -2970,30 +3037,24 @@ var GameRoom = class _GameRoom {
       this.enemies.push(add);
     }
   }
-  damageEnemy(enemy, rawAmount, attacker, isCrit) {
+  damageEnemy(enemy, rawAmount, attacker, isCrit = false, category) {
     const idx = this.enemies.indexOf(enemy);
-    if (idx === -1 || enemy.hp <= 0) return;
-    const res = enemy.resistances || {
-      physical: 0,
-      fire: 0,
-      frost: 0,
-      lightning: 0,
-      poison: 0,
-      bleed: 0,
-      tenacity: 0
-    };
+    if (idx === -1 || enemy.hp <= 0) return 0;
+    const isCritBool = typeof isCrit === "boolean" ? isCrit : false;
+    const cat = (typeof isCrit === "string" ? isCrit : category) || (attacker ? attacker.heroClass === "arcanist" ? "arcane" : attacker.heroClass === "cleric" ? "divine" : "physical" : "physical");
+    const targetRes = _GameRoom.getEnemyResistance(enemy.resistances, cat);
     const markBonus = enemy.markedMs > 0 ? 1.35 : 1;
-    const physRes = Math.min(0.75, Math.max(-0.5, res.physical));
-    let finalDmg = Math.max(1, Math.round(rawAmount * (1 - physRes) * markBonus));
+    let finalDmg = Math.max(1, Math.round(rawAmount * (1 - targetRes) * markBonus));
     if (enemy.shieldWallMs && enemy.shieldWallMs > 0) {
       finalDmg = Math.max(1, Math.round(finalDmg * 0.4));
       this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, " BLOCKED! (-60%)", "#60A5FA");
     }
+    let effectiveCrit = isCritBool;
     if (attacker && attacker.heroClass === "ranger") {
       const distToTarget = Math.hypot(enemy.x - attacker.x, enemy.y - attacker.y);
       if (distToTarget >= 180) {
         finalDmg = Math.round(finalDmg * 1.25);
-        isCrit = true;
+        effectiveCrit = true;
         this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 22, " LONGSHOT! (+25%)", "#34D399");
       }
     }
@@ -3005,8 +3066,11 @@ var GameRoom = class _GameRoom {
       this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 20, " SHATTER!", "#38BDF8");
       for (const other of this.enemies) {
         if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 85) {
-          const aoeDmg = Math.round(finalDmg * 0.4);
+          const otherRes = _GameRoom.getEnemyResistance(other.resistances, "frost");
+          const otherMark = other.markedMs > 0 ? 1.35 : 1;
+          const aoeDmg = Math.max(1, Math.round(finalDmg * 0.4 * (1 - otherRes) * otherMark));
           other.hp -= aoeDmg;
+          if (attacker) attacker.damageDealt += aoeDmg;
           other.slowedMs = Math.max(other.slowedMs, 2500);
           this.emitEvent("damage", other.x, other.y - 10, `${aoeDmg}`, "#7DD3FC");
           if (other.hp <= 0) {
@@ -3026,15 +3090,19 @@ var GameRoom = class _GameRoom {
           }
         }
       }
-      if (attacker.relics.includes("cinder_heart") && (isCrit || rawAmount >= 24)) {
+      const res = enemy.resistances;
+      if (attacker.relics.includes("cinder_heart") && (effectiveCrit || rawAmount >= 24)) {
         if (enemy.burnedMs <= 0) {
           this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "IGNITED!", "#F97316");
         }
-        const burnDuration = Math.round(4500 * (1 - res.fire * 0.4));
+        const fireRes = _GameRoom.getEnemyResistance(res, "fire");
+        const burnDuration = Math.round(4500 * (1 - fireRes * 0.4));
         enemy.burnedMs = burnDuration;
       }
       if (attacker.relics.includes("rimefrost_shard")) {
-        const frostTenacity = Math.max(res.frost, res.tenacity);
+        const frostRes = _GameRoom.getEnemyResistance(res, "frost");
+        const tenacity = res ? res.tenacity || 0 : 0;
+        const frostTenacity = Math.max(frostRes, tenacity);
         if (enemy.slowedMs > 0 && enemy.frozenMs <= 0 && !shattered) {
           const freezeDuration = Math.round(2400 * (1 - frostTenacity));
           if (freezeDuration >= 600) {
@@ -3055,7 +3123,8 @@ var GameRoom = class _GameRoom {
         if (pr) {
           pr.attackCount = (pr.attackCount || 0) + 1;
           if (pr.attackCount % 3 === 0) {
-            const shockDuration = Math.round(5e3 * (1 - res.lightning * 0.4));
+            const lightningRes = _GameRoom.getEnemyResistance(res, "lightning");
+            const shockDuration = Math.round(5e3 * (1 - lightningRes * 0.4));
             enemy.shockedMs = shockDuration;
             this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, "SHOCKED!", "#FBBF24");
           }
@@ -3065,14 +3134,16 @@ var GameRoom = class _GameRoom {
         if (enemy.poisonedMs <= 0) {
           this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "POISONED", "#22C55E");
         }
-        const poisonDuration = Math.round(6e3 * (1 - res.poison * 0.4));
+        const poisonRes = _GameRoom.getEnemyResistance(res, "poison");
+        const poisonDuration = Math.round(6e3 * (1 - poisonRes * 0.4));
         enemy.poisonedMs = poisonDuration;
       }
       if (attacker.relics.includes("bloodletter_talisman")) {
         if (enemy.bleedingMs <= 0) {
           this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "BLEED", "#DC2626");
         }
-        const bleedDuration = Math.round(5e3 * (1 - res.bleed * 0.4));
+        const bleedRes = _GameRoom.getEnemyResistance(res, "bleed");
+        const bleedDuration = Math.round(5e3 * (1 - bleedRes * 0.4));
         enemy.bleedingMs = bleedDuration;
       }
     }
@@ -3080,9 +3151,11 @@ var GameRoom = class _GameRoom {
       let arcs = 3;
       for (const other of this.enemies) {
         if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 130) {
-          const otherRes = other.resistances ? other.resistances.lightning : 0;
-          const arcDmg = Math.max(1, Math.round(finalDmg * 0.45 * (1 - otherRes)));
+          const otherRes = _GameRoom.getEnemyResistance(other.resistances, "lightning");
+          const otherMark = other.markedMs > 0 ? 1.35 : 1;
+          const arcDmg = Math.max(1, Math.round(finalDmg * 0.45 * (1 - otherRes) * otherMark));
           other.hp -= arcDmg;
+          if (attacker) attacker.damageDealt += arcDmg;
           this.emitEvent("damage", other.x, other.y - 12, ` ${arcDmg}`, "#FBBF24");
           arcs--;
           if (other.hp <= 0) {
@@ -3093,15 +3166,16 @@ var GameRoom = class _GameRoom {
       }
     }
     this.emitEvent(
-      isCrit || enemy.markedMs > 0 ? "crit" : "damage",
+      effectiveCrit || enemy.markedMs > 0 ? "crit" : "damage",
       enemy.x + (Math.random() * 14 - 7),
       enemy.y - enemy.radius - 6,
-      `${finalDmg}${isCrit ? "!" : ""}`,
-      isCrit || enemy.markedMs > 0 ? "#FBBF24" : "#F8FAFC"
+      `${finalDmg}${effectiveCrit ? "!" : ""}`,
+      effectiveCrit || enemy.markedMs > 0 ? "#FBBF24" : "#F8FAFC"
     );
     if (enemy.hp <= 0) {
       this.processEnemyDeath(enemy, attacker);
     }
+    return finalDmg;
   }
   damageDummy(dummy, rawAmount, attacker, isCrit = false) {
     let finalDmg = Math.max(1, rawAmount);
@@ -3242,7 +3316,7 @@ var GameRoom = class _GameRoom {
     }
   }
   damagePlayer(p, rawDamage, damageType = "physical") {
-    if (p.downed || p.godMode) return;
+    if (p.downed || p.godMode) return 0;
     const classDef = HERO_CLASSES[p.heroClass];
     const res = classDef?.resistances || {
       physical: 0,
@@ -3269,6 +3343,7 @@ var GameRoom = class _GameRoom {
       (z) => z.kind === "aegis_dome" && Math.hypot(p.x - z.x, p.y - z.y) <= z.radius
     );
     if (inAegis) dmg = Math.max(1, Math.round(dmg * 0.65));
+    const finalMitigatedDamage = dmg;
     if (p.shield > 0) {
       const absorbed = Math.min(p.shield, dmg);
       p.shield -= absorbed;
@@ -3306,6 +3381,7 @@ var GameRoom = class _GameRoom {
         );
       }
     }
+    return finalMitigatedDamage;
   }
   completeRevive(target, reviverId) {
     target.downed = false;

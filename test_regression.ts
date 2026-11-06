@@ -1076,6 +1076,161 @@ async function runRegressionTests() {
     assert.strictEqual(actualDmg, 25, 'Base 10 damage scaled to 25 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 25 damage without duplicate scaling');
   });
 
+  // --- Test 25: Arcanist tactical damage scales with Intelligence, not Strength ---
+  test('25. Arcanist tactical damage scales with Intelligence, not Strength', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-ARCANIST-TACTICAL-SCALE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 1111,
+    });
+
+    // Arcanist A: 10 STR, 0 INT
+    const idA = 'mage_str';
+    room.addOrReconnectPlayer(idA, 'StrMage', 'arcanist', false, {
+      level: 1, xp: 0, strength: 10, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pA = room.getPlayerState(idA)!;
+    const multA = room.computeDamageMult(pA, 'arcane');
+    assert.strictEqual(multA, 1.0, 'Arcanist arcane mult with 10 STR / 0 INT must remain 1.0');
+
+    // Arcanist B: 0 STR, 10 INT
+    const idB = 'mage_int';
+    room.addOrReconnectPlayer(idB, 'IntMage', 'arcanist', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 10, faith: 0, attributePoints: 0,
+    });
+    const pB = room.getPlayerState(idB)!;
+    const multB = room.computeDamageMult(pB, 'arcane');
+    assert.strictEqual(multB, 1.3, 'Arcanist arcane mult with 10 INT must be 1.3');
+
+    // Check spawned tactical projectile damage
+    room.performAction(idA, 'tactical');
+    const projA = room.projectiles.find(pr => pr.ownerId === idA)!;
+    assert.strictEqual(projA.damage, 24, '0 INT Arcanist tactical projectile damage must be 24');
+
+    room.projectiles = []; // Clear projectiles
+    room.performAction(idB, 'tactical');
+    const projB = room.projectiles.find(pr => pr.ownerId === idB)!;
+    assert.strictEqual(projB.damage, 31, '10 INT Arcanist tactical projectile damage must be 31 (24 * 1.3 = 31.2 -> 31)');
+  });
+
+  // --- Test 26: Cleric tactical damage scales with Faith, not Strength ---
+  test('26. Cleric tactical damage scales with Faith, not Strength', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-CLERIC-TACTICAL-SCALE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 2222,
+    });
+
+    // Cleric A: 10 STR, 0 FTH
+    const idA = 'cleric_str';
+    room.addOrReconnectPlayer(idA, 'StrCleric', 'cleric', false, {
+      level: 1, xp: 0, strength: 10, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pA = room.getPlayerState(idA)!;
+    pA.x = 100; pA.y = 100;
+    const multA = room.computeDamageMult(pA, 'divine');
+    assert.strictEqual(multA, 1.0, 'Cleric divine mult with 10 STR / 0 FTH must remain 1.0');
+
+    const dummyA = createTestEnemy('e_dummyA', 'slime', 'Dummy A', 110, 110, 500, { divine: 0 });
+    room.enemies.push(dummyA as any);
+    room.performAction(idA, 'tactical');
+    assert.strictEqual(dummyA.hp, 472, '0 FTH Cleric tactical deals 28 damage (500 - 28 = 472)');
+
+    // Cleric B: 0 STR, 10 FTH
+    const idB = 'cleric_fth';
+    room.addOrReconnectPlayer(idB, 'FthCleric', 'cleric', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 10, attributePoints: 0,
+    });
+    const pB = room.getPlayerState(idB)!;
+    pB.x = 200; pB.y = 200;
+    const multB = room.computeDamageMult(pB, 'divine');
+    assert.strictEqual(multB, 1.3, 'Cleric divine mult with 10 FTH must be 1.3');
+
+    const dummyB = createTestEnemy('e_dummyB', 'slime', 'Dummy B', 210, 210, 500, { divine: 0 });
+    room.enemies.push(dummyB as any);
+    room.performAction(idB, 'tactical');
+    assert.strictEqual(dummyB.hp, 464, '10 FTH Cleric tactical deals 36 damage (28 * 1.3 = 36.4 -> 36, 500 - 36 = 464)');
+  });
+
+  // --- Test 27: Ranger tactical damage scales with Dexterity ---
+  test('27. Ranger tactical damage scales with Dexterity', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-RANGER-TACTICAL-SCALE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 3333,
+    });
+
+    const idR = 'ranger_dex';
+    room.addOrReconnectPlayer(idR, 'DexRanger', 'ranger', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 10, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pR = room.getPlayerState(idR)!;
+    const multR = room.computeDamageMult(pR, 'physical');
+    assert.strictEqual(multR, 1.3, 'Ranger physical mult with 10 DEX must be 1.3');
+
+    room.performAction(idR, 'tactical');
+    const projR = room.projectiles.find(pr => pr.ownerId === idR)!;
+    assert.strictEqual(projR.damage, 23, '10 DEX Ranger tactical projectile damage must be 23 (18 * 1.3 = 23.4 -> 23)');
+  });
+
+  // --- Test 28: Vanguard tactical damage scales with Strength ---
+  test('28. Vanguard tactical damage scales with Strength', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-VANGUARD-TACTICAL-SCALE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 4444,
+    });
+
+    const idV = 'vanguard_str';
+    room.addOrReconnectPlayer(idV, 'StrVanguard', 'vanguard', false, {
+      level: 1, xp: 0, strength: 10, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pV = room.getPlayerState(idV)!;
+    pV.x = 100; pV.y = 100;
+    const multV = room.computeDamageMult(pV, 'physical');
+    assert.strictEqual(multV, 1.3, 'Vanguard physical mult with 10 STR must be 1.3');
+
+    const dummyV = createTestEnemy('e_dummyV', 'slime', 'Dummy V', 110, 110, 500, { physical: 0 });
+    room.enemies.push(dummyV as any);
+    room.performAction(idV, 'tactical');
+    assert.strictEqual(dummyV.hp, 458, '10 STR Vanguard tactical deals 42 damage (32 * 1.3 = 41.6 -> 42, 500 - 42 = 458)');
+  });
+
+  // --- Test 29: Damage resistance still uses the correct category after scaling ---
+  test('29. Damage resistance still uses the correct category after scaling', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-RESISTANCE-CATEGORY-CHECK',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 5555,
+    });
+
+    const idCleric = 'holy_cleric';
+    room.addOrReconnectPlayer(idCleric, 'Faithful', 'cleric', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 10, attributePoints: 0,
+    });
+    const pCleric = room.getPlayerState(idCleric)!;
+    pCleric.x = 100; pCleric.y = 100;
+
+    // Skeleton has divine res = -0.25 (vulnerability) and phys res = -0.10
+    const skeleton = createTestEnemy('e_skel_test', 'skeleton', 'Skeleton', 110, 110, 500, { physical: -0.10, divine: -0.25 });
+    room.enemies.push(skeleton as any);
+
+    // Cleric uses tactical: 28 base * 1.3 FTH mult = 36 scaled divine damage.
+    // Divine vulnerability (-0.25 res): 36 * (1 - (-0.25)) = 36 * 1.25 = 45 damage.
+    room.performAction(idCleric, 'tactical');
+    assert.strictEqual(skeleton.hp, 455, 'Skeleton hp must be 455 after 45 divine damage (500 - 45 = 455)');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);
@@ -1086,4 +1241,5 @@ runRegressionTests().catch(err => {
   console.error('Fatal error in regression tests:', err);
   process.exit(1);
 });
+
 
