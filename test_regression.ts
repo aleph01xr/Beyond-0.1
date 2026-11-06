@@ -716,7 +716,7 @@ async function runRegressionTests() {
       state: 'idle',
       targetPlayerId: null,
       hitAnimMs: 0,
-      isBoss: false,
+      radius: 16,
       stunnedMs: 0,
       slowedMs: 0,
       frozenMs: 0,
@@ -1231,6 +1231,391 @@ async function runRegressionTests() {
     assert.strictEqual(skeleton.hp, 455, 'Skeleton hp must be 455 after 45 divine damage (500 - 45 = 455)');
   });
 
+  // --- Test 30: A projectile cannot damage the same enemy repeatedly across consecutive update ticks ---
+  test('30. A projectile cannot damage the same enemy repeatedly across consecutive update ticks', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PROJ-NO-DUP-ENEMY',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7001,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_tester_30';
+    room.addOrReconnectPlayer(pid, 'Mage30', 'arcanist');
+    const p = room.getPlayerState(pid)!;
+
+    const sx = room.spawnPoint.x;
+    const sy = room.spawnPoint.y;
+
+    const enemy = createTestEnemy('e_static_30', 'slime', 'Slime', sx, sy, 500, { physical: 0, arcane: 0 });
+    room.enemies.push(enemy as any);
+
+    // Stationary projectile resting directly on the enemy with 2 pierce
+    const proj = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'arcane',
+      x: sx,
+      y: sy,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      radius: 10,
+      damage: 25,
+      pierce: 2,
+      ttlMs: 500,
+    });
+
+    // First tick: projectile hits enemy once
+    room.tick(50);
+    assert.strictEqual(enemy.hp, 475, 'Enemy must take 25 damage on first hit');
+    assert.strictEqual(proj.pierce, 1, 'Pierce count must decrement to 1');
+    assert(proj.hitEntityIds?.includes(enemy.id), 'hitEntityIds must contain enemy ID');
+
+    // Second tick: projectile remains on enemy, but MUST NOT hit again
+    room.tick(50);
+    assert.strictEqual(enemy.hp, 475, 'Enemy HP must remain 475 on consecutive tick');
+    assert.strictEqual(proj.pierce, 1, 'Pierce count must remain 1');
+  });
+
+  // --- Test 31: A projectile can damage multiple different enemies when it has sufficient pierce ---
+  test('31. A projectile can damage multiple different enemies when it has sufficient pierce', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PROJ-MULTI-HIT',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7002,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_tester_31';
+    room.addOrReconnectPlayer(pid, 'Ranger31', 'ranger');
+    const p = room.getPlayerState(pid)!;
+
+    const sx = room.spawnPoint.x;
+    const sy = room.spawnPoint.y;
+
+    const e1 = createTestEnemy('e_multi_1', 'goblin', 'Goblin 1', sx + 20, sy, 500, { physical: 0 });
+    const e2 = createTestEnemy('e_multi_2', 'goblin', 'Goblin 2', sx + 80, sy, 500, { physical: 0 });
+    room.enemies.push(e1 as any, e2 as any);
+
+    // Moving projectile from left to right with 2 pierce
+    room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'arrow',
+      x: sx,
+      y: sy,
+      vx: 1000, // moves 100px per 100ms
+      vy: 0,
+      angle: 0,
+      radius: 6,
+      damage: 30,
+      pierce: 2,
+      ttlMs: 1000,
+    });
+
+    // Tick 30ms (moves to sx + 30 -> hits e1 at sx + 20)
+    room.tick(30);
+    assert.strictEqual(e1.hp, 470, 'Enemy 1 must be hit for 30 damage');
+    assert.strictEqual(e2.hp, 500, 'Enemy 2 not yet hit');
+
+    // Tick 60ms (moves to sx + 90 -> hits e2 at sx + 80)
+    room.tick(60);
+    assert.strictEqual(e2.hp, 470, 'Enemy 2 must be hit for 30 damage');
+
+    // Both enemies hit exactly once
+    assert.strictEqual(e1.hp, 470);
+    assert.strictEqual(e2.hp, 470);
+  });
+
+  // --- Test 32: Each newly hit enemy consumes exactly one pierce charge ---
+  test('32. Each newly hit enemy consumes exactly one pierce charge', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PROJ-PIERCE-DECREMENT',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7003,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_tester_32';
+    room.addOrReconnectPlayer(pid, 'Vanguard32', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+
+    const sx = room.spawnPoint.x;
+    const sy = room.spawnPoint.y;
+
+    const e1 = createTestEnemy('e_p1', 'slime', 'S1', sx + 20, sy, 500, { physical: 0 });
+    const e2 = createTestEnemy('e_p2', 'slime', 'S2', sx + 60, sy, 500, { physical: 0 });
+    const e3 = createTestEnemy('e_p3', 'slime', 'S3', sx + 100, sy, 500, { physical: 0 });
+    room.enemies.push(e1 as any, e2 as any, e3 as any);
+
+    const proj = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'slash',
+      x: sx,
+      y: sy,
+      vx: 800,
+      vy: 0,
+      angle: 0,
+      radius: 10,
+      damage: 40,
+      pierce: 3,
+      ttlMs: 1000,
+    });
+
+    // Pass through e1
+    room.tick(30); // x ~ sx + 24 -> hits e1
+    assert.strictEqual(e1.hp, 460);
+    assert.strictEqual(proj.pierce, 2, '1 pierce consumed after hitting e1');
+
+    // Pass through e2
+    room.tick(50); // x ~ sx + 64 -> hits e2
+    assert.strictEqual(e2.hp, 460);
+    assert.strictEqual(proj.pierce, 1, '2nd pierce consumed after hitting e2');
+
+    // Pass through e3
+    room.tick(50); // x ~ sx + 104 -> hits e3
+    assert.strictEqual(e3.hp, 460);
+    assert.strictEqual(room.projectiles.includes(proj), false, 'Projectile removed when pierce reaches 0');
+  });
+
+  // --- Test 33: A projectile cannot repeatedly damage the same training dummy ---
+  test('33. A projectile cannot repeatedly damage the same training dummy', () => {
+    const room = new GameRoom({
+      roomId: 'TAVERN-HUB',
+      name: 'Sanctuary Tavern',
+      hostName: 'Innkeeper',
+      difficulty: 'Normal',
+      seed: 7004,
+    });
+
+    const pid = 'p_tester_33';
+    room.addOrReconnectPlayer(pid, 'DummyTester', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+
+    p.aimAngle = 0;
+    room.spawnDummyAtPlayer(pid);
+    const dummy = room.trainingDummies[0];
+    assert(dummy, 'Training dummy must exist');
+
+    const proj = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'slash',
+      x: dummy.x,
+      y: dummy.y,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      radius: 10,
+      damage: 50,
+      pierce: 4,
+      ttlMs: 500,
+    });
+
+    // Tick 1
+    room.tick(50);
+    assert.strictEqual(dummy.totalDamageTaken, 50, 'Dummy takes 50 damage on first hit');
+    assert.strictEqual(proj.pierce, 3, 'Pierce count decrements to 3');
+
+    // Tick 2
+    room.tick(50);
+    assert.strictEqual(dummy.totalDamageTaken, 50, 'Dummy must NOT take duplicate damage on 2nd tick');
+    assert.strictEqual(proj.pierce, 3, 'Pierce count remains 3');
+  });
+
+  // --- Test 34: Ranger and Cleric work correctly with Piercing Prism ---
+  test('34. Ranger and Cleric gain +1 pierce from Piercing Prism', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-PIERCING-PRISM',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7005,
+    });
+
+    // Ranger with Piercing Prism (base 1 + 1 = 2 pierce)
+    const idR = 'ranger_prism';
+    room.addOrReconnectPlayer(idR, 'PrismRanger', 'ranger');
+    const pR = room.getPlayerState(idR)!;
+    pR.relics.push('piercing_prism');
+
+    room.firePrimaryAttack(pR);
+    const projR = room.projectiles.find(pr => pr.ownerId === idR)!;
+    assert.strictEqual(projR.pierce, 2, 'Ranger projectile with Piercing Prism must have 2 pierce');
+
+    room.projectiles = []; // Clear
+
+    // Cleric with Piercing Prism (base 1 + 1 = 2 pierce)
+    const idC = 'cleric_prism';
+    room.addOrReconnectPlayer(idC, 'PrismCleric', 'cleric');
+    const pC = room.getPlayerState(idC)!;
+    pC.relics.push('piercing_prism');
+
+    room.firePrimaryAttack(pC);
+    const projC = room.projectiles.find(pr => pr.ownerId === idC)!;
+    assert.strictEqual(projC.pierce, 2, 'Cleric projectile with Piercing Prism must have 2 pierce');
+  });
+
+  // --- Test 35: Arcanist and Vanguard retain their existing piercing behavior ---
+  test('35. Arcanist (base 2 pierce) and Vanguard (base 4 pierce) retain default piercing', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-BASE-PIERCE',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7006,
+    });
+
+    const idV = 'vanguard_base';
+    room.addOrReconnectPlayer(idV, 'VanguardBase', 'vanguard');
+    const pV = room.getPlayerState(idV)!;
+    room.firePrimaryAttack(pV);
+    const projV = room.projectiles.find(pr => pr.ownerId === idV)!;
+    assert.strictEqual(projV.pierce, 4, 'Vanguard basic attack must have base 4 pierce');
+
+    const idA = 'arcanist_base';
+    room.addOrReconnectPlayer(idA, 'ArcanistBase', 'arcanist');
+    const pA = room.getPlayerState(idA)!;
+    room.firePrimaryAttack(pA);
+    const projA = room.projectiles.find(pr => pr.ownerId === idA)!;
+    assert.strictEqual(projA.pierce, 2, 'Arcanist basic attack must have base 2 pierce');
+  });
+
+  // --- Test 36: Twinstring Charm still generates its intended additional projectile ---
+  test('36. Twinstring Charm generates an additional projectile dealing 75% damage', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-TWINSTRING',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7007,
+    });
+
+    const idR = 'ranger_twin';
+    room.addOrReconnectPlayer(idR, 'TwinRanger', 'ranger');
+    const pR = room.getPlayerState(idR)!;
+    pR.relics.push('twinstring_charm');
+
+    room.firePrimaryAttack(pR);
+    const projs = room.projectiles.filter(pr => pr.ownerId === idR);
+    assert.strictEqual(projs.length, 2, 'Twinstring Charm must spawn exactly 2 projectiles');
+    assert.strictEqual(projs[0].damage, 24, 'Primary shot deals 100% damage (24)');
+    assert.strictEqual(projs[1].damage, 18, 'Secondary shot deals 75% damage (24 * 0.75 = 18)');
+  });
+
+  // --- Test 37: Separate projectiles can independently hit the same enemy ---
+  test('37. Separate projectiles can independently hit the same enemy', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-INDEPENDENT-PROJS',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7008,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_tester_37';
+    room.addOrReconnectPlayer(pid, 'MultiShooter', 'ranger');
+    const p = room.getPlayerState(pid)!;
+
+    const sx = room.spawnPoint.x;
+    const sy = room.spawnPoint.y;
+
+    const enemy = createTestEnemy('e_target_37', 'slime', 'Slime', sx, sy, 500, { physical: 0 });
+    room.enemies.push(enemy as any);
+
+    // Two independent projectiles at the same location
+    const proj1 = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'arrow',
+      x: sx,
+      y: sy,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      radius: 6,
+      damage: 20,
+      pierce: 1,
+      ttlMs: 500,
+    });
+
+    const proj2 = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'arrow',
+      x: sx,
+      y: sy,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      radius: 6,
+      damage: 20,
+      pierce: 1,
+      ttlMs: 500,
+    });
+
+    room.tick(50);
+    // Both projectiles hit independently for 20 damage each (total 40 damage)
+    assert.strictEqual(enemy.hp, 460, 'Enemy must take 40 total damage from both independent projectiles');
+    assert.strictEqual(room.projectiles.includes(proj1), false, 'Proj 1 removed after pierce 0');
+    assert.strictEqual(room.projectiles.includes(proj2), false, 'Proj 2 removed after pierce 0');
+  });
+
+  // --- Test 38: Critical hits and existing damage scaling remain unchanged ---
+  test('38. Critical hits and damage scaling remain unchanged with projectile hit tracking', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-CRIT-SCALING-CHECK',
+      name: 'Test Dungeon',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 7009,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_tester_38';
+    room.addOrReconnectPlayer(pid, 'CritRanger', 'ranger', false, {
+      level: 10, xp: 0, strength: 0, vitality: 0, dexterity: 10, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const p = room.getPlayerState(pid)!;
+
+    const sx = room.spawnPoint.x;
+    const sy = room.spawnPoint.y;
+    p.x = sx; p.y = sy;
+
+    const enemy = createTestEnemy('e_target_38', 'slime', 'Slime', sx, sy, 500, { physical: 0 });
+    room.enemies.push(enemy as any);
+
+    // Ranger Lvl 10 + 10 DEX: base damage 18 * 1.9 * 1.3 = 44.46 -> 44.
+    // Crit multiplier: 44 * 1.75 = 77.
+    const proj = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'arrow',
+      x: sx,
+      y: sy,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      radius: 6,
+      damage: 77,
+      pierce: 1,
+      crit: true,
+      ttlMs: 500,
+    });
+
+    room.tick(50);
+    assert.strictEqual(enemy.hp, 423, 'Enemy must take 77 crit damage (500 - 77 = 423)');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);
@@ -1241,5 +1626,6 @@ runRegressionTests().catch(err => {
   console.error('Fatal error in regression tests:', err);
   process.exit(1);
 });
+
 
 

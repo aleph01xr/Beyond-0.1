@@ -2814,9 +2814,14 @@ var GameRoom = class _GameRoom {
           }
         }
         const ownerPr = this.players.get(proj.ownerId);
+        if (!proj.hitEntityIds) {
+          proj.hitEntityIds = [];
+        }
         let hitDummy = false;
         for (const dummy of this.trainingDummies) {
+          if (proj.hitEntityIds.includes(dummy.id)) continue;
           if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+            proj.hitEntityIds.push(dummy.id);
             this.damageDummy(
               dummy,
               proj.damage,
@@ -2834,7 +2839,9 @@ var GameRoom = class _GameRoom {
         if (hitDummy) continue;
         for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
           const enemy = this.enemies[eIdx];
+          if (proj.hitEntityIds.includes(enemy.id)) continue;
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+            proj.hitEntityIds.push(enemy.id);
             if (proj.slowOnHit) enemy.slowedMs = 3500;
             this.damageEnemy(
               enemy,
@@ -3003,10 +3010,13 @@ var GameRoom = class _GameRoom {
     }
   }
   spawnProjectile(spec) {
-    this.projectiles.push({
+    const proj = {
       id: this.nextId("proj"),
-      ...spec
-    });
+      ...spec,
+      hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : []
+    };
+    this.projectiles.push(proj);
+    return proj;
   }
   summonBossAdds(boss) {
     const isCatacombs = this.map.biome === "catacombs" || this.floor === 2;

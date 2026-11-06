@@ -2123,10 +2123,16 @@ export class GameRoom {
 
         const ownerPr = this.players.get(proj.ownerId);
 
+        if (!proj.hitEntityIds) {
+          proj.hitEntityIds = [];
+        }
+
         // Check collision with training dummies
         let hitDummy = false;
         for (const dummy of this.trainingDummies) {
+          if (proj.hitEntityIds.includes(dummy.id)) continue;
           if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+            proj.hitEntityIds.push(dummy.id);
             this.damageDummy(
               dummy,
               proj.damage,
@@ -2145,7 +2151,9 @@ export class GameRoom {
 
         for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
           const enemy = this.enemies[eIdx];
+          if (proj.hitEntityIds.includes(enemy.id)) continue;
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+            proj.hitEntityIds.push(enemy.id);
             if (proj.slowOnHit) enemy.slowedMs = 3500;
             this.damageEnemy(
               enemy,
@@ -2187,7 +2195,7 @@ export class GameRoom {
     }
   }
 
-  private firePrimaryAttack(p: PlayerState): void {
+  public firePrimaryAttack(p: PlayerState): void {
     const def = HERO_CLASSES[p.heroClass];
     const category: 'physical' | 'arcane' | 'divine' =
       p.heroClass === 'arcanist' ? 'arcane' : p.heroClass === 'cleric' ? 'divine' : 'physical';
@@ -2326,11 +2334,14 @@ export class GameRoom {
     }
   }
 
-  private spawnProjectile(spec: Omit<ProjectileState, 'id'>): void {
-    this.projectiles.push({
+  public spawnProjectile(spec: Omit<ProjectileState, 'id'>): ProjectileState {
+    const proj: ProjectileState = {
       id: this.nextId('proj'),
       ...spec,
-    });
+      hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : [],
+    };
+    this.projectiles.push(proj);
+    return proj;
   }
 
   private summonBossAdds(boss: EnemyState): void {

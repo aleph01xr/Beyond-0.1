@@ -476,6 +476,7 @@ export interface ProjectileState {
   crit?: boolean;
   ttlMs: number;
   targetEnemyId?: string;
+  hitEntityIds?: string[];
 }
 
 export interface PropState {
