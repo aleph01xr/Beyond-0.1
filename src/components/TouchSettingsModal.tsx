@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { sfx } from '../client/sound.ts';
+import { useFullscreenState } from '../client/fullscreen.ts';
 import type {
   ButtonSizeOption,
   JoystickModeOption,
@@ -15,7 +16,7 @@ interface TouchSettingsModalProps {
   onClose: () => void;
 }
 
-type MenuSettingsTab = 'sfx' | 'touch';
+type MenuSettingsTab = 'sfx' | 'touch' | 'display';
 
 export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
   settings,
@@ -27,6 +28,7 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState<MenuSettingsTab>('sfx');
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
   const [volume, setVolumeState] = useState<number>(0.85);
+  const [isFullscreen, toggleFullscreenState] = useFullscreenState();
 
   const setJoystickSize = (size: JoystickSizeOption) => {
     sfx.playUiClick();
@@ -139,6 +141,20 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
             }`}
           >
             <span>Touch Controls</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              setActiveTab('display');
+            }}
+            className={`px-3 py-1.5 border font-semibold cursor-pointer transition-colors min-h-[36px] flex items-center gap-1.5 ${
+              activeTab === 'display'
+                ? 'bg-[#5B5870] border-[#F4D378] text-white'
+                : 'bg-[#242330] border-[#3B394A] text-[#A8A6B8] hover:text-white'
+            }`}
+          >
+            <span>Display &amp; Screen</span>
           </button>
         </div>
 
@@ -390,6 +406,55 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
                   {forceTouchGamepad ? 'ALWAYS ON' : 'AUTO'}
                 </span>
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: DISPLAY & FULLSCREEN */}
+        {activeTab === 'display' && (
+          <div className="space-y-4 text-xs font-mono">
+            <div className="p-3.5 bg-[#242330] border border-[#3E3C4E] space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-semibold text-white block">Full Screen Mode</span>
+                  <span className="text-[10.5px] text-[#8E8C9F] block">
+                    Expand game viewport to fill your monitor or mobile screen
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    toggleFullscreenState();
+                  }}
+                  className={`px-3 py-1.5 text-xs font-bold border cursor-pointer min-h-[36px] flex items-center gap-1.5 transition-colors ${
+                    isFullscreen
+                      ? 'bg-[#EAB308]/20 border-[#EAB308] text-[#FDE047]'
+                      : 'bg-[#5B5870] border-[#F4D378] text-white hover:bg-[#6D6A85]'
+                  }`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    {isFullscreen ? (
+                      <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                    ) : (
+                      <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
+                    )}
+                  </svg>
+                  <span>{isFullscreen ? 'EXIT FULLSCREEN' : 'TOGGLE FULLSCREEN'}</span>
+                </button>
+              </div>
+
+              <div className="pt-2 border-t border-[#363445] flex items-center justify-between text-[11px] text-[#A2A0B3]">
+                <span>Status: <strong className={isFullscreen ? 'text-[#FDE047]' : 'text-[#8E8C9F]'}>{isFullscreen ? 'Active Fullscreen' : 'Windowed Mode'}</strong></span>
+                <span>Keyboard shortcut: <code className="px-1.5 py-0.5 bg-[#171622] border border-[#3B384B] text-[#FCD34D] rounded">F11</code> / <code className="px-1.5 py-0.5 bg-[#171622] border border-[#3B384B] text-[#FCD34D] rounded">Esc</code></span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-[#1C1B26] border border-[#333144] space-y-1.5 text-[11px] text-[#8E8C9F]">
+              <span className="font-semibold text-white block font-display">Display Optimization Tip</span>
+              <p>
+                Full screen mode locks aspect ratio and removes browser chrome for maximal immersive pixel art gameplay and responsive touch boundaries.
+              </p>
             </div>
           </div>
         )}

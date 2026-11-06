@@ -3,9 +3,6 @@ import { getApiEndpoint } from '../client/apiConfig.ts';
 import { sfx } from '../client/sound.ts';
 import { HERO_CLASSES, type HeroClassId, type UserProfile } from '../shared/types.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
-import loginBgUrl from '../assets/images/beyond_login_courtyard_1793596400177.jpg';
-
-const LOGIN_BG_SRC = loginBgUrl;
 
 interface LoginScreenProps {
   onAuthenticated: (token: string, user: UserProfile) => void;
@@ -28,7 +25,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
-  const [bgLoaded, setBgLoaded] = useState(false);
 
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -155,22 +151,27 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
       : 'Create Account';
 
   return (
-    <main className="relative min-h-screen w-screen overflow-x-hidden overflow-y-auto select-none bg-[#191924] flex items-center justify-center p-4">
-      {/* Fallback gradient */}
+    <main className="relative min-h-screen w-screen overflow-x-hidden overflow-y-auto select-none bg-[#0B0A12] flex items-center justify-center p-4">
+      {/* Deep atmospheric dark fantasy background gradient */}
       <div
         aria-hidden="true"
-        className="fixed inset-0 bg-gradient-to-b from-[#3E64A6] via-[#4C6E8E] to-[#323A36] pointer-events-none"
+        className="fixed inset-0 bg-[radial-gradient(circle_at_50%_35%,_#231F33_0%,_#12101B_55%,_#08070D_100%)] pointer-events-none"
       />
 
-      {/* Beyond Castle Courtyard Pixel Art Background */}
-      <img
-        src={LOGIN_BG_SRC}
-        alt="Beyond pixel-art title screen courtyard"
-        referrerPolicy="no-referrer"
-        onLoad={() => setBgLoaded(true)}
-        className={`fixed inset-0 w-full h-full object-cover pixelated pointer-events-none transition-opacity duration-300 ${
-          bgLoaded ? 'opacity-100' : 'opacity-0'
-        }`}
+      {/* Subtle medieval dungeon hearth ambient lighting accents */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(217,170,82,0.08)_0%,_transparent_60%)] pointer-events-none"
+      />
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 bg-[radial-gradient(ellipse_at_bottom,_rgba(79,70,229,0.06)_0%,_transparent_70%)] pointer-events-none"
+      />
+
+      {/* Vignette border framing */}
+      <div
+        aria-hidden="true"
+        className="fixed inset-0 bg-[radial-gradient(circle_at_50%_50%,_transparent_40%,_#050408_95%)] pointer-events-none"
       />
 
       {/* Subtle floating particles */}

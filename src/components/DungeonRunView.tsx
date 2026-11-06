@@ -10,6 +10,7 @@ import {
   type TouchSettings,
 } from './TouchControls.tsx';
 import { TouchSettingsModal } from './TouchSettingsModal.tsx';
+import { useFullscreenState } from '../client/fullscreen.ts';
 import {
   HERO_CLASSES,
   MAX_ATTRIBUTE,
@@ -87,6 +88,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
+  const [isFullscreen, toggleFullscreen] = useFullscreenState();
 
   // Touch settings & visibility
   const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
@@ -429,6 +431,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               <span>ADMIN</span>
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              sfx.playUiClick();
+              toggleFullscreen();
+            }}
+            title={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+            aria-label={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+            className="stone-button stone-button-dark text-[10px] sm:text-xs flex items-center gap-1"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              {isFullscreen ? (
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+              ) : (
+                <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
+              )}
+            </svg>
+            <span className="hidden sm:inline">{isFullscreen ? 'Exit FS' : 'Full Screen'}</span>
+          </button>
 
           <button
             type="button"
@@ -859,6 +881,33 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 className={`stone-button h-8 text-[10px] py-0 px-4 min-h-0 ${isMuted ? 'stone-button-red' : 'stone-button-green'}`}
               >
                 <span>{isMuted ? ' MUTED' : ' ACTIVE'}</span>
+              </button>
+            </div>
+
+            {/* Display Fullscreen Toggle */}
+            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
+              <div className="space-y-0.5">
+                <span className="text-xs text-[#E2E0EC] block">Full Screen Display Mode:</span>
+                <span className="text-[10px] text-[#A6A4B6] block">Shortcut: F11 or Esc</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  toggleFullscreen();
+                }}
+                className={`stone-button h-8 text-[10px] py-0 px-3 min-h-0 flex items-center gap-1.5 ${
+                  isFullscreen ? 'stone-button-gold' : 'stone-button-dark'
+                }`}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  {isFullscreen ? (
+                    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                  ) : (
+                    <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
+                  )}
+                </svg>
+                <span>{isFullscreen ? 'FULLSCREEN' : 'WINDOWED'}</span>
               </button>
             </div>
 

@@ -15,6 +15,7 @@ import {
   type TouchSettings,
 } from './TouchControls.tsx';
 import { TouchSettingsModal } from './TouchSettingsModal.tsx';
+import { useFullscreenState } from '../client/fullscreen.ts';
 
 interface SanctuaryLobbyProps {
   user: UserProfile;
@@ -52,6 +53,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [seedInput, setSeedInput] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [muted, setMuted] = useState(() => sfx.isMuted());
+  const [isFullscreen, toggleFullscreen] = useFullscreenState();
   const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
 
   // Touch & SFX Menu Modal state
@@ -221,11 +223,29 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               type="button"
               onClick={() => {
                 sfx.playUiClick();
+                toggleFullscreen();
+              }}
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1 flex items-center gap-1"
+              title={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                {isFullscreen ? (
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                ) : (
+                  <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
+                )}
+              </svg>
+              <span>{isFullscreen ? 'Exit FS' : 'Full Screen'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
                 setTouchSettingsOpen(true);
               }}
               className="stone-button stone-button-dark text-[10px] sm:text-xs py-1"
             >
-              Touch &amp; SFX
+              Menu &amp; Settings
             </button>
             <button
               type="button"
