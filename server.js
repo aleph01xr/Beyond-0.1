@@ -9,6 +9,8 @@ import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
 
 // src/shared/types.ts
+var MAX_LEVEL = 100;
+var MAX_ATTRIBUTE = 100;
 var HERO_CLASSES = {
   vanguard: {
     id: "vanguard",
@@ -941,6 +943,18 @@ function generateTavernFloor() {
       y: 18.5 * TILE_SIZE,
       dialogue: "Test your steel against the training dummies in my arena!",
       spriteKind: "veteran"
+    },
+    {
+      id: "npc_aleph",
+      name: "Aleph",
+      x: 18 * TILE_SIZE,
+      y: 28 * TILE_SIZE,
+      dialogue: "The paths you walk are many, but your soul remains constant. Do you seek a different focus?",
+      spriteKind: "mysterious_cloak",
+      options: [
+        { id: "reset_stats", label: "I wish to reset my attributes." },
+        { id: "lore", label: "Who are you?" }
+      ]
     }
   ];
   const trainingDummies = [
@@ -989,7 +1003,7 @@ function generateTavernFloor() {
 
 // src/server/gameEngine.ts
 var MAX_FLOORS_FOR_VICTORY = 5;
-var GameRoom = class {
+var GameRoom = class _GameRoom {
   constructor(opts) {
     this.status = "playing";
     this.floor = 1;
@@ -1016,6 +1030,14 @@ var GameRoom = class {
     this.baseSeed = opts.seed && opts.seed > 0 ? Math.floor(opts.seed) : Math.floor(1e5 + Math.random() * 899999);
     const startFloor = opts.roomId === "TAVERN-HUB" ? 0 : 1;
     this.loadFloor(startFloor, 1);
+  }
+  static computePlayerMaxHp(heroClass, level, vitality, relics = []) {
+    const def = HERO_CLASSES[heroClass];
+    const baseHp = def ? def.maxHp : 100;
+    const levelBonus = (Math.max(1, level) - 1) * 12;
+    const vitBonus = (vitality || 0) * 6;
+    const relicBonus = relics.includes("bastion_pauldron") ? 30 : 0;
+    return baseHp + levelBonus + vitBonus + relicBonus;
   }
   nextId(prefix) {
     return `${prefix}_${this.entitySeq++}`;
@@ -1072,12 +1094,13 @@ var GameRoom = class {
     this.status = "playing";
     this.startedAt = Date.now();
     for (const pr of this.players.values()) {
-      const def = HERO_CLASSES[pr.state.heroClass];
-      pr.state.level = 1;
-      pr.state.xp = 0;
-      pr.state.nextXp = 80;
-      pr.state.maxHp = def.maxHp;
-      pr.state.hp = def.maxHp;
+      pr.state.maxHp = _GameRoom.computePlayerMaxHp(
+        pr.state.heroClass,
+        pr.state.level,
+        pr.state.vitality,
+        pr.state.relics
+      );
+      pr.state.hp = pr.state.maxHp;
       pr.state.shield = 0;
       pr.state.gold = 0;
       pr.state.potions = 2;
@@ -1091,6 +1114,7 @@ var GameRoom = class {
       pr.state.revives = 0;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
+      if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(pr.state.id, pr.state);
     }
     const restartFloor = this.roomId === "TAVERN-HUB" ? 0 : 1;
     this.loadFloor(restartFloor, this.players.size);
@@ -1099,7 +1123,7 @@ var GameRoom = class {
     );
     return this.map;
   }
-  addOrReconnectPlayer(playerId, username, heroClass, isAdmin = false) {
+  addOrReconnectPlayer(playerId, username, heroClass, isAdmin = false, savedStats) {
     const existing = this.players.get(playerId);
     if (existing) {
       existing.state.connected = true;
@@ -1130,9 +1154,9 @@ var GameRoom = class {
       hp: def.maxHp,
       maxHp: def.maxHp,
       shield: 15,
-      level: 1,
-      xp: 0,
-      nextXp: 80,
+      level: savedStats?.level || 1,
+      xp: savedStats?.xp || 0,
+      nextXp: savedStats ? Math.round(80 * Math.pow(1.35, savedStats.level - 1)) : 80,
       gold: 0,
       potions: 2,
       relics: [],
@@ -1154,13 +1178,19 @@ var GameRoom = class {
       isAdmin,
       godMode: false,
       speedBoost: false,
-      dexterity: 0,
-      vitality: 0,
-      strength: 0,
-      intelligence: 0,
-      faith: 0,
-      attributePoints: 0
+      dexterity: savedStats?.dexterity || 0,
+      vitality: savedStats?.vitality || 0,
+      strength: savedStats?.strength || 0,
+      intelligence: savedStats?.intelligence || 0,
+      faith: savedStats?.faith || 0,
+      attributePoints: savedStats?.attributePoints || 0
     };
+    if (state.level >= MAX_LEVEL) {
+      state.nextXp = 999999;
+      state.xp = 0;
+    }
+    state.maxHp = _GameRoom.computePlayerMaxHp(state.heroClass, state.level, state.vitality, state.relics);
+    state.hp = state.maxHp;
     this.players.set(playerId, {
       state,
       input: {
@@ -1231,8 +1261,7 @@ var GameRoom = class {
     if (!def) return;
     const hpRatio = pr.state.hp / Math.max(1, pr.state.maxHp);
     pr.state.heroClass = heroClass;
-    const bonusHp = pr.state.relics.includes("bastion_pauldron") ? 30 : 0;
-    pr.state.maxHp = def.maxHp + (pr.state.level - 1) * 12 + bonusHp;
+    pr.state.maxHp = _GameRoom.computePlayerMaxHp(heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
     pr.state.hp = Math.max(1, Math.round(pr.state.maxHp * hpRatio));
     pr.state.maxSkillCooldownMs = def.tacticalCooldownMs;
     pr.state.maxUltCooldownMs = def.ultCooldownMs;
@@ -1258,8 +1287,9 @@ var GameRoom = class {
       pr.state.relics.push(relicId);
     }
     if (relicId === "bastion_pauldron") {
-      pr.state.maxHp += 30;
-      pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + 30);
+      const oldMax = pr.state.maxHp;
+      pr.state.maxHp = _GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+      pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + (pr.state.maxHp - oldMax));
     }
     const relic = RELIC_CATALOG.find((r) => r.id === relicId);
     if (relic) {
@@ -1315,14 +1345,19 @@ var GameRoom = class {
     if (!pr) return;
     const p = pr.state;
     const def = HERO_CLASSES[p.heroClass];
-    p.level = Math.max(1, Math.min(100, targetLevel));
+    p.level = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
     p.xp = 0;
-    p.nextXp = p.level >= 100 ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
-    const bonusHp = p.relics.includes("bastion_pauldron") ? 30 : 0;
-    const vitBonus = (p.vitality || 0) * 6;
-    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+    p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
+    p.strength = 0;
+    p.vitality = 0;
+    p.dexterity = 0;
+    p.intelligence = 0;
+    p.faith = 0;
+    p.attributePoints = (p.level - 1) * 2;
+    p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp = p.maxHp;
     this.emitEvent("status", p.x, p.y - 26, `Level ${p.level} Set!`, "#F4D378");
+    if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
   }
   addPlayerRelic(playerId, relicId) {
     const pr = this.players.get(playerId);
@@ -1334,10 +1369,17 @@ var GameRoom = class {
       p.relics.push(relicId);
     }
     if (relicId === "bastion_pauldron") {
-      p.maxHp += 30;
-      p.hp = Math.min(p.maxHp, p.hp + 30);
+      const oldMax = p.maxHp;
+      p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
+      p.hp = Math.min(p.maxHp, p.hp + (p.maxHp - oldMax));
     }
     this.emitEvent("status", p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
+  }
+  addPlayerAttributePoints(playerId, amount) {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    pr.state.attributePoints += amount;
+    this.emitEvent("status", pr.state.x, pr.state.y - 24, `+${amount} Attribute Pts`, "#D9AA52");
   }
   updatePlayerAttributes(playerId, strength, vitality, dexterity, intelligence, faith, attributePoints) {
     const pr = this.players.get(playerId);
@@ -1349,13 +1391,11 @@ var GameRoom = class {
     p.intelligence = intelligence;
     p.faith = faith;
     p.attributePoints = attributePoints;
-    const def = HERO_CLASSES[p.heroClass];
-    const bonusHp = p.relics.includes("bastion_pauldron") ? 30 : 0;
-    const vitBonus = (p.vitality || 0) * 6;
     const oldMax = p.maxHp;
-    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+    p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp += p.maxHp - oldMax;
     p.hp = Math.min(p.maxHp, p.hp);
+    if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
   }
   spawnDummyAtPlayer(playerId) {
     const pr = this.players.get(playerId);
@@ -1374,13 +1414,21 @@ var GameRoom = class {
     this.emitEvent("status", dummy.x, dummy.y - 20, "\uFE0F Training Dummy Spawned", "#FBBF24");
   }
   rollRelicChoices(owned) {
-    const available = RELIC_CATALOG.filter((r) => !owned.includes(r.id));
-    const pool = available.length >= 3 ? [...available] : [...RELIC_CATALOG];
+    const unowned = RELIC_CATALOG.filter((r) => !owned.includes(r.id));
+    const unownedPool = [...unowned];
     const picked = [];
-    while (picked.length < 3 && pool.length > 0) {
-      const idx = Math.floor(Math.random() * pool.length);
-      picked.push(pool[idx].id);
-      pool.splice(idx, 1);
+    while (picked.length < 3 && unownedPool.length > 0) {
+      const idx = Math.floor(Math.random() * unownedPool.length);
+      picked.push(unownedPool[idx].id);
+      unownedPool.splice(idx, 1);
+    }
+    if (picked.length < 3) {
+      const fallbackPool = RELIC_CATALOG.filter((r) => !picked.includes(r.id));
+      while (picked.length < 3 && fallbackPool.length > 0) {
+        const idx = Math.floor(Math.random() * fallbackPool.length);
+        picked.push(fallbackPool[idx].id);
+        fallbackPool.splice(idx, 1);
+      }
     }
     return picked;
   }
@@ -1428,6 +1476,18 @@ var GameRoom = class {
               "Floor 5 reaches the Aetherial Void Spire! The Archon of Nothingness unleashes devastating astral starlight novas.",
               "Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!"
             ];
+          } else if (npc.id === "npc_aleph") {
+            lines = [
+              "The paths you walk are many, but your soul remains constant. Do you seek a different focus?",
+              "True strength comes not from the sword, but from knowing how to wield it.",
+              "The stars whispered of your coming. I offer you the chance to begin anew."
+            ];
+            if (!npc.options || npc.options.length === 0) {
+              npc.options = [
+                { id: "reset_stats", label: "I wish to reset my attributes." },
+                { id: "lore", label: "Who are you?" }
+              ];
+            }
           } else {
             const combatTip = p.heroClass === "vanguard" ? "Vanguard, your Shield Bash stuns elites for 1.7s! Use it to interrupt heavy boss attacks." : p.heroClass === "ranger" ? "Ranger, your Frost Volley pierces up to 5 foes at once. Keep kiting to control the room." : p.heroClass === "arcanist" ? "Arcanist, your Astral Nova releases an 8-way starburst that clears enemies surrounding you." : "Cleric, your Dawnstar Smite heals nearby allies while damaging surrounding foes simultaneously.";
             lines = [
@@ -1441,7 +1501,7 @@ var GameRoom = class {
           npc.speechIndex = ((npc.speechIndex ?? -1) + 1) % lines.length;
           const spoken = lines[npc.speechIndex];
           npc.dialogue = spoken;
-          npc.speakingMs = 5e3;
+          npc.speakingMs = npc.options && npc.options.length > 0 ? 9999999 : 5e3;
           this.emitEvent("status", npc.x, npc.y - 28, `"${spoken}"`, "#FDE68A");
           this.pushSystemChat(` ${npc.name}: "${spoken}"`);
         }
@@ -3113,37 +3173,40 @@ var GameRoom = class {
     }
   }
   grantXp(p, amount) {
-    if (p.level >= 100) {
-      p.level = 100;
+    if (p.level >= MAX_LEVEL) {
+      p.level = MAX_LEVEL;
       p.xp = 0;
       return;
     }
     p.xp += amount;
-    while (p.xp >= p.nextXp && p.level < 100) {
+    let leveledUp = false;
+    while (p.xp >= p.nextXp && p.level < MAX_LEVEL) {
       p.xp -= p.nextXp;
       p.level += 1;
-      if (p.level <= 100) {
+      leveledUp = true;
+      if (p.level <= MAX_LEVEL) {
         p.attributePoints += 2;
       }
-      p.nextXp = p.level >= 100 ? 999999 : Math.round(p.nextXp * 1.35);
-      if (p.level >= 100) {
-        p.level = 100;
+      p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(p.nextXp * 1.35);
+      if (p.level >= MAX_LEVEL) {
+        p.level = MAX_LEVEL;
         p.xp = 0;
         p.nextXp = 999999;
-        break;
       }
-      const bonusHp = p.relics.includes("bastion_pauldron") ? 30 : 0;
-      const vitBonus = (p.vitality || 0) * 6;
       const oldMax = p.maxHp;
-      p.maxHp = HERO_CLASSES[p.heroClass].maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+      p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
       p.hp += p.maxHp - oldMax;
       p.hp = Math.min(p.maxHp, p.hp + 24);
       this.emitEvent("status", p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, "#F4D378");
+      if (p.level >= MAX_LEVEL) break;
     }
-    if (p.level >= 100) {
-      p.level = 100;
+    if (p.level >= MAX_LEVEL) {
+      p.level = MAX_LEVEL;
       p.xp = 0;
       p.nextXp = 999999;
+    }
+    if (this.onProgressionUpdateCallback) {
+      this.onProgressionUpdateCallback(p.id, p);
     }
   }
   damagePlayer(p, rawDamage, damageType = "physical") {
@@ -3412,6 +3475,8 @@ function toPublicProfile(acc) {
     totalKills: acc.totalKills,
     totalRevives: acc.totalRevives,
     isAdmin: !!acc.isAdmin,
+    level: acc.level || 1,
+    xp: acc.xp || 0,
     strength: acc.strength || 0,
     vitality: acc.vitality || 0,
     dexterity: acc.dexterity || 0,
@@ -3431,60 +3496,82 @@ function saveAccountsToFile() {
     console.error("Failed to save accounts to file:", err);
   }
 }
+var accountLocks = /* @__PURE__ */ new Map();
 async function persistAccount(acc) {
-  accountsByLower.set(acc.usernameLower, acc);
-  accountsById.set(acc.id, acc);
-  saveAccountsToFile();
-  if (dbPool) {
+  const lockKey = acc.id;
+  const existingLock = accountLocks.get(lockKey) || Promise.resolve();
+  const newLock = (async () => {
     try {
-      await dbPool.query(
-        `INSERT INTO accounts (
-          id, username, username_lower, password_hash, locked_class, preferred_class,
-          runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
-          strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW())
-        ON CONFLICT (username_lower) DO UPDATE SET
-          password_hash = EXCLUDED.password_hash,
-          locked_class = EXCLUDED.locked_class,
-          preferred_class = EXCLUDED.preferred_class,
-          runs_completed = EXCLUDED.runs_completed,
-          highest_floor = EXCLUDED.highest_floor,
-          total_kills = EXCLUDED.total_kills,
-          total_revives = EXCLUDED.total_revives,
-          gold = EXCLUDED.gold,
-          is_admin = EXCLUDED.is_admin,
-          strength = EXCLUDED.strength,
-          vitality = EXCLUDED.vitality,
-          dexterity = EXCLUDED.dexterity,
-          intelligence = EXCLUDED.intelligence,
-          faith = EXCLUDED.faith,
-          attribute_points = EXCLUDED.attribute_points,
-          updated_at = NOW();`,
-        [
-          acc.id,
-          acc.username,
-          acc.usernameLower,
-          acc.passwordHash,
-          acc.lockedClass,
-          acc.preferredClass,
-          acc.runsCompleted,
-          acc.highestFloor,
-          acc.totalKills,
-          acc.totalRevives,
-          acc.gold ?? 0,
-          !!acc.isAdmin,
-          acc.strength || 0,
-          acc.vitality || 0,
-          acc.dexterity || 0,
-          acc.intelligence || 0,
-          acc.faith || 0,
-          acc.attributePoints || 0
-        ]
-      );
+      await existingLock;
     } catch (err) {
-      console.error(`Postgres persist error for ${acc.username}:`, err);
     }
-  }
+    accountsByLower.set(acc.usernameLower, acc);
+    accountsById.set(acc.id, acc);
+    saveAccountsToFile();
+    if (dbPool) {
+      try {
+        await dbPool.query(
+          `INSERT INTO accounts (
+            id, username, username_lower, password_hash, locked_class, preferred_class,
+            runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
+            level, xp,
+            strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+          ON CONFLICT (username_lower) DO UPDATE SET
+            password_hash = EXCLUDED.password_hash,
+            locked_class = EXCLUDED.locked_class,
+            preferred_class = EXCLUDED.preferred_class,
+            runs_completed = EXCLUDED.runs_completed,
+            highest_floor = EXCLUDED.highest_floor,
+            total_kills = EXCLUDED.total_kills,
+            total_revives = EXCLUDED.total_revives,
+            gold = EXCLUDED.gold,
+            is_admin = EXCLUDED.is_admin,
+            level = EXCLUDED.level,
+            xp = EXCLUDED.xp,
+            strength = EXCLUDED.strength,
+            vitality = EXCLUDED.vitality,
+            dexterity = EXCLUDED.dexterity,
+            intelligence = EXCLUDED.intelligence,
+            faith = EXCLUDED.faith,
+            attribute_points = EXCLUDED.attribute_points,
+            updated_at = NOW();`,
+          [
+            acc.id,
+            acc.username,
+            acc.usernameLower,
+            acc.passwordHash,
+            acc.lockedClass,
+            acc.preferredClass,
+            acc.runsCompleted,
+            acc.highestFloor,
+            acc.totalKills,
+            acc.totalRevives,
+            acc.gold ?? 0,
+            !!acc.isAdmin,
+            acc.level || 1,
+            acc.xp || 0,
+            acc.strength || 0,
+            acc.vitality || 0,
+            acc.dexterity || 0,
+            acc.intelligence || 0,
+            acc.faith || 0,
+            acc.attributePoints || 0
+          ]
+        );
+      } catch (err) {
+        console.error(`Postgres persist error for ${acc.username}:`, err);
+        throw err;
+      }
+    }
+  })();
+  accountLocks.set(lockKey, newLock);
+  newLock.finally(() => {
+    if (accountLocks.get(lockKey) === newLock) {
+      accountLocks.delete(lockKey);
+    }
+  });
+  return newLock;
 }
 async function initStorage() {
   if (dbPool) {
@@ -3503,6 +3590,8 @@ async function initStorage() {
           total_revives INT NOT NULL DEFAULT 0,
           gold INT NOT NULL DEFAULT 0,
           is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+          level INT NOT NULL DEFAULT 1,
+          xp INT NOT NULL DEFAULT 0,
           strength INT NOT NULL DEFAULT 0,
           vitality INT NOT NULL DEFAULT 0,
           dexterity INT NOT NULL DEFAULT 0,
@@ -3537,20 +3626,25 @@ async function initStorage() {
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='attribute_points') THEN
             ALTER TABLE accounts ADD COLUMN attribute_points INT NOT NULL DEFAULT 0;
           END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='level') THEN
+            ALTER TABLE accounts ADD COLUMN level INT NOT NULL DEFAULT 1;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='xp') THEN
+            ALTER TABLE accounts ADD COLUMN xp INT NOT NULL DEFAULT 0;
+          END IF;
           -- Increase password_hash length for scrypt
           ALTER TABLE accounts ALTER COLUMN password_hash TYPE VARCHAR(255);
         END $$;
       `);
       console.log("Connected to PostgreSQL and verified schema.");
+      await dbPool.query(`
+        UPDATE accounts 
+        SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
+            attribute_points = (GREATEST(1, level) - 1) * 2;
+      `);
       const res = await dbPool.query("SELECT * FROM accounts");
       for (const row of res.rows) {
-        const rawDex = Number(row.dexterity) || 0;
-        const rawVit = Number(row.vitality) || 0;
-        const str = Number(row.strength) || 0;
-        const intl = Number(row.intelligence) || 0;
-        const fth = Number(row.faith) || 0;
-        const dex = rawDex >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawDex - 10) : rawDex;
-        const vit = rawVit >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawVit - 10) : rawVit;
+        const lvl = Number(row.level) || 1;
         const rec = {
           id: row.id,
           username: row.username,
@@ -3564,12 +3658,14 @@ async function initStorage() {
           totalRevives: Number(row.total_revives) || 0,
           gold: Number(row.gold) || 0,
           isAdmin: !!row.is_admin,
-          strength: str,
-          vitality: vit,
-          dexterity: dex,
-          intelligence: intl,
-          faith: fth,
-          attributePoints: Number(row.attribute_points) || 0
+          level: lvl,
+          xp: Number(row.xp) || 0,
+          strength: 0,
+          vitality: 0,
+          dexterity: 0,
+          intelligence: 0,
+          faith: 0,
+          attributePoints: (Math.max(1, lvl) - 1) * 2
         };
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -3586,20 +3682,18 @@ async function initStorage() {
       const list = JSON.parse(data);
       for (const rec of list) {
         if (isProduction2 && rec.usernameLower === "wanderer") continue;
-        const rawDex = Number(rec.dexterity) || 0;
-        const rawVit = Number(rec.vitality) || 0;
-        const str = Number(rec.strength) || 0;
-        const intl = Number(rec.intelligence) || 0;
-        const fth = Number(rec.faith) || 0;
-        rec.dexterity = rawDex >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawDex - 10) : rawDex;
-        rec.vitality = rawVit >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawVit - 10) : rawVit;
-        rec.strength = str;
-        rec.intelligence = intl;
-        rec.faith = fth;
-        rec.attributePoints = Number(rec.attributePoints) || 0;
+        rec.strength = 0;
+        rec.vitality = 0;
+        rec.dexterity = 0;
+        rec.intelligence = 0;
+        rec.faith = 0;
+        rec.level = Number(rec.level) || 1;
+        rec.xp = Number(rec.xp) || 0;
+        rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), "utf8");
       console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
       console.error("Failed to load accounts from file:", err);
@@ -3613,9 +3707,13 @@ async function initStorage() {
   const adminUsername = "Aleph";
   const adminLower = adminUsername.toLowerCase();
   if (!accountsByLower.has(adminLower)) {
-    if (bootstrapPassword && bootstrapPassword.length >= 8) {
-      console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
-      createAccount(adminUsername, bootstrapPassword, "vanguard", true);
+    if (bootstrapPassword) {
+      if (bootstrapPassword.length >= 16) {
+        console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
+        createAccount(adminUsername, bootstrapPassword, "vanguard", true);
+      } else {
+        console.warn(`[Admin Bootstrap] ADMIN_BOOTSTRAP_PASSWORD provided but does not meet minimum length requirement of 16 characters (length: ${bootstrapPassword.length}).`);
+      }
     }
   } else {
     const existing = accountsByLower.get(adminLower);
@@ -3649,7 +3747,9 @@ function createAccount(username, password, chosenClass = "vanguard", isAdmin = f
     dexterity: 0,
     intelligence: 0,
     faith: 0,
-    attributePoints: 0
+    attributePoints: 0,
+    level: 1,
+    xp: 0
   };
   persistAccount(rec);
   return rec;
@@ -3698,28 +3798,44 @@ function createManagedRoom(opts) {
     difficulty: opts.difficulty,
     seed: opts.seed
   });
-  room.onFloorClearedCallback = (playerIds, floor) => {
+  room.onFloorClearedCallback = async (playerIds, floor) => {
     for (const pid of playerIds) {
       const acc = accountsById.get(pid);
       if (acc) {
         acc.highestFloor = Math.max(acc.highestFloor, floor);
         if (floor >= 3) acc.runsCompleted += 1;
-        persistAccount(acc);
+        await persistAccount(acc).catch((err) => console.error("Failed to persist floor clear:", err));
       }
     }
   };
-  room.onKillCallback = (pid) => {
+  room.onKillCallback = async (pid) => {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.totalKills += 1;
-      persistAccount(acc);
+      await persistAccount(acc).catch((err) => console.error("Failed to persist kill:", err));
     }
   };
-  room.onReviveCallback = (pid) => {
+  room.onReviveCallback = async (pid) => {
     const acc = accountsById.get(pid);
     if (acc) {
       acc.totalRevives += 1;
-      persistAccount(acc);
+      await persistAccount(acc).catch((err) => console.error("Failed to persist revive:", err));
+    }
+  };
+  room.onProgressionUpdateCallback = async (pid, state) => {
+    const acc = accountsById.get(pid);
+    if (acc) {
+      acc.level = state.level;
+      acc.xp = state.xp;
+      acc.strength = state.strength;
+      acc.vitality = state.vitality;
+      acc.dexterity = state.dexterity;
+      acc.intelligence = state.intelligence;
+      acc.faith = state.faith;
+      acc.attributePoints = state.attributePoints;
+      await persistAccount(acc).catch((err) => {
+        console.error("CRITICAL: Failed to persist progression update:", err);
+      });
     }
   };
   rooms.set(roomId, room);
@@ -3895,7 +4011,7 @@ async function startServer() {
     });
     res.status(201).json({ token, user: toPublicProfile(acc) });
   });
-  app.post("/api/auth/change-password", (req, res) => {
+  app.post("/api/auth/change-password", async (req, res) => {
     const authHeader = req.headers.authorization || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     const session = sessionsByToken.get(token);
@@ -3920,13 +4036,18 @@ async function startServer() {
       return;
     }
     acc.passwordHash = hashPassword(newPassword);
-    persistAccount(acc);
+    await persistAccount(acc);
     for (const [t, sess] of sessionsByToken.entries()) {
-      if (sess.userId === userId) {
+      if (sess.userId === userId && t !== token) {
         sessionsByToken.delete(t);
       }
     }
-    res.json({ message: "Password updated successfully. Please log in again." });
+    sessionsByToken.set(token, {
+      userId,
+      expiresAt: Date.now() + 1e3 * 60 * 60 * 24
+      // 24 hours
+    });
+    res.json({ message: "Password updated successfully.", token });
   });
   app.get("/api/auth/me", (req, res) => {
     const authHeader = req.headers.authorization || "";
@@ -4053,7 +4174,7 @@ async function startServer() {
     };
     clients.add(client);
     broadcastRoomList();
-    ws.on("message", (raw) => {
+    ws.on("message", async (raw) => {
       let msg;
       try {
         msg = JSON.parse(String(raw));
@@ -4089,7 +4210,16 @@ async function startServer() {
           difficulty,
           seed: msg.seed
         });
-        room2.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
+        room2.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
+          level: acc.level || 1,
+          xp: acc.xp || 0,
+          strength: acc.strength || 0,
+          vitality: acc.vitality || 0,
+          dexterity: acc.dexterity || 0,
+          intelligence: acc.intelligence || 0,
+          faith: acc.faith || 0,
+          attributePoints: acc.attributePoints || 0
+        });
         client.roomId = room2.roomId;
         sendJson(ws, {
           type: "room:joined",
@@ -4131,7 +4261,16 @@ async function startServer() {
         }
         leaveCurrentRoom(client);
         const heroClass = acc.lockedClass || acc.preferredClass || "vanguard";
-        room2.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin);
+        room2.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
+          level: acc.level || 1,
+          xp: acc.xp || 0,
+          strength: acc.strength || 0,
+          vitality: acc.vitality || 0,
+          dexterity: acc.dexterity || 0,
+          intelligence: acc.intelligence || 0,
+          faith: acc.faith || 0,
+          attributePoints: acc.attributePoints || 0
+        });
         client.roomId = room2.roomId;
         sendJson(ws, {
           type: "room:joined",
@@ -4170,7 +4309,7 @@ async function startServer() {
           const validClass = msg.heroClass === "ranger" || msg.heroClass === "arcanist" || msg.heroClass === "cleric" || msg.heroClass === "vanguard" ? msg.heroClass : "vanguard";
           acc.lockedClass = validClass;
           acc.preferredClass = validClass;
-          persistAccount(acc);
+          await persistAccount(acc);
           room.changeClass(acc.id, validClass);
           broadcastToRoom(room.roomId, {
             type: "chat:message",
@@ -4219,7 +4358,7 @@ async function startServer() {
       } else if (msg.type === "admin:set_level") {
         if (acc.isAdmin) {
           const level = Math.floor(Number(msg.level));
-          if (Number.isFinite(level) && level >= 1 && level <= 100) {
+          if (Number.isFinite(level) && level >= 1 && level <= MAX_LEVEL) {
             room.setPlayerLevel(acc.id, level);
             broadcastToRoom(room.roomId, {
               type: "chat:message",
@@ -4254,19 +4393,101 @@ async function startServer() {
         if (acc.attributePoints && acc.attributePoints > 0) {
           const attr = msg.attribute;
           if (attr === "strength" || attr === "dexterity" || attr === "vitality" || attr === "intelligence" || attr === "faith") {
-            acc[attr] = (acc[attr] || 0) + 1;
-            acc.attributePoints -= 1;
-            persistAccount(acc);
-            room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
-            room.updatePlayerAttributes(
-              acc.id,
-              acc.strength || 0,
-              acc.vitality || 0,
-              acc.dexterity || 0,
-              acc.intelligence || 0,
-              acc.faith || 0,
-              acc.attributePoints || 0
-            );
+            if ((acc[attr] || 0) < MAX_ATTRIBUTE) {
+              const oldAttr = acc[attr] || 0;
+              const oldPoints = acc.attributePoints;
+              acc[attr] = oldAttr + 1;
+              acc.attributePoints = oldPoints - 1;
+              try {
+                await persistAccount(acc);
+                room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
+                room.updatePlayerAttributes(
+                  acc.id,
+                  acc.strength || 0,
+                  acc.vitality || 0,
+                  acc.dexterity || 0,
+                  acc.intelligence || 0,
+                  acc.faith || 0,
+                  acc.attributePoints || 0
+                );
+              } catch (err) {
+                acc[attr] = oldAttr;
+                acc.attributePoints = oldPoints;
+                sendJson(ws, { type: "error", message: "Failed to save attribute allocation. Please try again." });
+              }
+            } else {
+              sendJson(ws, { type: "error", message: `${attr.toUpperCase()} is already at maximum level.` });
+            }
+          }
+        }
+      } else if (msg.type === "admin:add_attribute_points") {
+        if (acc.isAdmin) {
+          const amount = Math.floor(Number(msg.amount));
+          if (Number.isFinite(amount) && amount > 0) {
+            acc.attributePoints = (acc.attributePoints || 0) + amount;
+            await persistAccount(acc).catch((err) => console.error("Failed to persist admin attribute points:", err));
+            room.addPlayerAttributePoints(acc.id, amount);
+          }
+        }
+      } else if (msg.type === "player:reset_attributes") {
+        const spent = (acc.strength || 0) + (acc.vitality || 0) + (acc.dexterity || 0) + (acc.intelligence || 0) + (acc.faith || 0);
+        const oldState = {
+          strength: acc.strength,
+          vitality: acc.vitality,
+          dexterity: acc.dexterity,
+          intelligence: acc.intelligence,
+          faith: acc.faith,
+          attributePoints: acc.attributePoints
+        };
+        acc.attributePoints = (acc.attributePoints || 0) + spent;
+        acc.strength = 0;
+        acc.vitality = 0;
+        acc.dexterity = 0;
+        acc.intelligence = 0;
+        acc.faith = 0;
+        try {
+          await persistAccount(acc);
+          room.updatePlayerAttributes(
+            acc.id,
+            acc.strength,
+            acc.vitality,
+            acc.dexterity,
+            acc.intelligence,
+            acc.faith,
+            acc.attributePoints
+          );
+          room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
+        } catch (err) {
+          Object.assign(acc, oldState);
+          sendJson(ws, { type: "error", message: "Failed to reset attributes. Please try again." });
+        }
+        const aleph = room.npcs.find((n) => n.id === "npc_aleph");
+        if (aleph) {
+          aleph.speakingMs = 0;
+        }
+      } else if (msg.type === "player:dialogue_close") {
+        const speakingNpc = room.npcs.find((n) => (n.speakingMs ?? 0) > 0);
+        if (speakingNpc) {
+          speakingNpc.speakingMs = 0;
+        }
+      } else if (msg.type === "player:dialogue_pick") {
+        const speakingNpc = room.npcs.find((n) => (n.speakingMs ?? 0) > 0);
+        if (speakingNpc) {
+          if (speakingNpc.id === "npc_aleph") {
+            if (msg.optionId === "lore") {
+              speakingNpc.dialogue = "I am who I am.";
+              speakingNpc.speakingMs = 9999999;
+              speakingNpc.options = [
+                { id: "back", label: "I see. (Back)" }
+              ];
+            } else if (msg.optionId === "back") {
+              speakingNpc.dialogue = "The paths you walk are many, but your soul remains constant.";
+              speakingNpc.options = [
+                { id: "reset_stats", label: "I wish to reset my attributes." },
+                { id: "lore", label: "Who are you?" }
+              ];
+            } else if (msg.optionId === "reset_stats") {
+            }
           }
         }
       }

@@ -84,6 +84,20 @@ export class GameRoom {
     this.loadFloor(startFloor, 1);
   }
 
+  public static computePlayerMaxHp(
+    heroClass: HeroClassId,
+    level: number,
+    vitality: number,
+    relics: string[] = []
+  ): number {
+    const def = HERO_CLASSES[heroClass];
+    const baseHp = def ? def.maxHp : 100;
+    const levelBonus = (Math.max(1, level) - 1) * 12;
+    const vitBonus = (vitality || 0) * 6;
+    const relicBonus = relics.includes('bastion_pauldron') ? 30 : 0;
+    return baseHp + levelBonus + vitBonus + relicBonus;
+  }
+
   private nextId(prefix: string): string {
     return `${prefix}_${this.entitySeq++}`;
   }
@@ -142,14 +156,15 @@ export class GameRoom {
     this.status = 'playing';
     this.startedAt = Date.now();
     for (const pr of this.players.values()) {
-      const def = HERO_CLASSES[pr.state.heroClass];
-      
       // Preserve: level, xp, nextXp, strength, vitality, dexterity, intelligence, faith, attributePoints
       
-      // Recalculate HP based on preserved stats
-      const bonusHp = pr.state.relics.includes('bastion_pauldron') ? 30 : 0;
-      const vitBonus = (pr.state.vitality || 0) * 6;
-      pr.state.maxHp = def.maxHp + (pr.state.level - 1) * 12 + bonusHp + vitBonus;
+      // Recalculate HP based on preserved stats using unified formula
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(
+        pr.state.heroClass,
+        pr.state.level,
+        pr.state.vitality,
+        pr.state.relics
+      );
       pr.state.hp = pr.state.maxHp;
 
       pr.state.shield = 0;
@@ -264,8 +279,7 @@ export class GameRoom {
       state.xp = 0;
     }
 
-    const vitBonus = (state.vitality || 0) * 6;
-    state.maxHp = def.maxHp + (state.level - 1) * 12 + vitBonus;
+    state.maxHp = GameRoom.computePlayerMaxHp(state.heroClass, state.level, state.vitality, state.relics);
     state.hp = state.maxHp;
 
     this.players.set(playerId, {
@@ -346,8 +360,7 @@ export class GameRoom {
     if (!def) return;
     const hpRatio = pr.state.hp / Math.max(1, pr.state.maxHp);
     pr.state.heroClass = heroClass;
-    const bonusHp = pr.state.relics.includes('bastion_pauldron') ? 30 : 0;
-    pr.state.maxHp = def.maxHp + (pr.state.level - 1) * 12 + bonusHp;
+    pr.state.maxHp = GameRoom.computePlayerMaxHp(heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
     pr.state.hp = Math.max(1, Math.round(pr.state.maxHp * hpRatio));
     pr.state.maxSkillCooldownMs = def.tacticalCooldownMs;
     pr.state.maxUltCooldownMs = def.ultCooldownMs;
@@ -375,8 +388,9 @@ export class GameRoom {
       pr.state.relics.push(relicId);
     }
     if (relicId === 'bastion_pauldron') {
-      pr.state.maxHp += 30;
-      pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + 30);
+      const oldMax = pr.state.maxHp;
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+      pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + (pr.state.maxHp - oldMax));
     }
     const relic = RELIC_CATALOG.find((r) => r.id === relicId);
     if (relic) {
@@ -449,9 +463,7 @@ export class GameRoom {
     p.faith = 0;
     p.attributePoints = (p.level - 1) * 2;
 
-    const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-    const vitBonus = (p.vitality || 0) * 6;
-    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+    p.maxHp = GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp = p.maxHp;
     this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} Set!`, '#F4D378');
     if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
@@ -467,8 +479,9 @@ export class GameRoom {
       p.relics.push(relicId);
     }
     if (relicId === 'bastion_pauldron') {
-      p.maxHp += 30;
-      p.hp = Math.min(p.maxHp, p.hp + 30);
+      const oldMax = p.maxHp;
+      p.maxHp = GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
+      p.hp = Math.min(p.maxHp, p.hp + (p.maxHp - oldMax));
     }
     this.emitEvent('status', p.x, p.y - 24, `+ ${relic.name}`, relic.accent);
   }
@@ -499,11 +512,8 @@ export class GameRoom {
     p.faith = faith;
     p.attributePoints = attributePoints;
 
-    const def = HERO_CLASSES[p.heroClass];
-    const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-    const vitBonus = (p.vitality || 0) * 6;
     const oldMax = p.maxHp;
-    p.maxHp = def.maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+    p.maxHp = GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp += p.maxHp - oldMax;
     p.hp = Math.min(p.maxHp, p.hp);
     if (this.onProgressionUpdateCallback) this.onProgressionUpdateCallback(p.id, p);
@@ -527,14 +537,27 @@ export class GameRoom {
   }
 
   private rollRelicChoices(owned: string[]): string[] {
-    const available = RELIC_CATALOG.filter((r) => !owned.includes(r.id));
-    const pool = available.length >= 3 ? [...available] : [...RELIC_CATALOG];
+    const unowned = RELIC_CATALOG.filter((r) => !owned.includes(r.id));
+    const unownedPool = [...unowned];
     const picked: string[] = [];
-    while (picked.length < 3 && pool.length > 0) {
-      const idx = Math.floor(Math.random() * pool.length);
-      picked.push(pool[idx].id);
-      pool.splice(idx, 1);
+
+    // Prioritize all available unowned relics first
+    while (picked.length < 3 && unownedPool.length > 0) {
+      const idx = Math.floor(Math.random() * unownedPool.length);
+      picked.push(unownedPool[idx].id);
+      unownedPool.splice(idx, 1);
     }
+
+    // If fewer than 3 unowned relics remain, fill remaining slots from the rest of the catalog
+    if (picked.length < 3) {
+      const fallbackPool = RELIC_CATALOG.filter((r) => !picked.includes(r.id));
+      while (picked.length < 3 && fallbackPool.length > 0) {
+        const idx = Math.floor(Math.random() * fallbackPool.length);
+        picked.push(fallbackPool[idx].id);
+        fallbackPool.splice(idx, 1);
+      }
+    }
+
     return picked;
   }
 
@@ -2563,10 +2586,8 @@ export class GameRoom {
         p.nextXp = 999999;
       }
 
-      const bonusHp = p.relics.includes('bastion_pauldron') ? 30 : 0;
-      const vitBonus = (p.vitality || 0) * 6;
       const oldMax = p.maxHp;
-      p.maxHp = HERO_CLASSES[p.heroClass].maxHp + (p.level - 1) * 12 + bonusHp + vitBonus;
+      p.maxHp = GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
       p.hp += (p.maxHp - oldMax);
       p.hp = Math.min(p.maxHp, p.hp + 24);
 

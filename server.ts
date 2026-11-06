@@ -284,16 +284,16 @@ async function initStorage(): Promise<void> {
       `);
       console.log('Connected to PostgreSQL and verified schema.');
 
+      // Reset stats across all accounts
+      await dbPool.query(`
+        UPDATE accounts 
+        SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
+            attribute_points = (GREATEST(1, level) - 1) * 2;
+      `);
+
       const res = await dbPool.query('SELECT * FROM accounts');
       for (const row of res.rows) {
-        const rawDex = Number(row.dexterity) || 0;
-        const rawVit = Number(row.vitality) || 0;
-        const str = Number(row.strength) || 0;
-        const intl = Number(row.intelligence) || 0;
-        const fth = Number(row.faith) || 0;
-        const dex = rawDex >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawDex - 10) : rawDex;
-        const vit = rawVit >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawVit - 10) : rawVit;
-
+        const lvl = Number(row.level) || 1;
         const rec: AccountRecord = {
           id: row.id,
           username: row.username,
@@ -307,14 +307,14 @@ async function initStorage(): Promise<void> {
           totalRevives: Number(row.total_revives) || 0,
           gold: Number(row.gold) || 0,
           isAdmin: !!row.is_admin,
-          level: Number(row.level) || 1,
+          level: lvl,
           xp: Number(row.xp) || 0,
-          strength: str,
-          vitality: vit,
-          dexterity: dex,
-          intelligence: intl,
-          faith: fth,
-          attributePoints: Number(row.attribute_points) || 0,
+          strength: 0,
+          vitality: 0,
+          dexterity: 0,
+          intelligence: 0,
+          faith: 0,
+          attributePoints: (Math.max(1, lvl) - 1) * 2,
         };
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -335,23 +335,19 @@ async function initStorage(): Promise<void> {
         // STRICT: Never load 'wanderer' in production
         if (isProduction && rec.usernameLower === 'wanderer') continue;
         
-        const rawDex = Number(rec.dexterity) || 0;
-        const rawVit = Number(rec.vitality) || 0;
-        const str = Number(rec.strength) || 0;
-        const intl = Number(rec.intelligence) || 0;
-        const fth = Number(rec.faith) || 0;
-        rec.dexterity = rawDex >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawDex - 10) : rawDex;
-        rec.vitality = rawVit >= 10 && str === 0 && intl === 0 && fth === 0 ? Math.max(0, rawVit - 10) : rawVit;
-        rec.strength = str;
-        rec.intelligence = intl;
-        rec.faith = fth;
+        rec.strength = 0;
+        rec.vitality = 0;
+        rec.dexterity = 0;
+        rec.intelligence = 0;
+        rec.faith = 0;
         rec.level = Number(rec.level) || 1;
         rec.xp = Number(rec.xp) || 0;
-        rec.attributePoints = Number(rec.attributePoints) || 0;
+        rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
 
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
+      fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), 'utf8');
       console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
       console.error('Failed to load accounts from file:', err);
@@ -370,9 +366,13 @@ async function initStorage(): Promise<void> {
   const adminLower = adminUsername.toLowerCase();
   
   if (!accountsByLower.has(adminLower)) {
-    if (bootstrapPassword && bootstrapPassword.length >= 8) {
-      console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
-      createAccount(adminUsername, bootstrapPassword, 'vanguard', true);
+    if (bootstrapPassword) {
+      if (bootstrapPassword.length >= 16) {
+        console.log(`Bootstrapping fresh admin account "${adminUsername}"...`);
+        createAccount(adminUsername, bootstrapPassword, 'vanguard', true);
+      } else {
+        console.warn(`[Admin Bootstrap] ADMIN_BOOTSTRAP_PASSWORD provided but does not meet minimum length requirement of 16 characters (length: ${bootstrapPassword.length}).`);
+      }
     }
   } else {
     const existing = accountsByLower.get(adminLower)!;
@@ -747,7 +747,7 @@ async function startServer() {
     res.status(201).json({ token, user: toPublicProfile(acc) });
   });
 
-  app.post('/api/auth/change-password', (req, res) => {
+  app.post('/api/auth/change-password', async (req, res) => {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     const session = sessionsByToken.get(token);
@@ -776,17 +776,21 @@ async function startServer() {
     }
 
     acc.passwordHash = hashPassword(newPassword);
-    persistAccount(acc);
+    await persistAccount(acc);
 
-    // Invalidate all sessions for this user except current? 
-    // Checklist says: "Invalidate existing sessions after a successful password change."
+    // Invalidate all other sessions for this user while keeping the current session alive
     for (const [t, sess] of sessionsByToken.entries()) {
-      if (sess.userId === userId) {
+      if (sess.userId === userId && t !== token) {
         sessionsByToken.delete(t);
       }
     }
+    // Refresh current session expiry
+    sessionsByToken.set(token, {
+      userId,
+      expiresAt: Date.now() + 1000 * 60 * 60 * 24, // 24 hours
+    });
 
-    res.json({ message: 'Password updated successfully. Please log in again.' });
+    res.json({ message: 'Password updated successfully.', token });
   });
 
   app.get('/api/auth/me', (req, res) => {
