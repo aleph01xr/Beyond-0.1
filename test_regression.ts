@@ -361,6 +361,342 @@ async function runRegressionTests() {
     assert.strictEqual(locks.has(acc.id), false, 'Lock was cleanly released');
   });
 
+  // --- Test 6: Cleric with 0 FTH vs 10 FTH vs 20 FTH scaling ---
+  test('6. Cleric healing increases with Faith (0 FTH vs 10 FTH vs 20 FTH)', () => {
+    const base = 36;
+    const heal0 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 0 });
+    const heal10 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 10 });
+    const heal20 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 20 });
+
+    assert.strictEqual(heal0, 36, '0 FTH at lvl 1 gives base 36');
+    assert(heal10 > heal0, `10 FTH (${heal10}) must heal more than 0 FTH (${heal0})`);
+    assert(heal20 > heal10, `20 FTH (${heal20}) must heal more than 10 FTH (${heal10})`);
+    assert.strictEqual(heal10, 47, '36 * 1.0 * 1.30 = 46.8 -> 47');
+    assert.strictEqual(heal20, 58, '36 * 1.0 * 1.60 = 57.6 -> 58');
+  });
+
+  // --- Test 7: Level scaling with same Faith ---
+  test('7. Higher level increases Cleric healing with same Faith', () => {
+    const base = 36;
+    const fth = 10;
+    const healLvl1 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: fth });
+    const healLvl10 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 10, faith: fth });
+    const healLvl25 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 25, faith: fth });
+
+    assert(healLvl10 > healLvl1, `Lvl 10 (${healLvl10}) must heal more than Lvl 1 (${healLvl1})`);
+    assert(healLvl25 > healLvl10, `Lvl 25 (${healLvl25}) must heal more than Lvl 10 (${healLvl10})`);
+    assert.strictEqual(healLvl1, 47);
+    assert.strictEqual(healLvl10, 68, '36 * 1.45 * 1.30 = 67.86 -> 68');
+    assert.strictEqual(healLvl25, 103, '36 * 2.20 * 1.30 = 102.96 -> 103');
+  });
+
+  // --- Test 8: Dawnstar Smite (Sanctified Pulse) uses scaling helper ---
+  test('8. Dawnstar Smite heals allies using authoritative server scaling helper', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-CLERIC-TACTICAL',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 1111,
+    });
+
+    // Add Cleric at Level 10 with 15 Faith
+    const clericId = 'cleric_player';
+    room.addOrReconnectPlayer(clericId, 'SisterAria', 'cleric', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 15,
+      attributePoints: 3,
+    });
+
+    // Add injured ally nearby (Vanguard)
+    const allyId = 'vanguard_ally';
+    room.addOrReconnectPlayer(allyId, 'SirRoland', 'vanguard', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 5,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 13,
+    });
+
+    const cleric = room.getPlayerState(clericId)!;
+    const ally = room.getPlayerState(allyId)!;
+    cleric.x = 200;
+    cleric.y = 200;
+    ally.x = 210;
+    ally.y = 210;
+
+    // Damage ally so they have room to be healed
+    ally.hp = 100;
+    const expectedHeal = GameRoom.computeHealingAmount(36, cleric);
+    // Level 10, 15 FTH: 36 * (1 + 9*0.05) * (1 + 15*0.03) = 36 * 1.45 * 1.45 = 75.69 -> 76
+    assert.strictEqual(expectedHeal, 76);
+
+    // Cleric uses tactical skill
+    room.performAction(clericId, 'tactical');
+    assert.strictEqual(ally.hp, 100 + expectedHeal, 'Ally HP must increase by exactly 76');
+  });
+
+  // --- Test 9: Radiant Aura uses scaling helper ---
+  test('9. Radiant Aura uses scaling helper and increases with Cleric stats', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-CLERIC-AURA',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 2222,
+    });
+
+    const clericId = 'cleric_aura';
+    room.addOrReconnectPlayer(clericId, 'AuraCleric', 'cleric', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 20,
+      attributePoints: 0,
+    });
+
+    const allyId = 'ally_aura';
+    room.addOrReconnectPlayer(allyId, 'AuraAlly', 'ranger', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const cleric = room.getPlayerState(clericId)!;
+    const ally = room.getPlayerState(allyId)!;
+    cleric.x = 300;
+    cleric.y = 300;
+    ally.x = 320;
+    ally.y = 320;
+
+    // Injure ally to 80% (normal base 4)
+    ally.hp = Math.round(ally.maxHp * 0.8);
+    const startHp = ally.hp;
+
+    // Expected aura heal: Level 10, 20 FTH, base 4:
+    // 4 * (1 + 9*0.05) * (1 + 20*0.03) = 4 * 1.45 * 1.60 = 9.28 -> 9
+    const expectedNormal = GameRoom.computeHealingAmount(4, cleric);
+    assert.strictEqual(expectedNormal, 9);
+
+    // Tick room 2000ms to trigger Radiant Aura
+    room.tick(2000);
+    assert.strictEqual(ally.hp, startHp + expectedNormal, 'Aura must heal ally by exactly 9 HP');
+
+    // Injure ally below 50% HP (critical base 6):
+    // 6 * 1.45 * 1.60 = 13.92 -> 14
+    ally.hp = Math.round(ally.maxHp * 0.4);
+    const critStartHp = ally.hp;
+    const expectedCrit = GameRoom.computeHealingAmount(6, cleric);
+    assert.strictEqual(expectedCrit, 14);
+
+    room.tick(2000);
+    assert.strictEqual(ally.hp, critStartHp + expectedCrit, 'Critical aura must heal ally by exactly 14 HP');
+  });
+
+  // --- Test 10: Healing a nearly full-health player never exceeds max HP ---
+  test('10. Healing never overheals beyond target maxHp', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-OVERHEAL-TEST',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 3333,
+    });
+
+    const clericId = 'cleric_overheal';
+    room.addOrReconnectPlayer(clericId, 'OverhealCleric', 'cleric', false, {
+      level: 20,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 30,
+      attributePoints: 0,
+    });
+
+    const cleric = room.getPlayerState(clericId)!;
+    // Set HP to 5 below max
+    cleric.hp = cleric.maxHp - 5;
+    assert(cleric.hp < cleric.maxHp);
+
+    // Massive heal
+    room.performAction(clericId, 'tactical');
+    assert.strictEqual(cleric.hp, cleric.maxHp, 'HP must be clamped exactly to maxHp');
+  });
+
+  // --- Test 11: Healing does not affect enemies ---
+  test('11. Healing does not heal enemies', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-ENEMY-HEAL-TEST',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 4444,
+    });
+
+    const clericId = 'cleric_enemy_test';
+    room.addOrReconnectPlayer(clericId, 'CombatCleric', 'cleric');
+    const cleric = room.getPlayerState(clericId)!;
+    cleric.x = 256;
+    cleric.y = 256;
+
+    assert(room.enemies.length > 0, 'Room must have spawned enemies');
+    const enemy = room.enemies[0];
+    enemy.x = cleric.x + 20;
+    enemy.y = cleric.y + 20;
+    enemy.hp = 50;
+    const startEnemyHp = enemy.hp;
+
+    // Cleric uses tactical skill (Dawnstar Smite)
+    room.performAction(clericId, 'tactical');
+
+    // Enemy should take damage from Smite, NOT heal!
+    assert(enemy.hp < startEnemyHp, 'Enemy must take damage from Smite, never heal');
+  });
+
+  // --- Test 12: Non-Cleric healing is unchanged by Faith ---
+  test('12. Non-Cleric healing does not receive Cleric Faith scaling', () => {
+    // Vanguard with 20 FTH
+    const vanguardHeal = GameRoom.computeHealingAmount(36, {
+      heroClass: 'vanguard',
+      level: 10,
+      faith: 20,
+    });
+    assert.strictEqual(vanguardHeal, 36, 'Non-Cleric helper call returns base amount without FTH scaling');
+
+    // Potion healing remains 45% of maxHp
+    const maxHp = 200;
+    const potionHeal = Math.round(maxHp * 0.45);
+    assert.strictEqual(potionHeal, 90, 'Potion healing is unscaled consumable percentage');
+  });
+
+  // --- Test 13: Multiplayer healing is calculated consistently on server ---
+  test('13. Multiplayer party members in range receive consistent server-authoritative heal', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-MULTIPLAYER-HEAL',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 5555,
+    });
+
+    const clericId = 'mp_cleric';
+    room.addOrReconnectPlayer(clericId, 'HolyCleric', 'cleric', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 10,
+      attributePoints: 0,
+    });
+
+    const ally1Id = 'mp_ally1';
+    room.addOrReconnectPlayer(ally1Id, 'Ally1', 'ranger', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const ally2Id = 'mp_ally2';
+    room.addOrReconnectPlayer(ally2Id, 'Ally2', 'arcanist', false, {
+      level: 10,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const cleric = room.getPlayerState(clericId)!;
+    const ally1 = room.getPlayerState(ally1Id)!;
+    const ally2 = room.getPlayerState(ally2Id)!;
+
+    cleric.x = 250; cleric.y = 250;
+    ally1.x = 270; ally1.y = 270;
+    ally2.x = 290; ally2.y = 290;
+
+    ally1.hp = 50;
+    ally2.hp = 50;
+
+    // Both are within 210px range
+    const expected = GameRoom.computeHealingAmount(36, cleric);
+    room.performAction(clericId, 'tactical');
+
+    assert.strictEqual(ally1.hp, 50 + expected, 'Ally 1 receives authoritative heal');
+    assert.strictEqual(ally2.hp, 50 + expected, 'Ally 2 receives identical authoritative heal');
+  });
+
+  // --- Test 14: Revive behavior remains correct and separate from ordinary healing ---
+  test('14. Downed players are not healed by normal heals and receive 45% maxHp on revive', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-REVIVE-TEST',
+      name: 'Sanctuary',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 6666,
+    });
+
+    const clericId = 'revive_cleric';
+    room.addOrReconnectPlayer(clericId, 'MedicCleric', 'cleric', false, {
+      level: 15,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 25,
+      attributePoints: 0,
+    });
+
+    const allyId = 'downed_ally';
+    room.addOrReconnectPlayer(allyId, 'FallenWarrior', 'vanguard');
+
+    const cleric = room.getPlayerState(clericId)!;
+    const ally = room.getPlayerState(allyId)!;
+    cleric.x = 250; cleric.y = 250;
+    ally.x = 260; ally.y = 260;
+
+    // Down the ally
+    ally.downed = true;
+    ally.hp = 0;
+
+    // Normal tactical skill should NOT heal downed ally
+    room.performAction(clericId, 'tactical');
+    assert.strictEqual(ally.hp, 0, 'Downed ally must not be healed by Dawnstar Smite');
+    assert.strictEqual(ally.downed, true, 'Downed status must remain');
+
+    // Complete revive restores exactly 45% maxHp
+    room.completeRevive(ally, clericId);
+    assert.strictEqual(ally.downed, false, 'Ally is now revived');
+    assert.strictEqual(ally.hp, Math.round(ally.maxHp * 0.45), 'Revived ally has exactly 45% maxHp');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

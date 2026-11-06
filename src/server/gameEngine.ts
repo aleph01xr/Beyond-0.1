@@ -98,6 +98,34 @@ export class GameRoom {
     return baseHp + levelBonus + vitBonus + relicBonus;
   }
 
+  public static computeHealingAmount(
+    baseHealing: number,
+    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null
+  ): number {
+    if (baseHealing <= 0) return 0;
+    if (!healer || healer.heroClass !== 'cleric') {
+      return Math.max(1, Math.round(baseHealing));
+    }
+
+    const lvl = Math.max(1, healer.level || 1);
+    const fth = Math.max(0, healer.faith || 0);
+
+    // Level scaling: +5% per level beyond Level 1
+    const levelMult = 1 + (lvl - 1) * 0.05;
+    // Faith scaling: +3% per Faith point
+    const faithMult = 1 + fth * 0.03;
+
+    const scaled = baseHealing * levelMult * faithMult;
+    return Math.max(1, Math.round(scaled));
+  }
+
+  public computeHealingAmount(
+    baseHealing: number,
+    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null
+  ): number {
+    return GameRoom.computeHealingAmount(baseHealing, healer);
+  }
+
   private nextId(prefix: string): string {
     return `${prefix}_${this.entitySeq++}`;
   }
@@ -576,7 +604,7 @@ export class GameRoom {
   public performAction(
     playerId: string,
     action: 'tactical' | 'ult' | 'potion' | 'interact',
-    aimAngle: number
+    aimAngle = 0
   ): { floorChanged?: DungeonMap } {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== 'playing') return {};
@@ -859,9 +887,10 @@ export class GameRoom {
           });
         }
       } else if (p.heroClass === 'cleric') {
+        const baseHeal = 36;
+        const heal = this.computeHealingAmount(baseHeal, p);
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
-            const heal = 32;
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
             this.emitEvent('heal', ally.state.x, ally.state.y - 20, `+${heal} HP`, '#6EE7B7');
           }
@@ -1126,6 +1155,9 @@ export class GameRoom {
 
       if (pulseZonesNow) {
         if (z.kind === 'solar_beacon') {
+          const ownerPr = this.players.get(z.ownerId);
+          const ownerState = ownerPr ? ownerPr.state : null;
+          const beaconHeal = this.computeHealingAmount(9, ownerState);
           for (const pr of this.players.values()) {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (dist <= z.radius) {
@@ -1135,7 +1167,8 @@ export class GameRoom {
                   this.completeRevive(pr.state, z.ownerId);
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
-                pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + 9);
+                pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
+                this.emitEvent('heal', pr.state.x, pr.state.y - 16, `+${beaconHeal} Solar Beacon`, '#FEF08A');
               }
             }
           }
@@ -1181,7 +1214,8 @@ export class GameRoom {
             const ally = allyPr.state;
             if (!ally.downed && ally.connected && Math.hypot(ally.x - cleric.x, ally.y - cleric.y) <= 140) {
               if (ally.hp < ally.maxHp) {
-                const healAmt = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
+                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
+                const healAmt = this.computeHealingAmount(baseHeal, cleric);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
                 this.emitEvent('heal', ally.x, ally.y - 18, ` Radiant Aura +${healAmt}`, '#FDE047');
               }
@@ -2701,7 +2735,7 @@ export class GameRoom {
     }
   }
 
-  private completeRevive(target: PlayerState, reviverId: string): void {
+  public completeRevive(target: PlayerState, reviverId: string): void {
     target.downed = false;
     target.reviveProgress = 0;
     target.hp = Math.round(target.maxHp * 0.45);

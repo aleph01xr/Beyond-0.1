@@ -111,7 +111,7 @@ var HERO_CLASSES = {
     weapon: "Dawnstar Flanged Mace & Reliquary",
     weaponType: "Radiant Smite & Holy Relic",
     passiveName: "Radiant Aura",
-    passiveDesc: "Emits a sacred 120-range warmth that heals wounded party members for +4 HP every 2 seconds, and increases revive speed by 40%.",
+    passiveDesc: "Emits a sacred 140-range warmth that heals wounded party members every 2 seconds (scales with Level & Faith, base 4 HP, +50% when critical), and increases revive speed by 40%.",
     maxHp: 128,
     speed: 185,
     damage: 22,
@@ -126,10 +126,10 @@ var HERO_CLASSES = {
     stats: { survivability: 4, damage: 3, range: 3, mobility: 2, utility: 5 },
     resistances: { physical: 0.15, fire: 0.4, frost: 0.2, lightning: 0.15, poison: 0.35, bleed: 0.25 },
     tacticalName: "Sanctified Pulse",
-    tacticalDesc: "Release a blinding wave of golden light, healing you and all nearby party members for +36 HP while searing adjacent undead.",
+    tacticalDesc: "Release a blinding wave of golden light, healing you and all nearby party members (scales with Level & Faith, base 36 HP) while searing adjacent undead.",
     tacticalCooldownMs: 5400,
     ultName: "Solar Beacon",
-    ultDesc: "Consecrate holy ground with an avatar of the Sun that continuously heals all allies and instantly revives downed teammates who enter.",
+    ultDesc: "Consecrate holy ground with an avatar of the Sun that continuously heals all allies (scales with Level & Faith, base 9 HP) and rapidly revives downed teammates who enter.",
     ultCooldownMs: 14e3
   }
 };
@@ -1039,6 +1039,21 @@ var GameRoom = class _GameRoom {
     const relicBonus = relics.includes("bastion_pauldron") ? 30 : 0;
     return baseHp + levelBonus + vitBonus + relicBonus;
   }
+  static computeHealingAmount(baseHealing, healer) {
+    if (baseHealing <= 0) return 0;
+    if (!healer || healer.heroClass !== "cleric") {
+      return Math.max(1, Math.round(baseHealing));
+    }
+    const lvl = Math.max(1, healer.level || 1);
+    const fth = Math.max(0, healer.faith || 0);
+    const levelMult = 1 + (lvl - 1) * 0.05;
+    const faithMult = 1 + fth * 0.03;
+    const scaled = baseHealing * levelMult * faithMult;
+    return Math.max(1, Math.round(scaled));
+  }
+  computeHealingAmount(baseHealing, healer) {
+    return _GameRoom.computeHealingAmount(baseHealing, healer);
+  }
   nextId(prefix) {
     return `${prefix}_${this.entitySeq++}`;
   }
@@ -1443,7 +1458,7 @@ var GameRoom = class _GameRoom {
     }
     return picked;
   }
-  performAction(playerId, action, aimAngle) {
+  performAction(playerId, action, aimAngle = 0) {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== "playing") return {};
     const p = pr.state;
@@ -1693,9 +1708,10 @@ var GameRoom = class _GameRoom {
           });
         }
       } else if (p.heroClass === "cleric") {
+        const baseHeal = 36;
+        const heal = this.computeHealingAmount(baseHeal, p);
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
-            const heal = 32;
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
             this.emitEvent("heal", ally.state.x, ally.state.y - 20, `+${heal} HP`, "#6EE7B7");
           }
@@ -1919,6 +1935,9 @@ var GameRoom = class _GameRoom {
       }
       if (pulseZonesNow) {
         if (z.kind === "solar_beacon") {
+          const ownerPr = this.players.get(z.ownerId);
+          const ownerState = ownerPr ? ownerPr.state : null;
+          const beaconHeal = this.computeHealingAmount(9, ownerState);
           for (const pr of this.players.values()) {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (dist <= z.radius) {
@@ -1928,7 +1947,8 @@ var GameRoom = class _GameRoom {
                   this.completeRevive(pr.state, z.ownerId);
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
-                pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + 9);
+                pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
+                this.emitEvent("heal", pr.state.x, pr.state.y - 16, `+${beaconHeal} Solar Beacon`, "#FEF08A");
               }
             }
           }
@@ -1972,7 +1992,8 @@ var GameRoom = class _GameRoom {
             const ally = allyPr.state;
             if (!ally.downed && ally.connected && Math.hypot(ally.x - cleric.x, ally.y - cleric.y) <= 140) {
               if (ally.hp < ally.maxHp) {
-                const healAmt = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
+                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
+                const healAmt = this.computeHealingAmount(baseHeal, cleric);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
                 this.emitEvent("heal", ally.x, ally.y - 18, ` Radiant Aura +${healAmt}`, "#FDE047");
               }
