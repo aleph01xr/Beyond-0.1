@@ -56,6 +56,31 @@ const BIOMES: { id: BiomeId; title: string; bossNames: string[] }[] = [
     title: 'Aetherial Void Spire',
     bossNames: ['Archon of Nothingness'],
   },
+  {
+    id: 'hymns',
+    title: 'Hall of Forgotten Hymns',
+    bossNames: ['Elyndor, Keeper of the Last Hymn'],
+  },
+  {
+    id: 'reliquary',
+    title: 'Reliquary of the Departed',
+    bossNames: ['Zadkiel, Keeper of the Ashen Reliquary'],
+  },
+  {
+    id: 'scripture',
+    title: 'Chapel of Severed Light',
+    bossNames: ['Sariel, Warden of the Veiled Scripture'],
+  },
+  {
+    id: 'nave',
+    title: 'Celestial Nave',
+    bossNames: ['Seraphel, Sentinel of the Final Seal'],
+  },
+  {
+    id: 'wardengate',
+    title: "Warden's Gate",
+    bossNames: ['Oriphiel, The Last Warden'],
+  },
 ];
 
 export function generateDungeonFloor(
@@ -71,7 +96,8 @@ export function generateDungeonFloor(
   const height = 44;
   const tiles = new Array<number>(width * height).fill(0);
 
-  const biomeSpec = BIOMES[(floor - 1) % BIOMES.length];
+  const biomeIndex = Math.max(0, Math.min(BIOMES.length - 1, floor - 1));
+  const biomeSpec = BIOMES[biomeIndex];
 
   const setTile = (tx: number, ty: number, code: number) => {
     if (tx >= 1 && tx < width - 1 && ty >= 1 && ty < height - 1) {
@@ -358,7 +384,17 @@ export function generateDungeonFloor(
               ? ['skeleton', 'knight', 'cultist']
               : floor === 4
                 ? ['cultist', 'shadow_stalker', 'skeleton']
-                : ['astral_sentinel', 'cultist', 'shadow_stalker'];
+                : floor === 5
+                  ? ['astral_sentinel', 'cultist', 'shadow_stalker']
+                  : floor === 6
+                    ? ['skeleton', 'cultist', 'hymn_phantom']
+                    : floor === 7
+                      ? ['knight', 'relic_golem', 'skeleton']
+                      : floor === 8
+                        ? ['cultist', 'shadow_stalker', 'veiled_heretic']
+                        : floor === 9
+                          ? ['astral_sentinel', 'knight', 'celestial_arbiter']
+                          : ['astral_sentinel', 'shadow_stalker', 'warden_enforcer'];
 
       for (let i = 0; i < enemyCount; i++) {
         const kind = pool[Math.floor(rng() * pool.length)];
@@ -408,9 +444,9 @@ export function generateDungeonFloor(
       enemies.push(boss);
 
       const bossMinion1: EnemyKind =
-        floor === 1 ? 'skeleton' : floor === 2 ? 'cultist' : floor === 3 ? 'knight' : floor === 4 ? 'shadow_stalker' : 'astral_sentinel';
+        floor === 1 ? 'skeleton' : floor === 2 ? 'cultist' : floor === 3 ? 'knight' : floor === 4 ? 'shadow_stalker' : floor === 5 ? 'astral_sentinel' : floor === 6 ? 'hymn_phantom' : floor === 7 ? 'relic_golem' : floor === 8 ? 'veiled_heretic' : floor === 9 ? 'celestial_arbiter' : 'warden_enforcer';
       const bossMinion2: EnemyKind =
-        floor === 1 ? 'goblin' : floor === 2 ? 'skeleton' : floor === 3 ? 'cultist' : floor === 4 ? 'cultist' : 'shadow_stalker';
+        floor === 1 ? 'goblin' : floor === 2 ? 'skeleton' : floor === 3 ? 'cultist' : floor === 4 ? 'cultist' : floor === 5 ? 'shadow_stalker' : floor === 6 ? 'skeleton' : floor === 7 ? 'knight' : floor === 8 ? 'cultist' : floor === 9 ? 'astral_sentinel' : 'shadow_stalker';
 
       enemies.push(
         makeEnemy(
@@ -563,6 +599,66 @@ function getEnemyResistances(
         arcane: 0.40,
         divine: 0.30,
       };
+    case 'hymn_phantom':
+      return {
+        physical: elite ? 0.30 : 0.22,
+        fire: 0.15,
+        frost: 0.25,
+        lightning: 0.15,
+        poison: 0.80, // spectral choir spirit
+        bleed: 0.85,
+        tenacity: elite ? 0.45 : 0.30,
+        arcane: 0.30,
+        divine: -0.10,
+      };
+    case 'relic_golem':
+      return {
+        physical: elite ? 0.50 : 0.42, // ancient bronze reliquary armor
+        fire: 0.35,
+        frost: 0.35,
+        lightning: -0.10, // metal structure conducts electricity
+        poison: 0.95, // stone/bronze construct
+        bleed: 0.95,
+        tenacity: elite ? 0.65 : 0.50,
+        arcane: 0.30,
+        divine: 0.25,
+      };
+    case 'veiled_heretic':
+      return {
+        physical: elite ? 0.28 : 0.20,
+        fire: 0.20,
+        frost: 0.20,
+        lightning: 0.20,
+        poison: 0.40,
+        bleed: 0.35,
+        tenacity: elite ? 0.45 : 0.32,
+        arcane: 0.35,
+        divine: 0.35,
+      };
+    case 'celestial_arbiter':
+      return {
+        physical: elite ? 0.45 : 0.36,
+        fire: 0.35,
+        frost: 0.35,
+        lightning: 0.45,
+        poison: 0.70,
+        bleed: 0.80,
+        tenacity: elite ? 0.60 : 0.45,
+        arcane: 0.45,
+        divine: 0.40,
+      };
+    case 'warden_enforcer':
+      return {
+        physical: elite ? 0.52 : 0.44, // plate armor of the Warden's guard
+        fire: 0.30,
+        frost: 0.30,
+        lightning: 0.25,
+        poison: 0.50,
+        bleed: 0.50,
+        tenacity: elite ? 0.65 : 0.50,
+        arcane: 0.35,
+        divine: 0.35,
+      };
     case 'boss': {
       if (biome === 'ember' || floor === 3) {
         return {
@@ -612,6 +708,66 @@ function getEnemyResistances(
           arcane: 0.45,
           divine: 0.40,
         };
+      } else if (biome === 'hymns' || floor === 6) {
+        return {
+          physical: 0.32,
+          fire: 0.25,
+          frost: 0.35,
+          lightning: 0.25,
+          poison: 0.65,
+          bleed: 0.60,
+          tenacity: 0.70,
+          arcane: 0.40,
+          divine: 0.30,
+        };
+      } else if (biome === 'reliquary' || floor === 7) {
+        return {
+          physical: 0.48, // armored reliquary guardian
+          fire: 0.35,
+          frost: 0.35,
+          lightning: 0.20,
+          poison: 0.75,
+          bleed: 0.75,
+          tenacity: 0.75,
+          arcane: 0.35,
+          divine: 0.35,
+        };
+      } else if (biome === 'scripture' || floor === 8) {
+        return {
+          physical: 0.38,
+          fire: 0.30,
+          frost: 0.30,
+          lightning: 0.30,
+          poison: 0.55,
+          bleed: 0.50,
+          tenacity: 0.75,
+          arcane: 0.45,
+          divine: 0.40,
+        };
+      } else if (biome === 'nave' || floor === 9) {
+        return {
+          physical: 0.45,
+          fire: 0.40,
+          frost: 0.40,
+          lightning: 0.45,
+          poison: 0.70,
+          bleed: 0.70,
+          tenacity: 0.80,
+          arcane: 0.50,
+          divine: 0.45,
+        };
+      } else if (biome === 'wardengate' || floor === 10) {
+        return {
+          physical: 0.52, // Oriphiel, The Last Warden
+          fire: 0.45,
+          frost: 0.45,
+          lightning: 0.45,
+          poison: 0.75,
+          bleed: 0.75,
+          tenacity: 0.85,
+          arcane: 0.50,
+          divine: 0.50,
+        };
       } else {
         return {
           physical: 0.25,
@@ -651,6 +807,11 @@ export function makeEnemy(
     knight: { name: 'Dread Halberdier', hp: 105, radius: 16 },
     shadow_stalker: { name: 'Abyssal Stalker', hp: 88, radius: 15 },
     astral_sentinel: { name: 'Celestial Sentinel', hp: 122, radius: 17 },
+    hymn_phantom: { name: 'Hymn Phantom', hp: 96, radius: 15 },
+    relic_golem: { name: 'Relic Golem', hp: 135, radius: 17 },
+    veiled_heretic: { name: 'Veiled Heretic', hp: 110, radius: 15 },
+    celestial_arbiter: { name: 'Celestial Arbiter', hp: 145, radius: 16 },
+    warden_enforcer: { name: 'Warden Enforcer', hp: 160, radius: 18 },
     boss: { name: 'Warden Malakor', hp: 950, radius: 28 },
   };
   const spec = baseStats[kind];

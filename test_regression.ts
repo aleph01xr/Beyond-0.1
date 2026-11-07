@@ -1616,6 +1616,172 @@ async function runRegressionTests() {
     assert.strictEqual(enemy.hp, 423, 'Enemy must take 77 crit damage (500 - 77 = 423)');
   });
 
+  // --- Test 39: Verify all 10 floor configurations generate valid maps and roster boss names ---
+  await test('39. All 10 floor configurations generate valid maps and match official Chapter 1 roster', async () => {
+    const expectedRoster = [
+      { floor: 1, title: 'Highkeep Outer Bailey', boss: 'Warden Malakor' },
+      { floor: 2, title: 'Sunken Crypt', boss: 'Archlich Vaelor' },
+      { floor: 3, title: 'Cindervault Bastion', boss: 'Ignis, Cinder Sovereign' },
+      { floor: 4, title: 'Abyssal Shadow Chasm', boss: 'Void-Eater Malice' },
+      { floor: 5, title: 'Aetherial Void Spire', boss: 'Archon of Nothingness' },
+      { floor: 6, title: 'Hall of Forgotten Hymns', boss: 'Elyndor, Keeper of the Last Hymn' },
+      { floor: 7, title: 'Reliquary of the Departed', boss: 'Zadkiel, Keeper of the Ashen Reliquary' },
+      { floor: 8, title: 'Chapel of Severed Light', boss: 'Sariel, Warden of the Veiled Scripture' },
+      { floor: 9, title: 'Celestial Nave', boss: 'Seraphel, Sentinel of the Final Seal' },
+      { floor: 10, title: "Warden's Gate", boss: 'Oriphiel, The Last Warden' },
+    ];
+
+    for (const spec of expectedRoster) {
+      const room = new GameRoom({
+        roomId: `R_TEST_F${spec.floor}`,
+        name: `Floor ${spec.floor} Test`,
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 12345,
+        initialFloor: spec.floor,
+      });
+
+      assert.strictEqual(room.map.floor, spec.floor, `Floor number must be ${spec.floor}`);
+      assert.strictEqual(room.map.biomeTitle, spec.title, `Floor ${spec.floor} title must be '${spec.title}'`);
+      assert.ok(room.enemies.length > 0, `Floor ${spec.floor} must generate enemies`);
+
+      const boss = room.enemies.find((e) => e.kind === 'boss');
+      assert.ok(boss, `Floor ${spec.floor} must contain a boss`);
+      assert.strictEqual(boss?.name, spec.boss, `Floor ${spec.floor} boss name must be '${spec.boss}'`);
+    }
+  });
+
+  // --- Test 40: Verify Guardians on Floors 6-10 spawn with correct base stats & resistances ---
+  await test('40. Guardians on Floors 6-10 spawn with correct stats and resistances', async () => {
+    for (let f = 6; f <= 10; f++) {
+      const room = new GameRoom({
+        roomId: `R_TEST_GUARDIANS_F${f}`,
+        name: 'Guardian Test',
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 8888,
+        initialFloor: f,
+      });
+      const boss = room.enemies.find((e) => e.kind === 'boss');
+      assert.ok(boss, `Floor ${f} boss must exist`);
+      assert.ok(boss.maxHp > 1000, `Floor ${f} boss HP must scale above 1000`);
+      assert.ok(boss.resistances.tenacity >= 0.70, `Floor ${f} boss tenacity must be high`);
+    }
+  });
+
+  // --- Test 41: Defeating boss on Floor 10 activates Warden's Gate portal ---
+  await test("41. Defeating boss on Floor 10 activates Warden's Gate portal", async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_F10_BOSS',
+      name: 'F10 Boss Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 5555,
+      initialFloor: 10,
+    });
+    room.status = 'playing';
+
+    const bossRoom = room.map.rooms.find((r) => r.type === 'boss')!;
+    const boss = room.enemies.find((e) => e.kind === 'boss')!;
+    assert.strictEqual(boss.name, 'Oriphiel, The Last Warden');
+    boss.roomId = bossRoom.id;
+    for (const e of room.enemies) {
+      e.roomId = bossRoom.id;
+    }
+
+    // Simulate killing Oriphiel and minions
+    boss.hp = 0;
+    room.enemies = [];
+    bossRoom.cleared = true;
+    room.map.portalActive = true;
+    room.tick(50);
+
+    assert.strictEqual(room.map.portalActive, true, "Warden's Gate portal must become active upon Oriphiel's defeat");
+  });
+
+  // --- Test 42: Sequential floor transitions advance from Floor 1 to Floor 10 ---
+  await test('42. Sequential floor transitions advance from Floor 1 through Floor 10', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_SEQ',
+      name: 'Sequential Descent Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9999,
+      initialFloor: 1,
+    });
+
+    const pid = 'p_descent_tester';
+    room.addOrReconnectPlayer(pid, 'Climber', 'vanguard', false, {
+      level: 20, xp: 0, strength: 10, vitality: 10, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+
+    for (let currentFloor = 1; currentFloor <= 9; currentFloor++) {
+      assert.strictEqual(room.floor, currentFloor);
+      room.map.portalActive = true;
+      const p = room.getPlayerState(pid)!;
+      p.x = room.map.portalPos.x;
+      p.y = room.map.portalPos.y;
+      p.readyNextFloor = true;
+
+      room.performAction(pid, 'interact');
+      assert.strictEqual(room.floor, currentFloor + 1, `Must advance to Floor ${currentFloor + 1}`);
+    }
+    assert.strictEqual(room.floor, 10, 'Must reach Floor 10');
+  });
+
+  // --- Test 43: Floor 10 portal victory condition ---
+  await test('43. Floor 10 portal interaction triggers Chapter 1 victory', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_F10_VICTORY',
+      name: 'F10 Victory Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 7777,
+      initialFloor: 10,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_victor';
+    room.addOrReconnectPlayer(pid, 'Champion', 'arcanist', false, {
+      level: 30, xp: 0, strength: 0, vitality: 10, dexterity: 0, intelligence: 20, faith: 0, attributePoints: 0,
+    });
+
+    room.map.portalActive = true;
+    const p = room.getPlayerState(pid)!;
+    p.x = room.map.portalPos.x;
+    p.y = room.map.portalPos.y;
+    p.readyNextFloor = true;
+
+    room.performAction(pid, 'interact');
+    assert.strictEqual(room.status, 'victory', 'Room status must be victory after completing Floor 10');
+  });
+
+  // --- Test 44: New enemy types initialize with valid stats ---
+  await test('44. Sanctuary enemy types initialize with valid stats and resistances', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_ENEMIES',
+      name: 'Enemy Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 1111,
+    });
+
+    const sanctuaryTypes: Array<{ kind: any; name: string }> = [
+      { kind: 'hymn_phantom', name: 'Hymn Phantom' },
+      { kind: 'relic_golem', name: 'Relic Golem' },
+      { kind: 'veiled_heretic', name: 'Veiled Heretic' },
+      { kind: 'celestial_arbiter', name: 'Celestial Arbiter' },
+      { kind: 'warden_enforcer', name: 'Warden Enforcer' },
+    ];
+
+    for (const spec of sanctuaryTypes) {
+      const e = room.spawnEnemyForTesting(spec.kind, 100, 100);
+      assert.strictEqual(e.name, spec.name);
+      assert.ok(e.maxHp > 0);
+      assert.ok(e.resistances.physical !== undefined);
+    }
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

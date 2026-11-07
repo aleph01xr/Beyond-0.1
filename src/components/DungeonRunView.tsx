@@ -471,6 +471,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         const isEmber = map.biome === 'ember' || snapshot.floor === 3;
         const isVoid = map.biome === 'void' || snapshot.floor === 4;
         const isAstral = map.biome === 'astral' || snapshot.floor === 5;
+        const isHymns = map.biome === 'hymns' || snapshot.floor === 6;
+        const isReliquary = map.biome === 'reliquary' || snapshot.floor === 7;
+        const isScripture = map.biome === 'scripture' || snapshot.floor === 8;
+        const isNave = map.biome === 'nave' || snapshot.floor === 9;
+        const isWardenGate = map.biome === 'wardengate' || snapshot.floor === 10;
         const hpPct = Math.max(0, Math.min(100, (boss.hp / Math.max(1, boss.maxHp)) * 100));
 
         const theme = isCatacombs
@@ -513,15 +518,65 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                     badge: 'CELESTIAL TITAN',
                     badgeColor: 'text-[#FEF08A] border-[#EAB308]',
                   }
-                : {
-                    border: 'border-[#6E2932]',
-                    bg: 'bg-[#191822]/95',
-                    barTrack: 'bg-[#2A171B]',
-                    barFill: 'bg-[#DC2626]',
-                    titleColor: 'text-[#FCA5A5]',
-                    badge: 'HIGHKEEP WARDEN',
-                    badgeColor: 'text-[#FDE68A] border-[#B45309]',
-                  };
+                : isHymns
+                  ? {
+                      border: 'border-[#A855F7]',
+                      bg: 'bg-[#1E172A]/95',
+                      barTrack: 'bg-[#2B1D3D]',
+                      barFill: 'bg-gradient-to-r from-[#9333EA] via-[#C084FC] to-[#FDE047]',
+                      titleColor: 'text-[#E9D5FF]',
+                      badge: 'HYMN KEEPER',
+                      badgeColor: 'text-[#E9D5FF] border-[#A855F7]',
+                    }
+                  : isReliquary
+                    ? {
+                        border: 'border-[#D9AA52]',
+                        bg: 'bg-[#211E16]/95',
+                        barTrack: 'bg-[#332D1F]',
+                        barFill: 'bg-gradient-to-r from-[#B45309] via-[#D9AA52] to-[#FEF08A]',
+                        titleColor: 'text-[#FDE68A]',
+                        badge: 'RELIQUARY WARDEN',
+                        badgeColor: 'text-[#FDE68A] border-[#D9AA52]',
+                      }
+                    : isScripture
+                      ? {
+                          border: 'border-[#E11D48]',
+                          bg: 'bg-[#241018]/95',
+                          barTrack: 'bg-[#381622]',
+                          barFill: 'bg-gradient-to-r from-[#BE123C] via-[#FB7185] to-[#C084FC]',
+                          titleColor: 'text-[#FECDD3]',
+                          badge: 'SCRIPTURE WARDEN',
+                          badgeColor: 'text-[#FECDD3] border-[#E11D48]',
+                        }
+                      : isNave
+                        ? {
+                            border: 'border-[#EAB308]',
+                            bg: 'bg-[#24231A]/95',
+                            barTrack: 'bg-[#363422]',
+                            barFill: 'bg-gradient-to-r from-[#CA8A04] via-[#FACC15] to-[#FFFFFF]',
+                            titleColor: 'text-[#FEF08A]',
+                            badge: 'FINAL SEAL SENTINEL',
+                            badgeColor: 'text-[#FEF08A] border-[#EAB308]',
+                          }
+                        : isWardenGate
+                          ? {
+                              border: 'border-[#38BDF8]',
+                              bg: 'bg-[#121A2A]/95',
+                              barTrack: 'bg-[#1C283F]',
+                              barFill: 'bg-gradient-to-r from-[#0284C7] via-[#38BDF8] to-[#FDE047]',
+                              titleColor: 'text-[#E0F2FE]',
+                              badge: 'THE LAST WARDEN',
+                              badgeColor: 'text-[#E0F2FE] border-[#38BDF8]',
+                            }
+                          : {
+                              border: 'border-[#6E2932]',
+                              bg: 'bg-[#191822]/95',
+                              barTrack: 'bg-[#2A171B]',
+                              barFill: 'bg-[#DC2626]',
+                              titleColor: 'text-[#FCA5A5]',
+                              badge: 'HIGHKEEP WARDEN',
+                              badgeColor: 'text-[#FDE68A] border-[#B45309]',
+                            };
 
         return (
           <div

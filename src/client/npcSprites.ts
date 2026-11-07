@@ -934,3 +934,57 @@ export function drawNpc(
   ctx.font = '600 9px "JetBrains Mono", monospace';
   ctx.fillText(isSpeaking ? '• Speaking •' : '[E] Talk', x, y - 34 + bob);
 }
+
+/**
+ * Humanoid boss sprite for Floors 6-10 (Elyndor, Zadkiel, Sariel, Seraphel, Oriphiel)
+ */
+export function drawHumanoidBoss(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  bossName: string,
+  now: number
+): void {
+  const walkBob = Math.sin(now * 0.005) * 2;
+  const cy = y - 10 + walkBob;
+
+  // Body/Robes (Common humanoid shape)
+  ctx.fillStyle = '#1e1b4b';
+  ctx.fillRect(x - 8, cy - 10, 16, 20);
+  
+  // Head
+  ctx.fillStyle = '#FCD34D';
+  ctx.fillRect(x - 4, cy - 20, 8, 8);
+
+  // Distinguishing features based on boss name (simplified)
+  if (bossName.includes('Elyndor')) {
+    // Elyndor: Robes + Sacred Hymn Book
+    ctx.fillStyle = '#7C3AED';
+    ctx.fillRect(x - 8, cy - 8, 16, 22); // Robes
+    ctx.fillStyle = '#FCD34D'; // Book
+    ctx.fillRect(x + 5, cy, 6, 6);
+  } else if (bossName.includes('Zadkiel')) {
+    // Zadkiel: Armor + Reliquary Shield
+    ctx.fillStyle = '#D9AA52';
+    ctx.fillRect(x - 10, cy - 10, 20, 22); // Armor
+    ctx.fillStyle = '#A16207'; // Shield
+    ctx.fillRect(x + 6, cy - 5, 8, 12);
+  } else if (bossName.includes('Sariel')) {
+    // Sariel: Veiled Robes + Floating Scripture
+    ctx.fillStyle = '#A855F7';
+    ctx.fillRect(x - 8, cy - 10, 16, 22); // Robes
+    ctx.fillStyle = '#E879F9'; // Scripture
+    ctx.fillRect(x - 12, cy - 2, 6, 8);
+  } else if (bossName.includes('Seraphel')) {
+    // Seraphel: Radiant Wings + Celestial Spear
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(x - 15, cy - 12, 30, 4); // Wings
+    ctx.fillRect(x - 2, cy - 20, 4, 25); // Spear
+  } else if (bossName.includes('Oriphiel')) {
+    // Oriphiel: Warden Armor + Greatblade
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillRect(x - 10, cy - 12, 20, 24); // Armor
+    ctx.fillStyle = '#E2E8F0'; // Sword
+    ctx.fillRect(x + 8, cy - 25, 4, 30);
+  }
+}

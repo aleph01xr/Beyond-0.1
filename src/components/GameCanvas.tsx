@@ -18,6 +18,7 @@ import {
   drawShadowStalkerSprite,
   drawAstralSentinelSprite,
 } from '../client/enemySprites.ts';
+import { drawHumanoidBoss } from '../client/npcSprites.ts';
 import { sfx } from '../client/sound.ts';
 import {
   HERO_CLASSES,
@@ -144,15 +145,65 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   wallFace: '#170D24',
                   pillar: '#5C3580',
                 }
-              : {
-                  voidBg: '#07121C',
-                  floorA: '#1A334B',
-                  floorB: '#14293E',
-                  moss: '#1E4B6E',
-                  wallTop: '#2C577D',
-                  wallFace: '#0F2032',
-                  pillar: '#3D74A3',
-                };
+              : map.biome === 'astral'
+                ? {
+                    voidBg: '#07121C',
+                    floorA: '#1A334B',
+                    floorB: '#14293E',
+                    moss: '#1E4B6E',
+                    wallTop: '#2C577D',
+                    wallFace: '#0F2032',
+                    pillar: '#3D74A3',
+                  }
+                : map.biome === 'hymns'
+                  ? {
+                      voidBg: '#110F1B',
+                      floorA: '#2A263D',
+                      floorB: '#221F33',
+                      moss: '#6B538C',
+                      wallTop: '#4E4466',
+                      wallFace: '#1A1728',
+                      pillar: '#8C73AD',
+                    }
+                  : map.biome === 'reliquary'
+                    ? {
+                        voidBg: '#141310',
+                        floorA: '#353026',
+                        floorB: '#2D281F',
+                        moss: '#8C7748',
+                        wallTop: '#594F3B',
+                        wallFace: '#211E18',
+                        pillar: '#9C8552',
+                      }
+                    : map.biome === 'scripture'
+                      ? {
+                          voidBg: '#170A0F',
+                          floorA: '#3D222A',
+                          floorB: '#311A22',
+                          moss: '#8C3A4F',
+                          wallTop: '#5E333F',
+                          wallFace: '#210F16',
+                          pillar: '#9E4D62',
+                        }
+                      : map.biome === 'nave'
+                        ? {
+                            voidBg: '#171822',
+                            floorA: '#4A4D5E',
+                            floorB: '#3E4152',
+                            moss: '#D4AF37',
+                            wallTop: '#70758F',
+                            wallFace: '#2A2D3C',
+                            pillar: '#E6C254',
+                          }
+                        : {
+                            voidBg: '#0A0D18',
+                            floorA: '#1E253A',
+                            floorB: '#161C2E',
+                            moss: '#38BDF8',
+                            wallTop: '#374566',
+                            wallFace: '#101524',
+                            pillar: '#D9AA52',
+                          };
 
     ctx.fillStyle = palette.voidBg;
     ctx.fillRect(0, 0, off.width, off.height);
@@ -1725,6 +1776,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ctx.fillStyle = s % 2 === 0 ? '#38BDF8' : '#FEF08A';
               ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2);
             }
+          } else if (map.floor >= 6) {
+            drawHumanoidBoss(ctx, ex, ey, en.name, now);
           } else {
             // ==============================================================
             // FLOOR 1 BOSS: Warden Malakor (Highkeep Bastion Warden Knight)

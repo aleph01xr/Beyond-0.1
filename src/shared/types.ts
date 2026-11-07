@@ -2,7 +2,17 @@ export type HeroClassId = 'vanguard' | 'ranger' | 'arcanist' | 'cleric';
 
 export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
 
-export type BiomeId = 'courtyard' | 'catacombs' | 'ember' | 'void' | 'astral';
+export type BiomeId =
+  | 'courtyard'
+  | 'catacombs'
+  | 'ember'
+  | 'void'
+  | 'astral'
+  | 'hymns'
+  | 'reliquary'
+  | 'scripture'
+  | 'nave'
+  | 'wardengate';
 export const MAX_LEVEL = 100;
 export const MAX_ATTRIBUTE = 100;
 
@@ -422,7 +432,20 @@ export interface PlayerState {
   attributePoints: number;
 }
 
-export type EnemyKind = 'slime' | 'goblin' | 'skeleton' | 'cultist' | 'knight' | 'shadow_stalker' | 'astral_sentinel' | 'boss';
+export type EnemyKind =
+  | 'slime'
+  | 'goblin'
+  | 'skeleton'
+  | 'cultist'
+  | 'knight'
+  | 'shadow_stalker'
+  | 'astral_sentinel'
+  | 'hymn_phantom'
+  | 'relic_golem'
+  | 'veiled_heretic'
+  | 'celestial_arbiter'
+  | 'warden_enforcer'
+  | 'boss';
 
 export interface EnemyState {
   id: string;

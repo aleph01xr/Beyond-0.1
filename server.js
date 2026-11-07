@@ -285,6 +285,31 @@ var BIOMES = [
     id: "astral",
     title: "Aetherial Void Spire",
     bossNames: ["Archon of Nothingness"]
+  },
+  {
+    id: "hymns",
+    title: "Hall of Forgotten Hymns",
+    bossNames: ["Elyndor, Keeper of the Last Hymn"]
+  },
+  {
+    id: "reliquary",
+    title: "Reliquary of the Departed",
+    bossNames: ["Zadkiel, Keeper of the Ashen Reliquary"]
+  },
+  {
+    id: "scripture",
+    title: "Chapel of Severed Light",
+    bossNames: ["Sariel, Warden of the Veiled Scripture"]
+  },
+  {
+    id: "nave",
+    title: "Celestial Nave",
+    bossNames: ["Seraphel, Sentinel of the Final Seal"]
+  },
+  {
+    id: "wardengate",
+    title: "Warden's Gate",
+    bossNames: ["Oriphiel, The Last Warden"]
   }
 ];
 function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
@@ -293,7 +318,8 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
   const width = 58;
   const height = 44;
   const tiles = new Array(width * height).fill(0);
-  const biomeSpec = BIOMES[(floor - 1) % BIOMES.length];
+  const biomeIndex = Math.max(0, Math.min(BIOMES.length - 1, floor - 1));
+  const biomeSpec = BIOMES[biomeIndex];
   const setTile = (tx, ty, code) => {
     if (tx >= 1 && tx < width - 1 && ty >= 1 && ty < height - 1) {
       tiles[ty * width + tx] = code;
@@ -537,7 +563,7 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
       });
     } else if (room.type === "combat") {
       const enemyCount = 3 + Math.floor(rng() * 3) + Math.min(2, Math.floor(floor / 2));
-      const pool = floor === 1 ? ["slime", "goblin", "skeleton"] : floor === 2 ? ["goblin", "skeleton", "cultist"] : floor === 3 ? ["skeleton", "knight", "cultist"] : floor === 4 ? ["cultist", "shadow_stalker", "skeleton"] : ["astral_sentinel", "cultist", "shadow_stalker"];
+      const pool = floor === 1 ? ["slime", "goblin", "skeleton"] : floor === 2 ? ["goblin", "skeleton", "cultist"] : floor === 3 ? ["skeleton", "knight", "cultist"] : floor === 4 ? ["cultist", "shadow_stalker", "skeleton"] : floor === 5 ? ["astral_sentinel", "cultist", "shadow_stalker"] : floor === 6 ? ["skeleton", "cultist", "hymn_phantom"] : floor === 7 ? ["knight", "relic_golem", "skeleton"] : floor === 8 ? ["cultist", "shadow_stalker", "veiled_heretic"] : floor === 9 ? ["astral_sentinel", "knight", "celestial_arbiter"] : ["astral_sentinel", "shadow_stalker", "warden_enforcer"];
       for (let i = 0; i < enemyCount; i++) {
         const kind = pool[Math.floor(rng() * pool.length)];
         let spawnTx = Math.floor(room.cx);
@@ -581,8 +607,8 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
       );
       boss.name = bossName;
       enemies.push(boss);
-      const bossMinion1 = floor === 1 ? "skeleton" : floor === 2 ? "cultist" : floor === 3 ? "knight" : floor === 4 ? "shadow_stalker" : "astral_sentinel";
-      const bossMinion2 = floor === 1 ? "goblin" : floor === 2 ? "skeleton" : floor === 3 ? "cultist" : floor === 4 ? "cultist" : "shadow_stalker";
+      const bossMinion1 = floor === 1 ? "skeleton" : floor === 2 ? "cultist" : floor === 3 ? "knight" : floor === 4 ? "shadow_stalker" : floor === 5 ? "astral_sentinel" : floor === 6 ? "hymn_phantom" : floor === 7 ? "relic_golem" : floor === 8 ? "veiled_heretic" : floor === 9 ? "celestial_arbiter" : "warden_enforcer";
+      const bossMinion2 = floor === 1 ? "goblin" : floor === 2 ? "skeleton" : floor === 3 ? "cultist" : floor === 4 ? "cultist" : floor === 5 ? "shadow_stalker" : floor === 6 ? "skeleton" : floor === 7 ? "knight" : floor === 8 ? "cultist" : floor === 9 ? "astral_sentinel" : "shadow_stalker";
       enemies.push(
         makeEnemy(
           `en_${floor}_${enemySeq++}`,
@@ -739,6 +765,71 @@ function getEnemyResistances(kind, elite, floor, biome) {
         arcane: 0.4,
         divine: 0.3
       };
+    case "hymn_phantom":
+      return {
+        physical: elite ? 0.3 : 0.22,
+        fire: 0.15,
+        frost: 0.25,
+        lightning: 0.15,
+        poison: 0.8,
+        // spectral choir spirit
+        bleed: 0.85,
+        tenacity: elite ? 0.45 : 0.3,
+        arcane: 0.3,
+        divine: -0.1
+      };
+    case "relic_golem":
+      return {
+        physical: elite ? 0.5 : 0.42,
+        // ancient bronze reliquary armor
+        fire: 0.35,
+        frost: 0.35,
+        lightning: -0.1,
+        // metal structure conducts electricity
+        poison: 0.95,
+        // stone/bronze construct
+        bleed: 0.95,
+        tenacity: elite ? 0.65 : 0.5,
+        arcane: 0.3,
+        divine: 0.25
+      };
+    case "veiled_heretic":
+      return {
+        physical: elite ? 0.28 : 0.2,
+        fire: 0.2,
+        frost: 0.2,
+        lightning: 0.2,
+        poison: 0.4,
+        bleed: 0.35,
+        tenacity: elite ? 0.45 : 0.32,
+        arcane: 0.35,
+        divine: 0.35
+      };
+    case "celestial_arbiter":
+      return {
+        physical: elite ? 0.45 : 0.36,
+        fire: 0.35,
+        frost: 0.35,
+        lightning: 0.45,
+        poison: 0.7,
+        bleed: 0.8,
+        tenacity: elite ? 0.6 : 0.45,
+        arcane: 0.45,
+        divine: 0.4
+      };
+    case "warden_enforcer":
+      return {
+        physical: elite ? 0.52 : 0.44,
+        // plate armor of the Warden's guard
+        fire: 0.3,
+        frost: 0.3,
+        lightning: 0.25,
+        poison: 0.5,
+        bleed: 0.5,
+        tenacity: elite ? 0.65 : 0.5,
+        arcane: 0.35,
+        divine: 0.35
+      };
     case "boss": {
       if (biome === "ember" || floor === 3) {
         return {
@@ -800,6 +891,68 @@ function getEnemyResistances(kind, elite, floor, biome) {
           arcane: 0.45,
           divine: 0.4
         };
+      } else if (biome === "hymns" || floor === 6) {
+        return {
+          physical: 0.32,
+          fire: 0.25,
+          frost: 0.35,
+          lightning: 0.25,
+          poison: 0.65,
+          bleed: 0.6,
+          tenacity: 0.7,
+          arcane: 0.4,
+          divine: 0.3
+        };
+      } else if (biome === "reliquary" || floor === 7) {
+        return {
+          physical: 0.48,
+          // armored reliquary guardian
+          fire: 0.35,
+          frost: 0.35,
+          lightning: 0.2,
+          poison: 0.75,
+          bleed: 0.75,
+          tenacity: 0.75,
+          arcane: 0.35,
+          divine: 0.35
+        };
+      } else if (biome === "scripture" || floor === 8) {
+        return {
+          physical: 0.38,
+          fire: 0.3,
+          frost: 0.3,
+          lightning: 0.3,
+          poison: 0.55,
+          bleed: 0.5,
+          tenacity: 0.75,
+          arcane: 0.45,
+          divine: 0.4
+        };
+      } else if (biome === "nave" || floor === 9) {
+        return {
+          physical: 0.45,
+          fire: 0.4,
+          frost: 0.4,
+          lightning: 0.45,
+          poison: 0.7,
+          bleed: 0.7,
+          tenacity: 0.8,
+          arcane: 0.5,
+          divine: 0.45
+        };
+      } else if (biome === "wardengate" || floor === 10) {
+        return {
+          physical: 0.52,
+          // Oriphiel, The Last Warden
+          fire: 0.45,
+          frost: 0.45,
+          lightning: 0.45,
+          poison: 0.75,
+          bleed: 0.75,
+          tenacity: 0.85,
+          arcane: 0.5,
+          divine: 0.5
+        };
       } else {
         return {
           physical: 0.25,
@@ -825,6 +978,11 @@ function makeEnemy(id, kind, roomId, x, y, hpScale, elite, floor = 1, biome = "c
     knight: { name: "Dread Halberdier", hp: 105, radius: 16 },
     shadow_stalker: { name: "Abyssal Stalker", hp: 88, radius: 15 },
     astral_sentinel: { name: "Celestial Sentinel", hp: 122, radius: 17 },
+    hymn_phantom: { name: "Hymn Phantom", hp: 96, radius: 15 },
+    relic_golem: { name: "Relic Golem", hp: 135, radius: 17 },
+    veiled_heretic: { name: "Veiled Heretic", hp: 110, radius: 15 },
+    celestial_arbiter: { name: "Celestial Arbiter", hp: 145, radius: 16 },
+    warden_enforcer: { name: "Warden Enforcer", hp: 160, radius: 18 },
     boss: { name: "Warden Malakor", hp: 950, radius: 28 }
   };
   const spec = baseStats[kind];
@@ -1031,7 +1189,7 @@ function generateTavernFloor() {
 }
 
 // src/server/gameEngine.ts
-var MAX_FLOORS_FOR_VICTORY = 5;
+var MAX_FLOORS_FOR_VICTORY = 10;
 var GameRoom = class _GameRoom {
   constructor(opts) {
     this.status = "playing";
@@ -1057,7 +1215,7 @@ var GameRoom = class _GameRoom {
     this.difficulty = opts.difficulty;
     this.maxPlayers = opts.roomId === "TAVERN-HUB" ? 50 : 4;
     this.baseSeed = opts.seed && opts.seed > 0 ? Math.floor(opts.seed) : Math.floor(1e5 + Math.random() * 899999);
-    const startFloor = opts.roomId === "TAVERN-HUB" ? 0 : 1;
+    const startFloor = opts.initialFloor !== void 0 ? opts.initialFloor : opts.roomId === "TAVERN-HUB" ? 0 : 1;
     this.loadFloor(startFloor, 1);
   }
   static computePlayerMaxHp(heroClass, level, vitality, relics = []) {
@@ -1170,6 +1328,11 @@ var GameRoom = class _GameRoom {
       }
       idx++;
     }
+  }
+  spawnEnemyForTesting(kind, x, y) {
+    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1, false, this.floor, this.map?.biome || "courtyard");
+    this.enemies.push(en);
+    return en;
   }
   restartRun() {
     this.status = "playing";
@@ -1566,6 +1729,11 @@ var GameRoom = class _GameRoom {
               "Floor 3 is Cindervault Bastion\u2014a searing inferno ruled by Ignis, Cinder Sovereign! Equip Cinder Heart and Runic Carapace relics if you find them.",
               "Floor 4 is the Abyssal Shadow Chasm! Void-Eater Malice opens black holes that pull heroes into oblivion.",
               "Floor 5 reaches the Aetherial Void Spire! The Archon of Nothingness unleashes devastating astral starlight novas.",
+              "Floor 6 enters the Hall of Forgotten Hymns, guarded by Elyndor, Keeper of the Last Hymn.",
+              "Floor 7 holds the Reliquary of the Departed where Zadkiel shields sacred ancestral relics.",
+              "Floor 8 leads to the Chapel of Severed Light, where Sariel guards the sealed scriptures.",
+              "Floor 9 ascends to the Celestial Nave before Seraphel, Sentinel of the Final Seal.",
+              "Floor 10 marks the Warden's Gate! Defeat Oriphiel, The Last Warden, to unseal the path deeper into the Sanctuary.",
               "Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!"
             ];
           } else if (npc.id === "npc_aleph") {
@@ -2687,7 +2855,7 @@ var GameRoom = class _GameRoom {
               }
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
-          } else {
+          } else if (this.floor === 5 || isAstral) {
             if (patternChoice < 0.35) {
               this.zones.push({
                 id: this.nextId("zone"),
@@ -2738,6 +2906,300 @@ var GameRoom = class _GameRoom {
                   ttlMs: 2400
                 });
               }
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            }
+          } else if (this.floor === 6 || this.map.biome === "hymns") {
+            if (patternChoice < 0.35) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "supernova",
+                x: enemy.x,
+                y: enemy.y,
+                radius: 150,
+                ttlMs: 1300,
+                maxTtlMs: 1300,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SACRED HYMN ECHO!", "#A855F7");
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.7) {
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "starlight_beam",
+                  x: targetState.x + (Math.random() * 50 - 25),
+                  y: targetState.y + (Math.random() * 50 - 25),
+                  radius: 75,
+                  ttlMs: 750,
+                  maxTtlMs: 750,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " PSALM SEALS!", "#FCD34D");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            } else {
+              this.summonBossAdds(enemy);
+              const count = isEnraged ? 20 : 16;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + k * Math.PI * 2 / count;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "radiant",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 280,
+                  vy: Math.sin(a) * 280,
+                  angle: a,
+                  radius: 8,
+                  damage: 28,
+                  pierce: 1,
+                  ttlMs: 2200
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            }
+          } else if (this.floor === 7 || this.map.biome === "reliquary") {
+            if (patternChoice < 0.35) {
+              enemy.shieldWallMs = 3500;
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " ASHEN BASTION!", "#D9AA52");
+              for (let k = 0; k < 8; k++) {
+                const a = k * Math.PI * 2 / 8;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "slash",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 260,
+                  vy: Math.sin(a) * 260,
+                  angle: a,
+                  radius: 9,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 1600
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1150;
+            } else if (patternChoice < 0.7) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "boss_slam",
+                x: nearest.x,
+                y: nearest.y,
+                radius: 100,
+                ttlMs: isEnraged ? 600 : 750,
+                maxTtlMs: isEnraged ? 600 : 750,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIQUARY SLAM!", "#EF4444");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              for (let off = -0.4; off <= 0.4; off += 0.16) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "radiant",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 320,
+                  vy: Math.sin(a) * 320,
+                  angle: a,
+                  radius: 9,
+                  damage: 30,
+                  pierce: 1,
+                  ttlMs: 2e3
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIC BARRAGE!", "#F59E0B");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            }
+          } else if (this.floor === 8 || this.map.biome === "scripture") {
+            if (patternChoice < 0.35) {
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "magma_pillar",
+                  x: targetState.x + (Math.random() * 60 - 30),
+                  y: targetState.y + (Math.random() * 60 - 30),
+                  radius: 80,
+                  ttlMs: 700,
+                  maxTtlMs: 700,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SCRIPTURE SEALS!", "#E879F9");
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.7) {
+              enemy.x = nearest.x + (Math.random() < 0.5 ? -100 : 100);
+              enemy.y = nearest.y + (Math.random() < 0.5 ? -100 : 100);
+              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
+              for (let k = -2; k <= 2; k++) {
+                const a = newAngle + k * 0.2;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? "radiant" : "voidorb",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 310,
+                  vy: Math.sin(a) * 310,
+                  angle: a,
+                  radius: 8,
+                  damage: 30,
+                  pierce: 1,
+                  ttlMs: 2e3
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " VEILED STEP!", "#A855F7");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              const count = isEnraged ? 22 : 18;
+              for (let k = 0; k < count; k++) {
+                const a = k * Math.PI * 2 / count;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? "radiant" : "voidorb",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 290,
+                  vy: Math.sin(a) * 290,
+                  angle: a,
+                  radius: 8,
+                  damage: 32,
+                  pierce: 1,
+                  ttlMs: 2200
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            }
+          } else if (this.floor === 9 || this.map.biome === "nave") {
+            if (patternChoice < 0.35) {
+              for (let k = 0; k < 4; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "starlight_beam",
+                  x: targetState.x + (Math.random() * 50 - 25),
+                  y: targetState.y + (Math.random() * 50 - 25),
+                  radius: 75,
+                  ttlMs: 700,
+                  maxTtlMs: 700,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " FINAL SEAL JUDGEMENT!", "#F472B6");
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.7) {
+              enemy.charging = true;
+              enemy.chargeAngle = angle;
+              enemy.chargeTimerMs = 600;
+              for (let off = -0.3; off <= 0.3; off += 0.15) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "radiant",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 340,
+                  vy: Math.sin(a) * 340,
+                  angle: a,
+                  radius: 9,
+                  damage: 34,
+                  pierce: 1,
+                  ttlMs: 1800
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SERAPHIC THRUST!", "#FDE047");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              const count = isEnraged ? 24 : 20;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + k * Math.PI * 2 / count;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "radiant",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 320,
+                  vy: Math.sin(a) * 320,
+                  angle: a,
+                  radius: 9,
+                  damage: 34,
+                  pierce: 1,
+                  ttlMs: 2400
+                });
+              }
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            }
+          } else if (this.floor === 10 || this.map.biome === "wardengate") {
+            if (patternChoice < 0.35) {
+              enemy.shieldWallMs = 4e3;
+              this.summonBossAdds(enemy);
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S AEGIS BULWARK!", "#38BDF8");
+              for (let k = 0; k < 10; k++) {
+                const a = k * Math.PI * 2 / 10;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "slash",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 290,
+                  vy: Math.sin(a) * 290,
+                  angle: a,
+                  radius: 10,
+                  damage: 32,
+                  pierce: 1,
+                  ttlMs: 1800
+                });
+              }
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.7) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "supernova",
+                x: enemy.x,
+                y: enemy.y,
+                radius: 160,
+                ttlMs: 1400,
+                maxTtlMs: 1400,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SANCTUARY GATE COLLAPSE!", "#EF4444");
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else {
+              const count = isEnraged ? 28 : 22;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + k * Math.PI * 2 / count;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? "slash" : "radiant",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 330,
+                  vy: Math.sin(a) * 330,
+                  angle: a,
+                  radius: 9,
+                  damage: 36,
+                  pierce: 1,
+                  ttlMs: 2500
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FINAL EXECUTION!", "#F59E0B");
               enemy.windupMs = isEnraged ? 700 : 1e3;
             }
           }

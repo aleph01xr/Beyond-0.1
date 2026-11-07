@@ -8,6 +8,7 @@ import {
   type DamageCategory,
   type DifficultyTier,
   type DungeonMap,
+  type EnemyKind,
   type EnemyResistances,
   type EnemyState,
   type FieldZoneState,
@@ -32,7 +33,7 @@ interface PlayerRuntime {
   attackCount: number;
 }
 
-const MAX_FLOORS_FOR_VICTORY = 5;
+const MAX_FLOORS_FOR_VICTORY = 10;
 
 export class GameRoom {
   public readonly roomId: string;
@@ -72,6 +73,7 @@ export class GameRoom {
     hostName: string;
     difficulty: DifficultyTier;
     seed?: number;
+    initialFloor?: number;
   }) {
     this.roomId = opts.roomId;
     this.name = opts.name;
@@ -82,7 +84,7 @@ export class GameRoom {
       opts.seed && opts.seed > 0
         ? Math.floor(opts.seed)
         : Math.floor(100000 + Math.random() * 899999);
-    const startFloor = opts.roomId === 'TAVERN-HUB' ? 0 : 1;
+    const startFloor = opts.initialFloor !== undefined ? opts.initialFloor : (opts.roomId === 'TAVERN-HUB' ? 0 : 1);
     this.loadFloor(startFloor, 1);
   }
 
@@ -177,7 +179,7 @@ export class GameRoom {
     return `${prefix}_${this.entitySeq++}`;
   }
 
-  private loadFloor(floorNum: number, partySize: number): void {
+  public loadFloor(floorNum: number, partySize: number): void {
     if (this.roomId === 'TAVERN-HUB') {
       floorNum = 0;
     }
@@ -225,6 +227,12 @@ export class GameRoom {
       }
       idx++;
     }
+  }
+
+  public spawnEnemyForTesting(kind: EnemyKind, x: number, y: number): EnemyState {
+    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1, false, this.floor, this.map?.biome || 'courtyard');
+    this.enemies.push(en);
+    return en;
   }
 
   public restartRun(): DungeonMap {
@@ -707,6 +715,11 @@ export class GameRoom {
               'Floor 3 is Cindervault Bastion—a searing inferno ruled by Ignis, Cinder Sovereign! Equip Cinder Heart and Runic Carapace relics if you find them.',
               'Floor 4 is the Abyssal Shadow Chasm! Void-Eater Malice opens black holes that pull heroes into oblivion.',
               'Floor 5 reaches the Aetherial Void Spire! The Archon of Nothingness unleashes devastating astral starlight novas.',
+              'Floor 6 enters the Hall of Forgotten Hymns, guarded by Elyndor, Keeper of the Last Hymn.',
+              'Floor 7 holds the Reliquary of the Departed where Zadkiel shields sacred ancestral relics.',
+              'Floor 8 leads to the Chapel of Severed Light, where Sariel guards the sealed scriptures.',
+              'Floor 9 ascends to the Celestial Nave before Seraphel, Sentinel of the Final Seal.',
+              'Floor 10 marks the Warden\'s Gate! Defeat Oriphiel, The Last Warden, to unseal the path deeper into the Sanctuary.',
               'Need to blow off steam after a tough run? Practice your combo strikes on the dummies in the East wing!',
             ];
           } else if (npc.id === 'npc_aleph') {
@@ -1979,7 +1992,7 @@ export class GameRoom {
               }
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
-          } else {
+          } else if (this.floor === 5 || isAstral) {
             // ==========================================
             // FLOOR 5 BOSS: Archon of Nothingness (Void Spire)
             // ==========================================
@@ -2036,6 +2049,330 @@ export class GameRoom {
                   ttlMs: 2400,
                 });
               }
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            }
+          } else if (this.floor === 6 || this.map.biome === 'hymns') {
+            // ==========================================
+            // FLOOR 6 BOSS: Elyndor, Keeper of the Last Hymn
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Hymn Echoes (Concentric Sacred Wave)
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'supernova',
+                x: enemy.x,
+                y: enemy.y,
+                radius: 150,
+                ttlMs: 1300,
+                maxTtlMs: 1300,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SACRED HYMN ECHO!', '#A855F7');
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.70) {
+              // 2. Forgotten Psalm Pillars (3 targeted sacred seals)
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'starlight_beam',
+                  x: targetState.x + (Math.random() * 50 - 25),
+                  y: targetState.y + (Math.random() * 50 - 25),
+                  radius: 75,
+                  ttlMs: 750,
+                  maxTtlMs: 750,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' PSALM SEALS!', '#FCD34D');
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            } else {
+              // 3. Chorus of Remembrance Spiral & Reinforcements
+              this.summonBossAdds(enemy);
+              const count = isEnraged ? 20 : 16;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 280,
+                  vy: Math.sin(a) * 280,
+                  angle: a,
+                  radius: 8,
+                  damage: 28,
+                  pierce: 1,
+                  ttlMs: 2200,
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            }
+          } else if (this.floor === 7 || this.map.biome === 'reliquary') {
+            // ==========================================
+            // FLOOR 7 BOSS: Zadkiel, Keeper of the Ashen Reliquary
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Ashen Relic Bastion (-50% damage taken for 3.5s + 8-way shockwave)
+              enemy.shieldWallMs = 3500;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' ASHEN BASTION!', '#D9AA52');
+              for (let k = 0; k < 8; k++) {
+                const a = (k * Math.PI * 2) / 8;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'slash',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 260,
+                  vy: Math.sin(a) * 260,
+                  angle: a,
+                  radius: 9,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 1600,
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1150;
+            } else if (patternChoice < 0.70) {
+              // 2. Reliquary Heavy Slam
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'boss_slam',
+                x: nearest.x,
+                y: nearest.y,
+                radius: 100,
+                ttlMs: isEnraged ? 600 : 750,
+                maxTtlMs: isEnraged ? 600 : 750,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIQUARY SLAM!', '#EF4444');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              // 3. Ancestral Relic Blade Barrage
+              for (let off = -0.4; off <= 0.4; off += 0.16) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 320,
+                  vy: Math.sin(a) * 320,
+                  angle: a,
+                  radius: 9,
+                  damage: 30,
+                  pierce: 1,
+                  ttlMs: 2000,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIC BARRAGE!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            }
+          } else if (this.floor === 8 || this.map.biome === 'scripture') {
+            // ==========================================
+            // FLOOR 8 BOSS: Sariel, Warden of the Veiled Scripture
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Severed Scripture Glyphs (3 dual holy & void zones)
+              for (let k = 0; k < 3; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'magma_pillar',
+                  x: targetState.x + (Math.random() * 60 - 30),
+                  y: targetState.y + (Math.random() * 60 - 30),
+                  radius: 80,
+                  ttlMs: 700,
+                  maxTtlMs: 700,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SCRIPTURE SEALS!', '#E879F9');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.70) {
+              // 2. Veiled Step & Criss-Cross Volley
+              enemy.x = nearest.x + (Math.random() < 0.5 ? -100 : 100);
+              enemy.y = nearest.y + (Math.random() < 0.5 ? -100 : 100);
+              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
+              for (let k = -2; k <= 2; k++) {
+                const a = newAngle + k * 0.2;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? 'radiant' : 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 310,
+                  vy: Math.sin(a) * 310,
+                  angle: a,
+                  radius: 8,
+                  damage: 30,
+                  pierce: 1,
+                  ttlMs: 2000,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' VEILED STEP!', '#A855F7');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              // 3. Heretical Scripture Supernova
+              const count = isEnraged ? 22 : 18;
+              for (let k = 0; k < count; k++) {
+                const a = (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? 'radiant' : 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 290,
+                  vy: Math.sin(a) * 290,
+                  angle: a,
+                  radius: 8,
+                  damage: 32,
+                  pierce: 1,
+                  ttlMs: 2200,
+                });
+              }
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            }
+          } else if (this.floor === 9 || this.map.biome === 'nave') {
+            // ==========================================
+            // FLOOR 9 BOSS: Seraphel, Sentinel of the Final Seal
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Final Seal Judgement Pillars
+              for (let k = 0; k < 4; k++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[k % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'starlight_beam',
+                  x: targetState.x + (Math.random() * 50 - 25),
+                  y: targetState.y + (Math.random() * 50 - 25),
+                  radius: 75,
+                  ttlMs: 700,
+                  maxTtlMs: 700,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' FINAL SEAL JUDGEMENT!', '#F472B6');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.70) {
+              // 2. Seraphic Thrust Charge & Spear Burst
+              enemy.charging = true;
+              enemy.chargeAngle = angle;
+              enemy.chargeTimerMs = 600;
+              for (let off = -0.3; off <= 0.3; off += 0.15) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 340,
+                  vy: Math.sin(a) * 340,
+                  angle: a,
+                  radius: 9,
+                  damage: 34,
+                  pierce: 1,
+                  ttlMs: 1800,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SERAPHIC THRUST!', '#FDE047');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              // 3. Celestial Nave Supernova Starburst
+              const count = isEnraged ? 24 : 20;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 320,
+                  vy: Math.sin(a) * 320,
+                  angle: a,
+                  radius: 9,
+                  damage: 34,
+                  pierce: 1,
+                  ttlMs: 2400,
+                });
+              }
+              enemy.windupMs = isEnraged ? 700 : 1000;
+            }
+          } else if (this.floor === 10 || this.map.biome === 'wardengate') {
+            // ==========================================
+            // FLOOR 10 BOSS: Oriphiel, The Last Warden
+            // ==========================================
+            if (patternChoice < 0.35) {
+              // 1. Warden's Aegis Bulwark (-70% damage for 4s + Enforcer Reinforcements)
+              enemy.shieldWallMs = 4000;
+              this.summonBossAdds(enemy);
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S AEGIS BULWARK!", '#38BDF8');
+              for (let k = 0; k < 10; k++) {
+                const a = (k * Math.PI * 2) / 10;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'slash',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 290,
+                  vy: Math.sin(a) * 290,
+                  angle: a,
+                  radius: 10,
+                  damage: 32,
+                  pierce: 1,
+                  ttlMs: 1800,
+                });
+              }
+              enemy.windupMs = isEnraged ? 800 : 1200;
+            } else if (patternChoice < 0.70) {
+              // 2. Sanctuary Gate Collapse (Massive Arena Slam)
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'supernova',
+                x: enemy.x,
+                y: enemy.y,
+                radius: 160,
+                ttlMs: 1400,
+                maxTtlMs: 1400,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SANCTUARY GATE COLLAPSE!', '#EF4444');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else {
+              // 3. Warden's Final Execution Dual Spiral
+              const count = isEnraged ? 28 : 22;
+              const rot = Math.random() * Math.PI;
+              for (let k = 0; k < count; k++) {
+                const a = rot + (k * Math.PI * 2) / count;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: k % 2 === 0 ? 'slash' : 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 330,
+                  vy: Math.sin(a) * 330,
+                  angle: a,
+                  radius: 9,
+                  damage: 36,
+                  pierce: 1,
+                  ttlMs: 2500,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FINAL EXECUTION!', '#F59E0B');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           }
@@ -2338,6 +2675,7 @@ export class GameRoom {
     const proj: ProjectileState = {
       id: this.nextId('proj'),
       ...spec,
+      pierce: spec.pierce ?? 1,
       hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : [],
     };
     this.projectiles.push(proj);
