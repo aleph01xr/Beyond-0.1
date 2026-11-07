@@ -17,7 +17,7 @@ interface AdminPanelProps {
   onSendAdminCommand: (msg: ClientMessage) => void;
 }
 
-type AdminTab = 'classes' | 'cheats' | 'relics' | 'spawner';
+type AdminTab = 'classes' | 'cheats' | 'relics' | 'spawner' | 'teleport' | 'management' | 'world';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   me,
@@ -85,6 +85,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             ['classes', 'Hero Classes'],
             ['relics', 'Relic Vault'],
             ['spawner', 'Entity Spawner'],
+            ['teleport', 'Teleport'],
+            ['management', 'Management'],
+            ['world', 'World Tools'],
           ].map(([tabKey, label]) => {
             const isActive = activeTab === tabKey;
             return (
@@ -451,41 +454,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* TAB 4: ENTITY SPAWNER */}
           {activeTab === 'spawner' && (
             <div className="space-y-4">
-              <div>
-                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                  Entity & Target Spawner
-                </h3>
-                <p className="text-xs text-[#A19FAF] mb-3 font-mono">
-                  Spawn entities directly in front of your character to test combat passives, DPS numbers, and skill interactions.
-                </p>
+              <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider">Entity Spawner</h3>
+              <div className="grid grid-cols-1 gap-2">
+                {['slime', 'goblin', 'skeleton', 'cultist', 'knight', 'shadow_stalker', 'astral_sentinel', 'hymn_phantom', 'relic_golem', 'veiled_heretic', 'celestial_arbiter', 'warden_enforcer', 'boss'].map((kind) => (
+                  <button key={kind} type="button" onClick={() => handleCommand({ type: 'admin:spawn_entity', kind: kind as any, count: 1 })} className="stone-button stone-button-dark w-full text-left">
+                    Spawn {kind}
+                  </button>
+                ))}
               </div>
+            </div>
+          )}
 
-              <div className="stone-plaque p-5 border border-[#383548] space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded bg-[#111219] border border-[#D9AA52] flex items-center justify-center font-mono font-bold text-[#FCD34D] text-xs shrink-0">
-                    TARGET
-                  </div>
-                  <div>
-                    <h4 className="font-display font-bold text-sm text-white">
-                      High-Durability Training Dummy
-                    </h4>
-                    <p className="text-xs text-[#A19FAF] font-mono">
-                      Spawns a 10,000 HP combat dummy that records live total damage taken, crit multipliers, and resets damage counters automatically after 4s inactivity.
-                    </p>
-                  </div>
-                </div>
+          {/* TAB 5: TELEPORT */}
+          {activeTab === 'teleport' && (
+            <div className="space-y-4">
+              <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider">Floor Teleportation</h3>
+              <div className="grid grid-cols-5 gap-2">
+                {[...Array(10)].map((_, i) => (
+                  <button key={i + 1} type="button" onClick={() => handleCommand({ type: 'admin:teleport_floor', floor: i + 1 })} className="stone-button stone-button-gold text-center">
+                    F{i + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    handleCommand({
-                      type: 'admin:spawn_dummy',
-                    })
-                  }
-                  className="stone-button stone-button-gold w-full py-4 text-base"
-                >
-                  <span>Spawn Combat Dummy at Current Position</span>
-                </button>
+          {/* TAB 6: MANAGEMENT */}
+          {activeTab === 'management' && (
+            <div className="space-y-4">
+              <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider">Entity Management</h3>
+              <div className="grid grid-cols-1 gap-2">
+                <button type="button" onClick={() => handleCommand({ type: 'admin:clear_enemies' })} className="stone-button stone-button-red">Clear All Enemies</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:clear_summoned' })} className="stone-button stone-button-dark">Clear Summoned</button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 7: WORLD TOOLS */}
+          {activeTab === 'world' && (
+            <div className="space-y-4">
+              <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider">World & Boss Tools</h3>
+              <div className="grid grid-cols-1 gap-2">
+                <button type="button" onClick={() => handleCommand({ type: 'admin:heal_player' })} className="stone-button stone-button-gold">Heal Self</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:restore_energy' })} className="stone-button stone-button-blue">Restore Energy</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:revive_all' })} className="stone-button stone-button-gold">Revive All</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:reset_boss' })} className="stone-button stone-button-red">Reset Boss</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:reset_room' })} className="stone-button stone-button-red">Reset Room</button>
+                <button type="button" onClick={() => handleCommand({ type: 'admin:toggle_ai', enabled: false })} className="stone-button stone-button-dark">Toggle AI Off</button>
               </div>
             </div>
           )}

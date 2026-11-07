@@ -1,5 +1,24 @@
 import type { BiomeId, NpcState, PropState, TrainingDummyState } from '../shared/types.ts';
 
+const OBFUSCATED_GLYPHS = [
+  'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+  'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+  'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+  'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '#', '$', '%', '&', '?'
+];
+
+export function getMinecraftObfuscatedString(length: number = 14, nowMs: number = Date.now()): string {
+  const tick = Math.floor(nowMs / 50); // Scramble every 50ms (~20 FPS)
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    const seed = Math.abs(Math.sin(tick * 997 + i * 1337) * 10000);
+    const index = Math.floor(seed) % OBFUSCATED_GLYPHS.length;
+    result += OBFUSCATED_GLYPHS[index];
+  }
+  return result;
+}
+
 /**
  * Draws the Descent Portal in either Sealed (Guardian alive) or Transcendent Active (Guardian defeated) state.
  */
@@ -1231,11 +1250,15 @@ export function drawWardenGateProp(
     ctx.stroke();
   }
 
-  // Inscribed Sacred Text
+  // Inscribed Sacred Moving Obfuscated Text (Minecraft §k style with English alphabet)
+  const obfText = `[ ${getMinecraftObfuscatedString(14, now)} ]`;
   ctx.font = '700 8px "JetBrains Mono", monospace';
-  ctx.fillStyle = '#F59E0B';
+  ctx.fillStyle = '#FEF08A';
   ctx.textAlign = 'center';
-  ctx.fillText('• WARDEN\'S GATE •', x, lintelY - 4);
+  ctx.shadowColor = 'rgba(245, 158, 11, 0.8)';
+  ctx.shadowBlur = 5;
+  ctx.fillText(obfText, x, lintelY - 4);
+  ctx.shadowBlur = 0;
 
   // 5. Massive Closed Sanctuary Doors (Dual Ivory & Gold Panels)
   const doorW = 56;

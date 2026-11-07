@@ -1,5 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
+import { getMinecraftObfuscatedString } from '../client/dungeonDecorations.ts';
+
+export const MinecraftObfuscatedText: React.FC<{ length?: number; className?: string }> = ({
+  length = 12,
+  className = '',
+}) => {
+  const [text, setText] = useState(() => getMinecraftObfuscatedString(length));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setText(getMinecraftObfuscatedString(length, Date.now()));
+    }, 50);
+    return () => clearInterval(interval);
+  }, [length]);
+
+  return <span className={`font-mono tracking-widest text-[#FCD34D] drop-shadow ${className}`}>{text}</span>;
+};
 import { AdminPanel } from './AdminPanel.tsx';
 import { ExpeditionGateModal } from './ExpeditionGateModal.tsx';
 import { GameCanvas } from './GameCanvas.tsx';
@@ -311,8 +328,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </>
           ) : (
             <>
-              <span className="font-display text-sm sm:text-base text-white font-semibold whitespace-nowrap truncate max-w-[150px] sm:max-w-none">
-                Floor {snapshot.floor}: {map.biomeTitle.split(' ')[0]}
+              <span className="font-display text-xs sm:text-base text-white font-semibold flex flex-wrap sm:flex-nowrap items-center gap-1.5 leading-tight">
+                <span>Floor {snapshot.floor}:</span>
+                <span className="truncate max-w-[140px] sm:max-w-none">{map.biomeTitle}</span>
               </span>
               <span aria-hidden="true" className="text-[#78768A]">·</span>
               <span className="text-[#FCD34D] font-mono text-xs font-bold">
@@ -580,10 +598,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
         return (
           <div
-            className={`pointer-events-none fixed top-12 sm:top-14 left-1/2 -translate-x-1/2 z-10 w-[min(410px,92vw)] ${theme.bg} border ${theme.border} px-3 py-1.5 sm:px-4 sm:py-2 shadow-2xl backdrop-blur-xs`}
+            className={`pointer-events-none fixed top-12 sm:top-14 left-1/2 -translate-x-1/2 z-10 w-[min(460px,95vw)] ${theme.bg} border ${theme.border} px-3 py-1.5 sm:px-4 sm:py-2 shadow-2xl backdrop-blur-xs`}
           >
             <div className="flex items-center justify-between gap-2 text-xs font-mono tabular-nums mb-1">
-              <div className="flex items-center gap-1.5 truncate">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 <span className={`font-display text-xs sm:text-sm font-semibold truncate ${theme.titleColor}`}>
                   {boss.name}
                 </span>
@@ -1101,19 +1119,24 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         const isBram = speakingNpc.id === 'npc_bram';
         const isLena = speakingNpc.id === 'npc_lena';
         const isAleph = speakingNpc.id === 'npc_aleph';
-        const avatarEmoji = isBram ? '🍻' : isLena ? '🍷' : isAleph ? '🎭' : '🛡️';
+        const isGate = speakingNpc.id === 'npc_warden_gate' || speakingNpc.name.includes('Gate');
+        const avatarEmoji = isBram ? '🍻' : isLena ? '🍷' : isAleph ? '🎭' : isGate ? '⛩️' : '🛡️';
         const roleLabel = isBram
           ? 'Innkeeper & Host'
           : isLena
             ? 'Meadmaster & Strategist'
             : isAleph
               ? 'Mysterious Cloaked Figure'
-              : 'Mercenary Commander';
+              : isGate
+                ? 'Sanctuary Monument'
+                : 'Mercenary Commander';
 
         const handlePickOption = (optionId: string) => {
           sfx.playUiClick('confirm');
           if (optionId === 'reset_stats') {
             onSendAdminCommand?.({ type: 'player:reset_attributes' });
+          } else if (optionId === 'goodbye') {
+            onSendAdminCommand?.({ type: 'player:dialogue_close' });
           } else {
             onSendAdminCommand?.({ type: 'player:dialogue_pick', optionId });
           }

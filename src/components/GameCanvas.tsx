@@ -339,21 +339,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 ctx.fillRect(px + 6, py + 20, 10, 2);
               }
             } else if (map.biome === 'wardengate') {
-              if (hash % 9 === 0) {
-                // Solar Aegis Inlaid Floor Crest
-                ctx.fillStyle = '#F59E0B';
-                ctx.beginPath();
-                ctx.arc(px + 16, py + 16, 6, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#FEF08A';
-                ctx.fillRect(px + 15, py + 11, 2, 10);
-                ctx.fillRect(px + 11, py + 15, 10, 2);
-              } else if (hash % 5 === 0) {
-                // Radiant Sanctuary Light Inlay
-                ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
-                ctx.fillRect(px + 4, py + 4, 24, 2);
-                ctx.fillRect(px + 4, py + 26, 24, 2);
-              }
+              // Clean polished sanctuary marble tile without clutter
             } else if (hash % 11 === 0) {
               ctx.fillStyle = palette.moss;
               ctx.fillRect(px + 4, py + 4, 8, 6);
@@ -1154,119 +1140,372 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.save();
           ctx.translate(z.x, z.y);
           ctx.rotate(ang);
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.18)';
+
+          // Background acoustic corridor fill
+          const bgGrad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+          bgGrad.addColorStop(0, 'rgba(245, 158, 11, 0.05)');
+          bgGrad.addColorStop(0.5, 'rgba(251, 191, 36, 0.22)');
+          bgGrad.addColorStop(1, 'rgba(245, 158, 11, 0.05)');
+          ctx.fillStyle = bgGrad;
           ctx.fillRect(-w / 2, -h / 2, w, h);
-          ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(-w / 2, -h / 2, w, h);
-          const waveX = -w / 2 + w * progress;
-          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(waveX, -h / 2);
-          ctx.lineTo(waveX, h / 2);
-          ctx.stroke();
-          ctx.restore();
-        } else if (z.kind === 'lament_mark') {
-          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
-          ctx.save();
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.2)';
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+
+          // Outer glowing acoustic gold borders
           ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
           ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillStyle = 'rgba(254, 240, 138, 0.9)';
-          ctx.font = '16px serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('♫', z.x, z.y + 6);
+          ctx.strokeRect(-w / 2, -h / 2, w, h);
+
+          // 5 Parallel Golden Musical Staff Lines
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.45)';
+          ctx.lineWidth = 1;
+          const staffSpacing = h / 6;
+          for (let s = 1; s <= 5; s++) {
+            const sy = -h / 2 + s * staffSpacing;
+            ctx.beginPath();
+            ctx.moveTo(-w / 2, sy);
+            ctx.lineTo(w / 2, sy);
+            ctx.stroke();
+          }
+
+          // Vibrating acoustic sine wave traveling down the staff
           ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, Math.max(4, z.radius * (1 - progress)), 0, Math.PI * 2);
+          const wavePoints = 40;
+          for (let i = 0; i <= wavePoints; i++) {
+            const wx = -w / 2 + (i / wavePoints) * w;
+            const wy = Math.sin((i / wavePoints) * Math.PI * 6 + now * 0.012) * (h * 0.35);
+            if (i === 0) ctx.moveTo(wx, wy);
+            else ctx.lineTo(wx, wy);
+          }
           ctx.stroke();
+
+          // Progress acoustic resonance pulse bar
+          const pulseX = -w / 2 + w * progress;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.lineWidth = 3.5;
+          ctx.beginPath();
+          ctx.moveTo(pulseX, -h / 2);
+          ctx.lineTo(pulseX, h / 2);
+          ctx.stroke();
+
+          // Floating pixel-art musical note motes
+          ctx.fillStyle = '#FEF08A';
+          for (let n = 0; n < 4; n++) {
+            const nx = -w / 2 + ((n * 0.25 + now * 0.0003) % 1.0) * w;
+            const ny = Math.sin(n * 2 + now * 0.008) * (h * 0.25);
+            ctx.fillRect(nx - 2, ny - 2, 4, 4);
+            ctx.fillRect(nx + 1, ny - 7, 1.5, 6);
+          }
+
           ctx.restore();
-        } else if (z.kind === 'ashen_cloud') {
-          const rot = now * 0.0015;
+        } else if (z.kind === 'lament_mark') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          const isReliquary = map.biome === 'reliquary' || map.floor === 7;
           ctx.save();
           ctx.translate(z.x, z.y);
-          ctx.rotate(rot);
-          ctx.fillStyle = 'rgba(120, 113, 108, 0.35)';
-          ctx.beginPath();
-          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(217, 170, 82, 0.8)';
+
+          if (isReliquary) {
+            // Zadkiel Ancestral Relic Vault Seal
+            const rot = now * 0.002;
+            ctx.fillStyle = 'rgba(217, 170, 82, 0.18)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 8-Pointed Ancestral Star Emblem
+            ctx.rotate(rot);
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+            ctx.lineWidth = 1.8;
+            for (let i = 0; i < 4; i++) {
+              const a = (i * Math.PI) / 4;
+              ctx.beginPath();
+              ctx.moveTo(-Math.cos(a) * (z.radius * 0.7), -Math.sin(a) * (z.radius * 0.7));
+              ctx.lineTo(Math.cos(a) * (z.radius * 0.7), Math.sin(a) * (z.radius * 0.7));
+              ctx.stroke();
+            }
+
+            // Shrinking bronze lock ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(234, 179, 8, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            // Elyndor Acoustic Resonance Ring
+            const rot = -now * 0.0025;
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.2)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Concentric sound vibration waves
+            for (let r = 1; r <= 3; r++) {
+              const waveR = (z.radius * (r / 3) + now * 0.02) % z.radius;
+              ctx.strokeStyle = `rgba(254, 240, 138, ${0.7 - waveR / z.radius * 0.6})`;
+              ctx.lineWidth = 1.2;
+              ctx.beginPath();
+              ctx.arc(0, 0, waveR, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+
+            // Rotating 4-note harp string cross
+            ctx.rotate(rot);
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(-z.radius * 0.5, 0); ctx.lineTo(z.radius * 0.5, 0);
+            ctx.moveTo(0, -z.radius * 0.5); ctx.lineTo(0, z.radius * 0.5);
+            ctx.stroke();
+
+            // Shrinking countdown sound ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          ctx.restore();
+        } else if (z.kind === 'ashen_cloud') {
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // 3 Multi-layered offset swirling smoke clouds
+          for (let c = 0; c < 3; c++) {
+            const rot = now * (0.001 + c * 0.0006) * (c % 2 === 0 ? 1 : -1);
+            const offsetX = Math.cos(rot + c * 2) * (z.radius * 0.2);
+            const offsetY = Math.sin(rot + c * 2) * (z.radius * 0.2);
+
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.rotate(rot);
+
+            ctx.fillStyle = c === 0 ? 'rgba(78, 72, 68, 0.35)' : c === 1 ? 'rgba(120, 113, 108, 0.28)' : 'rgba(217, 170, 82, 0.2)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius * (0.8 + c * 0.1), 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+          }
+
+          // Outer ash perimeter boundary
+          ctx.strokeStyle = 'rgba(217, 170, 82, 0.75)';
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.fillStyle = 'rgba(254, 240, 138, 0.7)';
-          for (let p = 0; p < 6; p++) {
-            const pa = (p * Math.PI) / 3;
-            const pr = z.radius * 0.6;
-            ctx.fillRect(Math.cos(pa) * pr - 2, Math.sin(pa) * pr - 2, 4, 4);
-          }
+
+          // Central Sacred Reliquary Seal
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.6)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(-12, -12, 24, 24);
+
+          // Rising embers particle motes
+          particleManager.spawnMagmaEmbers(z.x, z.y, z.radius * 0.6, now);
+
           ctx.restore();
         } else if (z.kind === 'censer_sweep') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const ang = z.angle || 0;
           ctx.save();
           ctx.translate(z.x, z.y);
+
+          // 270 degree danger arc coverage
           const startAng = ang - (Math.PI * 3) / 4;
           const endAng = ang + (Math.PI * 3) / 4;
-          ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
+
+          // Danger area fill
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.24)';
           ctx.beginPath();
           ctx.moveTo(0, 0);
           ctx.arc(0, 0, z.radius, startAng, endAng);
           ctx.closePath();
           ctx.fill();
-          ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
-          ctx.lineWidth = 2.5;
+
+          // Outer crimson danger rim
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, startAng, endAng);
           ctx.stroke();
-          const sweepCur = startAng + (endAng - startAng) * progress;
-          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-          ctx.lineWidth = 3.5;
+
+          // 90 degree Safe Wedge Indicator (highlighted in sanctuary green/gold behind Zadkiel)
+          ctx.fillStyle = 'rgba(52, 211, 153, 0.15)';
           ctx.beginPath();
           ctx.moveTo(0, 0);
-          ctx.lineTo(Math.cos(sweepCur) * z.radius, Math.sin(sweepCur) * z.radius);
+          ctx.arc(0, 0, z.radius, endAng, startAng + Math.PI * 2);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, endAng, startAng + Math.PI * 2);
           ctx.stroke();
+
+          // Safe direction arrow indicator
+          const safeMidAng = ang + Math.PI;
+          const safeX = Math.cos(safeMidAng) * (z.radius * 0.5);
+          const safeY = Math.sin(safeMidAng) * (z.radius * 0.5);
+          ctx.fillStyle = '#34D399';
+          ctx.beginPath();
+          ctx.arc(safeX, safeY, 6, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Sweeping bronze censer chain line & censer head
+          const sweepCur = startAng + (endAng - startAng) * progress;
+          const headX = Math.cos(sweepCur) * z.radius;
+          const headY = Math.sin(sweepCur) * z.radius;
+
+          // Chain links along line
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(headX, headY);
+          ctx.stroke();
+
+          // Flaming Censer Head at tip
+          ctx.fillStyle = '#F59E0B';
+          ctx.beginPath();
+          ctx.arc(headX, headY, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#FEF08A';
+          ctx.beginPath();
+          ctx.arc(headX, headY, 5, 0, Math.PI * 2);
+          ctx.fill();
+
           ctx.restore();
         } else if (z.kind === 'scripture_line') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const w = z.width || 420;
           const h = z.height || 26;
           const ang = z.angle || 0;
           ctx.save();
           ctx.translate(z.x, z.y);
           ctx.rotate(ang);
-          ctx.fillStyle = 'rgba(168, 85, 247, 0.22)';
+
+          // Parchment & Deep Purple Scripture Path
+          const scripGrad = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+          scripGrad.addColorStop(0, 'rgba(126, 34, 206, 0.12)');
+          scripGrad.addColorStop(0.5, 'rgba(168, 85, 247, 0.28)');
+          scripGrad.addColorStop(1, 'rgba(126, 34, 206, 0.12)');
+          ctx.fillStyle = scripGrad;
           ctx.fillRect(-w / 2, -h / 2, w, h);
-          ctx.strokeStyle = 'rgba(232, 121, 249, 0.85)';
+
+          // Illuminated Manuscript Gold & Lavender Borders
+          ctx.strokeStyle = 'rgba(232, 121, 249, 0.9)';
           ctx.lineWidth = 2;
           ctx.strokeRect(-w / 2, -h / 2, w, h);
-          ctx.fillStyle = 'rgba(254, 240, 138, 0.9)';
-          ctx.font = '10px monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('✦ SCRIPTURE OF BINDING ✦', 0, 3);
+
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.7)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(-w / 2 + 2, -h / 2 + 2, w - 4, h - 4);
+
+          // Celestial Inscription Glyphs
+          ctx.fillStyle = 'rgba(254, 240, 138, 0.95)';
+          const runeCount = 14;
+          const runeStep = w / runeCount;
+          for (let r = 0; r < runeCount; r++) {
+            const rx = -w / 2 + r * runeStep + 14;
+            if (r % 3 === 0) {
+              ctx.fillRect(rx - 3, -3, 6, 6);
+              ctx.fillRect(rx - 5, -1, 10, 2);
+              ctx.fillRect(rx - 1, -5, 2, 10);
+            } else if (r % 3 === 1) {
+              ctx.fillRect(rx - 4, -2, 8, 4);
+              ctx.fillRect(rx - 1, -4, 2, 8);
+            } else {
+              ctx.fillRect(rx - 2, -4, 4, 8);
+              ctx.fillRect(rx - 4, -2, 8, 4);
+            }
+          }
+
+          // Pulsing energy thread fill gauge
+          const chargeW = w * progress;
+          ctx.fillStyle = 'rgba(244, 114, 182, 0.35)';
+          ctx.fillRect(-w / 2, -h / 2, chargeW, h);
+
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(-w / 2 + chargeW, -h / 2);
+          ctx.lineTo(-w / 2 + chargeW, h / 2);
+          ctx.stroke();
+
           ctx.restore();
         } else if (z.kind === 'silence_seal') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          const rot = now * 0.003;
           ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // Anti-Magic Purple Suppression Field
           ctx.fillStyle = 'rgba(168, 85, 247, 0.25)';
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.fill();
+
           ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
           ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.fillStyle = 'rgba(254, 240, 138, 0.9)';
-          ctx.font = 'bold 16px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('SILENCE', z.x, z.y + 5);
+
+          // Rotating Runic Ring with 6 celestial points
+          ctx.save();
+          ctx.rotate(rot);
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.7, 0, Math.PI * 2);
+          ctx.stroke();
+
+          for (let p = 0; p < 6; p++) {
+            const pa = (p * Math.PI) / 3;
+            const px = Math.cos(pa) * (z.radius * 0.7);
+            const py = Math.sin(pa) * (z.radius * 0.7);
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(px - 3, py - 3, 6, 6);
+          }
+          ctx.restore();
+
+          // Pixel-Art Closed Scripture & Crossed Quill Emblem in center
+          ctx.fillStyle = '#7E22CE';
+          ctx.fillRect(-10, -12, 20, 24);
+          ctx.fillStyle = '#FEF08A';
+          ctx.fillRect(-8, -10, 16, 20);
+          ctx.fillStyle = '#C084FC';
+          ctx.fillRect(-6, -8, 12, 16);
+
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-12, 12); ctx.lineTo(12, -12);
+          ctx.stroke();
+
+          // Shrinking lock-on countdown ring
+          const shrinkR = Math.max(4, z.radius * (1 - progress));
+          ctx.strokeStyle = 'rgba(244, 114, 182, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
+          ctx.stroke();
+
           ctx.restore();
         } else if (z.kind === 'lance_thrust') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
@@ -1276,98 +1515,330 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.save();
           ctx.translate(z.x, z.y);
           ctx.rotate(ang);
-          ctx.fillStyle = 'rgba(253, 224, 71, 0.2)';
+
+          // Solar energy runway fill
+          const runGrad = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+          runGrad.addColorStop(0, 'rgba(250, 204, 21, 0.08)');
+          runGrad.addColorStop(0.5, 'rgba(253, 224, 71, 0.28)');
+          runGrad.addColorStop(1, 'rgba(250, 204, 21, 0.08)');
+          ctx.fillStyle = runGrad;
           ctx.fillRect(0, -h / 2, w, h);
-          ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
+
+          // Dual Golden Energy Rails
+          ctx.strokeStyle = 'rgba(250, 204, 21, 0.95)';
           ctx.lineWidth = 2.5;
           ctx.strokeRect(0, -h / 2, w, h);
-          const arrowX = w * progress;
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+
+          // Chevron directional thrust indicators >>>
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+          ctx.lineWidth = 2;
+          const chevCount = 8;
+          for (let c = 1; c <= chevCount; c++) {
+            const cx = (c / (chevCount + 1)) * w;
+            ctx.beginPath();
+            ctx.moveTo(cx - 8, -h * 0.3);
+            ctx.lineTo(cx + 4, 0);
+            ctx.lineTo(cx - 8, h * 0.3);
+            ctx.stroke();
+          }
+
+          // Spearhead emblem at the tip of the runway
+          ctx.fillStyle = '#FEF08A';
+          ctx.beginPath();
+          ctx.moveTo(w + 12, 0);
+          ctx.lineTo(w - 6, -h * 0.45);
+          ctx.lineTo(w - 6, h * 0.45);
+          ctx.closePath();
+          ctx.fill();
+
+          // High-speed charge beam fill gauge
+          const chargeX = w * progress;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+          ctx.fillRect(0, -h / 2, chargeX, h);
+
+          ctx.strokeStyle = '#FFFFFF';
           ctx.lineWidth = 3.5;
           ctx.beginPath();
-          ctx.moveTo(0, 0);
-          ctx.lineTo(arrowX, 0);
+          ctx.moveTo(chargeX, -h / 2);
+          ctx.lineTo(chargeX, h / 2);
           ctx.stroke();
+
           ctx.restore();
         } else if (z.kind === 'lancefall_mark') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          const isScripture = map.biome === 'scripture' || map.floor === 8;
+          const seq = z.seqNumber || 1;
           ctx.save();
-          ctx.fillStyle = 'rgba(250, 204, 21, 0.22)';
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          if (z.seqNumber) {
-            ctx.fillStyle = '#FFFFFF';
-            ctx.font = 'bold 16px sans-serif';
+          ctx.translate(z.x, z.y);
+
+          if (isScripture) {
+            // Sariel's Forbidden Verses: Floating illuminated manuscript page
+            ctx.fillStyle = 'rgba(168, 85, 247, 0.22)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Floating Illuminated Manuscript Page Seal in center
+            ctx.fillStyle = '#FAF8F5';
+            ctx.fillRect(-12, -16, 24, 32);
+            ctx.strokeStyle = '#F59E0B';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-12, -16, 24, 32);
+
+            // Ornate Roman Numeral (I, II, III, IV) rendered in golden ink
+            ctx.fillStyle = '#D97706';
+            ctx.font = 'bold 15px serif';
             ctx.textAlign = 'center';
-            ctx.fillText(`${z.seqNumber}`, z.x, z.y + 6);
+            const roman = seq === 1 ? 'I' : seq === 2 ? 'II' : seq === 3 ? 'III' : 'IV';
+            ctx.fillText(roman, 0, 5);
+
+            // Shrinking countdown circle
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            // Seraphel's Lancefall Target & Descending Lance Tip
+            ctx.fillStyle = 'rgba(250, 204, 21, 0.22)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Crosshair reticle ticks
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-z.radius - 4, 0); ctx.lineTo(-z.radius + 8, 0);
+            ctx.moveTo(z.radius - 8, 0); ctx.lineTo(z.radius + 4, 0);
+            ctx.moveTo(0, -z.radius - 4); ctx.lineTo(0, -z.radius + 8);
+            ctx.moveTo(0, z.radius - 8); ctx.lineTo(0, z.radius + 4);
+            ctx.stroke();
+
+            // Sequence Badge Crest with number
+            ctx.fillStyle = '#F59E0B';
+            ctx.beginPath();
+            ctx.arc(0, 0, 11, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#FEF08A';
+            ctx.font = 'bold 13px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${seq}`, 0, 4.5);
+
+            // Descending Lance Tip animation
+            const lanceHeight = (1 - progress) * 80;
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.moveTo(0, -lanceHeight);
+            ctx.lineTo(-5, -lanceHeight - 24);
+            ctx.lineTo(5, -lanceHeight - 24);
+            ctx.closePath();
+            ctx.fill();
           }
+
           ctx.restore();
         } else if (z.kind === 'warden_edict') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const q = z.quadrant ?? 0;
           ctx.save();
           ctx.translate(z.x, z.y);
+
           const startAng = (q * Math.PI) / 2;
           const endAng = startAng + Math.PI / 2;
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+
+          // Execution Quadrant Hazard Fill
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.32)';
           ctx.beginPath();
           ctx.moveTo(0, 0);
           ctx.arc(0, 0, z.radius, startAng, endAng);
           ctx.closePath();
           ctx.fill();
+
+          // Imposing Crimson & Gold Boundary Lines
           ctx.strokeStyle = 'rgba(245, 158, 11, 0.95)';
           ctx.lineWidth = 3;
           ctx.stroke();
+
+          // Stamped Pixel-Art Warden Execution Crest (Crossed Greatswords & Shield Emblem)
           const midAng = startAng + Math.PI / 4;
-          const qx = Math.cos(midAng) * (z.radius * 0.5);
-          const qy = Math.sin(midAng) * (z.radius * 0.5);
-          ctx.fillStyle = '#FEF08A';
-          ctx.font = 'bold 14px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('EXECUTION', qx, qy);
+          const qx = Math.cos(midAng) * (z.radius * 0.55);
+          const qy = Math.sin(midAng) * (z.radius * 0.55);
+
+          ctx.save();
+          ctx.translate(qx, qy);
+          // Horned Warden Shield
+          ctx.fillStyle = '#991B1B';
+          ctx.fillRect(-10, -12, 20, 24);
+          ctx.fillStyle = '#F59E0B';
+          ctx.strokeRect(-10, -12, 20, 24);
+          // Crossed Swords
+          ctx.strokeStyle = '#FEF08A';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(-14, -14); ctx.lineTo(14, 14);
+          ctx.moveTo(14, -14); ctx.lineTo(-14, 14);
+          ctx.stroke();
+          ctx.restore();
+
+          // Expanding Execution Wave
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+          ctx.lineWidth = 3.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * progress, startAng, endAng);
+          ctx.stroke();
+
           ctx.restore();
         } else if (z.kind === 'warden_parry') {
-          const rot = now * 0.005;
+          const rot = now * 0.004;
           ctx.save();
           ctx.translate(z.x, z.y);
+
+          // Golden Deflection Barrier Fill
           ctx.fillStyle = 'rgba(245, 158, 11, 0.28)';
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.fill();
-          ctx.rotate(rot);
+
+          // Outer Aegis Parry Shield Rim
           ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
           ctx.lineWidth = 3.5;
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
+
+          // 4 Rotating Tower Shield Plates around perimeter
+          ctx.rotate(rot);
+          for (let s = 0; s < 4; s++) {
+            const sa = (s * Math.PI) / 2;
+            const sx = Math.cos(sa) * z.radius;
+            const sy = Math.sin(sa) * z.radius;
+            ctx.save();
+            ctx.translate(sx, sy);
+            ctx.rotate(sa + Math.PI / 2);
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(-6, -10, 12, 20);
+            ctx.fillStyle = '#FEF08A';
+            ctx.strokeRect(-6, -10, 12, 20);
+            ctx.restore();
+          }
+
+          // Central Golden Lion/Sun Warden Crest
+          ctx.fillStyle = '#FEF08A';
           ctx.beginPath();
-          ctx.moveTo(-z.radius, 0); ctx.lineTo(z.radius, 0);
-          ctx.moveTo(0, -z.radius); ctx.lineTo(0, z.radius);
-          ctx.stroke();
+          ctx.arc(0, 0, 12, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#B45309';
+          ctx.fillRect(-4, -4, 8, 8);
+
           ctx.restore();
         } else if (z.kind === 'verdict_combo') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const stage = z.stage || 1;
           ctx.save();
-          ctx.fillStyle = stage === 3 ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.25)';
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = stage === 3 ? 'rgba(239, 68, 68, 0.95)' : 'rgba(251, 191, 36, 0.95)';
+          ctx.translate(z.x, z.y);
+
+          if (stage === 3) {
+            // Ultimate Stage 3 Leap Slam: Incandescent Crimson Crater
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 8 Jagged Fractured Ground Lines extending outward
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            ctx.lineWidth = 2;
+            for (let f = 0; f < 8; f++) {
+              const fa = (f * Math.PI) / 4;
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              ctx.lineTo(Math.cos(fa) * z.radius, Math.sin(fa) * z.radius);
+              ctx.stroke();
+            }
+          } else {
+            // Stage 1 & 2 Razor Slash Telegraphs
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.95)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Inner blade arc indicator
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius * 0.65, -0.8, 0.8);
+            ctx.stroke();
+          }
+
+          // Expanding impact shockwave
+          ctx.strokeStyle = '#FFFFFF';
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
+          ctx.arc(0, 0, z.radius * progress, 0, Math.PI * 2);
           ctx.stroke();
-          ctx.fillStyle = '#FEF08A';
-          ctx.font = 'bold 12px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`VERDICT STAGE ${stage}`, z.x, z.y + 4);
+
+          ctx.restore();
+        } else if (z.kind === 'warden_shatter') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // Seismic Ground Shatter Ring
+          ctx.fillStyle = `rgba(245, 158, 11, ${0.15 + progress * 0.25})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * progress, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = '#FEF08A';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * progress, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // 8 Radiating Warden Ground Rupture Fractures
+          for (let f = 0; f < 8; f++) {
+            const fa = (f * Math.PI * 2) / 8 + now * 0.001;
+            ctx.strokeStyle = f % 2 === 0 ? '#EF4444' : '#F59E0B';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(Math.cos(fa) * z.radius * progress, Math.sin(fa) * z.radius * progress);
+            ctx.stroke();
+          }
+
+          // Central Warden Crest Stamp
+          ctx.fillStyle = '#F59E0B';
+          ctx.beginPath();
+          ctx.arc(0, 0, 16, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#FEF08A';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
           ctx.restore();
         }
       }

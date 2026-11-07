@@ -1204,6 +1204,54 @@ async function startServer() {
         if (acc.isAdmin) {
           room.spawnDummyAtPlayer(acc.id);
         }
+      } else if (msg.type === 'admin:teleport_floor') {
+        if (acc.isAdmin && typeof msg.floor === 'number') {
+          room.teleportPlayerToFloor(acc.id, msg.floor);
+        }
+      } else if (msg.type === 'admin:spawn_entity') {
+        if (acc.isAdmin && msg.kind) {
+          room.spawnEntitiesForAdmin(acc.id, msg.kind, msg.count || 1);
+        }
+      } else if (msg.type === 'admin:despawn_entity') {
+        if (acc.isAdmin && msg.entityId) {
+          room.despawnEntity(String(msg.entityId));
+        }
+      } else if (msg.type === 'admin:clear_enemies') {
+        if (acc.isAdmin) {
+          room.clearAllEnemies();
+        }
+      } else if (msg.type === 'admin:clear_summoned') {
+        if (acc.isAdmin) {
+          room.clearSummonedEntities();
+        }
+      } else if (msg.type === 'admin:heal_player') {
+        if (acc.isAdmin) {
+          room.healPlayer(acc.id);
+        }
+      } else if (msg.type === 'admin:restore_energy') {
+        if (acc.isAdmin) {
+          room.restoreEnergy(acc.id);
+        }
+      } else if (msg.type === 'admin:revive_all') {
+        if (acc.isAdmin) {
+          room.reviveAllPlayers();
+        }
+      } else if (msg.type === 'admin:summon_boss') {
+        if (acc.isAdmin && typeof msg.floor === 'number') {
+          room.summonBossForFloor(msg.floor);
+        }
+      } else if (msg.type === 'admin:reset_boss') {
+        if (acc.isAdmin) {
+          room.resetBossEncounter();
+        }
+      } else if (msg.type === 'admin:reset_room') {
+        if (acc.isAdmin) {
+          room.resetCurrentRoom();
+        }
+      } else if (msg.type === 'admin:toggle_ai') {
+        if (acc.isAdmin) {
+          room.toggleEnemyAI(msg.enabled);
+        }
       } else if (msg.type === 'player:ping') {
         room.addPing(acc.id, msg.label, msg.x, msg.y);
       } else if (msg.type === 'chat:send') {

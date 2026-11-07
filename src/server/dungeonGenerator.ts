@@ -27,6 +27,7 @@ export interface GeneratedFloorResult {
   map: DungeonMap;
   enemies: EnemyState[];
   props: PropState[];
+  npcs?: NpcState[];
   spawnPoint: { x: number; y: number };
 }
 
@@ -317,6 +318,7 @@ export function generateDungeonFloor(
   const torches: { x: number; y: number }[] = [];
   const enemies: EnemyState[] = [];
   const props: PropState[] = [];
+  const npcs: NpcState[] = [];
   let propSeq = 1;
   let enemySeq = 1;
 
@@ -546,6 +548,7 @@ export function generateDungeonFloor(
     map,
     enemies,
     props,
+    npcs,
     spawnPoint: {
       x: startRoom.cx * TILE_SIZE + TILE_SIZE / 2,
       y: startRoom.cy * TILE_SIZE + TILE_SIZE / 2,

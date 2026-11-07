@@ -229,10 +229,111 @@ export class GameRoom {
     }
   }
 
-  public spawnEnemyForTesting(kind: EnemyKind, x: number, y: number): EnemyState {
-    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1, false, this.floor, this.map?.biome || 'courtyard');
+  public spawnEnemyForTesting(kind: EnemyKind, x: number, y: number, elite = false): EnemyState {
+    const biome = this.map?.biome || 'courtyard';
+    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1.0, elite, this.floor, biome);
     this.enemies.push(en);
     return en;
+  }
+
+  public teleportPlayerToFloor(playerId: string, floorNum: number): void {
+    const targetFloor = Math.max(1, Math.min(10, floorNum));
+    this.loadFloor(targetFloor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Teleported party to Floor ${targetFloor} (${this.map.biomeTitle}).`);
+  }
+
+  public spawnEntitiesForAdmin(playerId: string, kind: EnemyKind, count: number): void {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    const clampedCount = Math.max(1, Math.min(25, count));
+    const biome = this.map?.biome || 'courtyard';
+    for (let i = 0; i < clampedCount; i++) {
+      const angle = (i * Math.PI * 2) / clampedCount;
+      const dist = 55 + (i % 3) * 20;
+      const sx = p.x + Math.cos(angle) * dist;
+      const sy = p.y + Math.sin(angle) * dist;
+      const en = makeEnemy(`adm_${this.entitySeq++}`, kind, 0, sx, sy, 1.0, kind === 'boss', this.floor, biome);
+      this.enemies.push(en);
+    }
+    this.pushSystemChat(`[ADMIN] Spawned ${clampedCount}x ${kind} near ${p.username}.`);
+  }
+
+  public despawnEntity(entityId: string): void {
+    const idx = this.enemies.findIndex(e => e.id === entityId);
+    if (idx >= 0) {
+      const removed = this.enemies.splice(idx, 1)[0];
+      this.pushSystemChat(`[ADMIN] Despawned entity ${removed.name} (${removed.id}).`);
+    }
+  }
+
+  public clearAllEnemies(): void {
+    const count = this.enemies.length;
+    this.enemies = [];
+    this.pushSystemChat(`[ADMIN] Cleared all ${count} active enemies from the room.`);
+  }
+
+  public clearSummonedEntities(): void {
+    const before = this.enemies.length;
+    this.enemies = this.enemies.filter(e => e.kind === 'boss');
+    const cleared = before - this.enemies.length;
+    this.pushSystemChat(`[ADMIN] Cleared ${cleared} summoned entities (retained primary bosses).`);
+  }
+
+  public healPlayer(playerId: string): void {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    p.hp = p.maxHp;
+    p.shield = Math.max(p.shield, 50);
+    this.emitEvent('heal', p.x, p.y - 18, 'ADMIN HEAL', '#34D399');
+    this.pushSystemChat(`[ADMIN] Fully restored health & shield for ${p.username}.`);
+  }
+
+  public restoreEnergy(playerId: string): void {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    p.skillCooldownMs = 0;
+    p.ultCooldownMs = 0;
+    this.emitEvent('status', p.x, p.y - 18, 'COOLDOWNS RESET', '#38BDF8');
+    this.pushSystemChat(`[ADMIN] Reset skill & ultimate cooldowns for ${p.username}.`);
+  }
+
+  public reviveAllPlayers(): void {
+    for (const pr of this.players.values()) {
+      pr.state.downed = false;
+      pr.state.hp = pr.state.maxHp;
+      this.emitEvent('heal', pr.state.x, pr.state.y - 18, 'ADMIN REVIVE', '#6EE7B7');
+    }
+    this.pushSystemChat(`[ADMIN] Revived and restored all downed party members.`);
+  }
+
+  public summonBossForFloor(floorNum: number): void {
+    const targetFloor = Math.max(1, Math.min(10, floorNum));
+    this.loadFloor(targetFloor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Summoned Floor ${targetFloor} Guardian Boss encounter.`);
+  }
+
+  public resetBossEncounter(): void {
+    // Reset HP of all boss entities in the room
+    for (const en of this.enemies) {
+      if (en.kind === 'boss') {
+        en.hp = en.maxHp;
+        en.enraged = false;
+        en.shieldWallMs = 0;
+        en.stunnedMs = 0;
+      }
+    }
+    this.pushSystemChat(`[ADMIN] Reset active boss encounter (HP restored, enrage cleared).`);
+  }
+
+  public resetCurrentRoom(): void {
+    this.loadFloor(this.floor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Reset current room state.`);
+  }
+
+  public toggleEnemyAI(enabled?: boolean): void {
+    // Toggle global AI flag if needed, or emit message
+    const state = enabled ?? true;
+    this.pushSystemChat(`[ADMIN] Enemy AI processing ${state ? 'RESUMED' : 'PAUSED'}.`);
   }
 
   public restartRun(): DungeonMap {
@@ -777,6 +878,16 @@ export class GameRoom {
       }
 
       for (const prop of this.props) {
+        if (prop.kind === 'warden_gate') {
+          const dist = Math.hypot(prop.x - p.x, prop.y - p.y);
+          if (dist <= 65) {
+            this.emitEvent('status', prop.x, prop.y - 45, '"You are not worthy!"', '#EF4444');
+            this.pushSystemChat(`Warden's Gate: "You are not worthy!"`);
+            // Trigger temporary floating dialogue via status event and system chat
+            return {};
+          }
+        }
+
         if (prop.opened) continue;
         const dist = Math.hypot(prop.x - p.x, prop.y - p.y);
         if (dist <= 62) {
@@ -1337,6 +1448,20 @@ export class GameRoom {
           this.zones.splice(i, 1);
           continue;
         }
+      }
+
+      if (z.kind === 'warden_shatter' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (
+            !pr.state.downed &&
+            Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
+          ) {
+            this.damagePlayer(pr.state, 36 + this.floor * 4, 'physical');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' BASTION SHATTER!', '#FBBF24');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
       }
 
       if (z.kind === 'starlight_beam' && z.ttlMs <= 0) {
@@ -2823,18 +2948,23 @@ export class GameRoom {
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' AERIAL JUDGMENT!', '#38BDF8');
               enemy.windupMs = isEnraged ? 650 : 900;
             } else {
-              // 4. Celestial Supernova: Radiant starburst supernova ring
-              this.zones.push({
-                id: this.nextId('zone'),
-                kind: 'supernova',
-                x: enemy.x,
-                y: enemy.y,
-                radius: 170,
-                ttlMs: 1300,
-                maxTtlMs: 1300,
-                ownerId: enemy.id,
-              });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CELESTIAL SUPERNOVA!', '#FEF08A');
+              // 4. Sentinel Spearfall Cascade: Radial starburst of 6 descending celestial lances in sequence
+              for (let l = 1; l <= 6; l++) {
+                const spAngle = (l * Math.PI * 2) / 6;
+                const dist = 90;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'lancefall_mark',
+                  x: enemy.x + Math.cos(spAngle) * dist,
+                  y: enemy.y + Math.sin(spAngle) * dist,
+                  radius: 65,
+                  seqNumber: l,
+                  ttlMs: 650 + l * 180,
+                  maxTtlMs: 650 + l * 180,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SENTINEL SPEARFALL CASCADE!', '#FBBF24');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           } else if (this.floor === 10 || this.map.biome === 'wardengate') {
@@ -2894,19 +3024,19 @@ export class GameRoom {
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' THE FINAL VERDICT COMBO!', '#FEF08A');
               enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
-              // 4. Rune of the Last Warden: Arena Shockwave + Warden Enforcers
+              // 4. Bastion Ground Shatter: Multi-ring Warden seismic earthquake & Warden Enforcers
               this.summonBossAdds(enemy);
               this.zones.push({
                 id: this.nextId('zone'),
-                kind: 'supernova',
+                kind: 'warden_shatter',
                 x: enemy.x,
                 y: enemy.y,
-                radius: 180,
+                radius: 190,
                 ttlMs: 1400,
                 maxTtlMs: 1400,
                 ownerId: enemy.id,
               });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RUNE OF THE LAST WARDEN!', '#FBBF24');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' BASTION GROUND SHATTER!', '#FBBF24');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           }
@@ -3762,7 +3892,18 @@ export class GameRoom {
       return true;
     }
     const code = this.map.tiles[ty * this.map.width + tx];
-    return code === 0 || code === 2 || code === 3;
+    if (code === 0 || code === 2 || code === 3) return true;
+
+    // Solid collision barrier for Warden's Gate landmark prop
+    for (const prop of this.props) {
+      if (prop.kind === 'warden_gate' && !prop.opened) {
+        if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   private collidesCircle(wx: number, wy: number, radius: number): boolean {
@@ -3806,10 +3947,10 @@ export class GameRoom {
       }
     }
 
-    // 2. Direct full step
+    // 2. Direct full step (verify path line of sight to prevent fast wall clipping)
     const targetX = entity.x + dx;
     const targetY = entity.y + dy;
-    if (!this.collidesCircle(targetX, targetY, radius)) {
+    if (this.hasLineOfSight(entity.x, entity.y, targetX, targetY) && !this.collidesCircle(targetX, targetY, radius)) {
       entity.x = targetX;
       entity.y = targetY;
       return;

@@ -534,7 +534,8 @@ export interface FieldZoneState {
     | 'lancefall_mark'
     | 'warden_edict'
     | 'warden_parry'
-    | 'verdict_combo';
+    | 'verdict_combo'
+    | 'warden_shatter';
   x: number;
   y: number;
   radius: number;
@@ -677,6 +678,18 @@ export type ClientMessage =
   | { type: 'admin:set_level'; level?: number }
   | { type: 'admin:add_relic'; relicId: string }
   | { type: 'admin:spawn_dummy' }
+  | { type: 'admin:teleport_floor'; floor: number }
+  | { type: 'admin:spawn_entity'; kind: EnemyKind; count: number }
+  | { type: 'admin:despawn_entity'; entityId: string }
+  | { type: 'admin:clear_enemies' }
+  | { type: 'admin:clear_summoned' }
+  | { type: 'admin:heal_player' }
+  | { type: 'admin:restore_energy' }
+  | { type: 'admin:revive_all' }
+  | { type: 'admin:summon_boss'; floor: number }
+  | { type: 'admin:reset_boss' }
+  | { type: 'admin:reset_room' }
+  | { type: 'admin:toggle_ai'; enabled?: boolean }
   | { type: 'admin:add_attribute_points'; amount?: number }
   | { type: 'player:spend_attribute'; attribute: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith' }
   | { type: 'player:reset_attributes' }
