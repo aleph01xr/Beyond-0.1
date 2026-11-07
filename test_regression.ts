@@ -2026,6 +2026,94 @@ async function runRegressionTests() {
     }
   });
 
+  // --- Test 49: Differentiated Floor 6-10 Guardian abilities and Oriphiel Aegis Parry Reflection ---
+  await test('49. Floors 6-10 guardians create unique field zones and Oriphiel Aegis Parry reflects damage', async () => {
+    // A: Floor 10 Oriphiel Aegis Parry Reflection
+    const f10Room = new GameRoom({
+      roomId: 'R_TEST_F10_PARRY',
+      name: 'Oriphiel Parry Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 101010,
+      initialFloor: 10,
+    });
+    f10Room.status = 'playing';
+
+    const pid = 'p_parry_attacker';
+    f10Room.addOrReconnectPlayer(pid, 'Striker', 'vanguard');
+    const attacker = f10Room.getPlayerState(pid)!;
+    attacker.hp = 200;
+    attacker.maxHp = 200;
+
+    const oriphiel = f10Room.enemies.find((e) => e.kind === 'boss')!;
+    const oriphielHpBefore = oriphiel.hp;
+
+    // Manually spawn Oriphiel's Aegis Parry zone
+    f10Room.zones.push({
+      id: 'z_oriphiel_parry',
+      kind: 'warden_parry',
+      x: oriphiel.x,
+      y: oriphiel.y,
+      radius: 65,
+      ttlMs: 2000,
+      maxTtlMs: 2000,
+      ownerId: oriphiel.id,
+    });
+
+    // Attacker hits Oriphiel while Aegis Parry is active
+    const dealt = f10Room.damageEnemy(oriphiel, 100, attacker, 'physical');
+    assert.strictEqual(dealt, 0, 'Oriphiel must take 0 damage when parrying');
+    assert.strictEqual(oriphiel.hp, oriphielHpBefore, 'Oriphiel HP must remain unchanged');
+    assert.ok(attacker.hp < 200, 'Attacking player must take reflected divine damage');
+
+    // B: Verify Floors 6-10 create their signature unique zone kinds
+    const expectedZoneKinds: Record<number, string[]> = {
+      6: ['sound_lane', 'lament_mark'],
+      7: ['ashen_cloud', 'censer_sweep'],
+      8: ['scripture_line', 'lancefall_mark', 'silence_seal'],
+      9: ['lance_thrust', 'lancefall_mark'],
+      10: ['warden_edict', 'warden_parry', 'verdict_combo'],
+    };
+
+    for (let floor = 6; floor <= 10; floor++) {
+      const room = new GameRoom({
+        roomId: `R_TEST_UNIQUE_ZONES_F${floor}`,
+        name: `Unique Zones F${floor}`,
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 6600 + floor,
+        initialFloor: floor,
+      });
+      room.status = 'playing';
+
+      const pid = 'p_test_target';
+      room.addOrReconnectPlayer(pid, 'Challenger', 'vanguard');
+
+      const boss = room.enemies.find((e) => e.kind === 'boss')!;
+      const player = room.getPlayerState(pid)!;
+      player.x = boss.x + 40;
+      player.y = boss.y;
+
+      const spawnedZoneKinds = new Set<string>();
+
+      // Run boss ticks to collect zone kinds spawned by boss AI
+      for (let t = 0; t < 40; t++) {
+        boss.windupMs = 0;
+        room.tick(100);
+        for (const z of room.zones) {
+          spawnedZoneKinds.add(z.kind);
+        }
+      }
+
+      const expectedList = expectedZoneKinds[floor];
+      const hasUniqueZone = expectedList.some((k) => spawnedZoneKinds.has(k));
+      assert.ok(
+        hasUniqueZone,
+        `Floor ${floor} boss (${boss.name}) must spawn at least one of its signature unique zones: ${expectedList.join(', ')}. Found: ${Array.from(spawnedZoneKinds).join(', ')}`
+      );
+    }
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

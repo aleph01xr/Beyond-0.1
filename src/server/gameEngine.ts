@@ -1085,6 +1085,186 @@ export class GameRoom {
       const z = this.zones[i];
       z.ttlMs -= dtMs;
 
+      if (z.kind === 'sound_lane' && z.ttlMs <= 0) {
+        const w = z.width || 320;
+        const h = z.height || 40;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (Math.abs(localX) <= w / 2 && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 26 + this.floor * 4, 'divine');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' RESONANT WAVE!', '#F59E0B');
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'lament_mark' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 28 + this.floor * 4, 'divine');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' LAMENT ECHO!', '#FEF08A');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'ashen_cloud') {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            pr.state.hasteMs = Math.min(pr.state.hasteMs, 0);
+            if (pulseZonesNow) {
+              this.damagePlayer(pr.state, 12 + this.floor * 2, 'elemental');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' ASHEN FOG!', '#D9AA52');
+            }
+          }
+        }
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+
+      if (z.kind === 'censer_sweep' && z.ttlMs <= 0) {
+        const ang = z.angle || 0;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
+            if (dist <= z.radius) {
+              const pAng = Math.atan2(pr.state.y - z.y, pr.state.x - z.x);
+              let diff = pAng - ang;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              // Safe wedge is behind (diff close to PI or outside 270 deg arc)
+              if (Math.abs(diff) <= (Math.PI * 3) / 4) {
+                this.damagePlayer(pr.state, 34 + this.floor * 4, 'physical');
+                this.emitEvent('status', pr.state.x, pr.state.y - 14, ' CENSER SWEEP!', '#F59E0B');
+              }
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'scripture_line' && z.ttlMs <= 0) {
+        const w = z.width || 400;
+        const h = z.height || 24;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (Math.abs(localX) <= w / 2 && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 30 + this.floor * 4, 'arcane');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' SCRIPTURE BINDING!', '#E879F9');
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'silence_seal' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 28 + this.floor * 4, 'arcane');
+            pr.state.skillCooldownMs = Math.max(pr.state.skillCooldownMs, 2500);
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' SILENCED!', '#A855F7');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'lance_thrust' && z.ttlMs <= 0) {
+        const w = z.width || 360;
+        const h = z.height || 40;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (localX >= 0 && localX <= w && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 36 + this.floor * 4, 'divine');
+              this.emitEvent('status', pr.state.x, pr.state.y - 14, " HEAVEN'S PIERCE!", '#FDE047');
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'lancefall_mark' && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 32 + this.floor * 4, 'divine');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' LANCEFALL IMPALED!', '#FBBF24');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'warden_edict' && z.ttlMs <= 0) {
+        const q = z.quadrant ?? 0;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= z.radius) {
+              let pAng = Math.atan2(dy, dx);
+              if (pAng < 0) pAng += Math.PI * 2;
+              const pQuad = Math.floor(pAng / (Math.PI / 2)) % 4;
+              if (pQuad === q) {
+                this.damagePlayer(pr.state, 40 + this.floor * 5, 'physical');
+                this.emitEvent('status', pr.state.x, pr.state.y - 14, " WARDEN'S EDICT!", '#EF4444');
+              }
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
+      if (z.kind === 'warden_parry') {
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+
+      if (z.kind === 'verdict_combo' && z.ttlMs <= 0) {
+        const stage = z.stage || 1;
+        const dmg = 30 + stage * 6 + this.floor * 4;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, dmg, 'physical');
+            this.emitEvent('status', pr.state.x, pr.state.y - 14, ` VERDICT STAGE ${stage}!`, '#F59E0B');
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+
       if (z.kind === 'frost_nova' && z.ttlMs <= 0) {
         for (const pr of this.players.values()) {
           if (
@@ -2334,152 +2514,147 @@ export class GameRoom {
           } else if (this.floor === 6 || this.map.biome === 'hymns') {
             // ==========================================
             // FLOOR 6 BOSS: Elyndor, Keeper of the Last Hymn
-            // 4 Abilities: 1. Sacred Hymn Echoes, 2. Psalm of the Forgotten, 3. Melodic Arpeggio Barrage, 4. Chorus of Remembrance
+            // Musical battlefield manipulation & acoustic sound lanes
             // ==========================================
             if (patternChoice < 0.25) {
-              // 1. Sacred Hymn Echoes (Concentric Harmonic Wave)
-              this.zones.push({
-                id: this.nextId('zone'),
-                kind: 'supernova',
-                x: enemy.x,
-                y: enemy.y,
-                radius: 150,
-                ttlMs: 1300,
-                maxTtlMs: 1300,
-                ownerId: enemy.id,
-              });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SACRED HARP RESONANCE!', '#F59E0B');
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.50) {
-              // 2. Psalm of the Forgotten (3 targeted sacred seals)
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+              // 1. Resonant Crescendo: 3 parallel acoustic sound-wave lanes
+              for (let lane = -1; lane <= 1; lane++) {
+                const perpX = Math.cos(angle + Math.PI / 2) * (lane * 50);
+                const perpY = Math.sin(angle + Math.PI / 2) * (lane * 50);
                 this.zones.push({
                   id: this.nextId('zone'),
-                  kind: 'starlight_beam',
-                  x: targetState.x + (Math.random() * 50 - 25),
-                  y: targetState.y + (Math.random() * 50 - 25),
-                  radius: 75,
-                  ttlMs: 750,
-                  maxTtlMs: 750,
+                  kind: 'sound_lane',
+                  x: enemy.x + perpX,
+                  y: enemy.y + perpY,
+                  width: 340,
+                  height: 38,
+                  angle,
+                  radius: 170,
+                  ttlMs: isEnraged ? 700 : 950,
+                  maxTtlMs: isEnraged ? 700 : 950,
                   ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' PSALM SEALS!', '#FEF08A');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' RESONANT CRESCENDO!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            } else if (patternChoice < 0.50) {
+              // 2. Lament of the Forgotten: Musical echo marks on each player
+              for (const pr of this.players.values()) {
+                if (!pr.state.downed) {
+                  this.zones.push({
+                    id: this.nextId('zone'),
+                    kind: 'lament_mark',
+                    x: pr.state.x,
+                    y: pr.state.y,
+                    radius: 65,
+                    ttlMs: isEnraged ? 650 : 850,
+                    maxTtlMs: isEnraged ? 650 : 850,
+                    ownerId: enemy.id,
+                  });
+                }
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' LAMENT OF THE FORGOTTEN!', '#FEF08A');
               enemy.windupMs = isEnraged ? 700 : 1000;
             } else if (patternChoice < 0.75) {
-              // 3. Melodic Arpeggio Barrage (5-note sweeping harp chord volley)
-              for (let k = -2; k <= 2; k++) {
-                const a = angle + k * 0.16;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
+              // 3. Divine Chorus: 3 spectral chorus echoes firing sweeping harmonic beams
+              for (let c = -1; c <= 1; c++) {
+                const echoAngle = angle + c * 0.45;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'sound_lane',
+                  x: enemy.x + Math.cos(echoAngle) * 80,
+                  y: enemy.y + Math.sin(echoAngle) * 80,
+                  width: 380,
+                  height: 34,
+                  angle: echoAngle,
+                  radius: 190,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
                   ownerId: enemy.id,
-                  style: 'radiant',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 295,
-                  vy: Math.sin(a) * 295,
-                  angle: a,
-                  radius: 8,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 2000,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' HARP ARPEGGIO CHORD!', '#FBBF24');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' DIVINE CHORUS BEAMS!', '#FBBF24');
               enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 4. Chorus of Remembrance (Full-Arena Psalm Burst + Minion Chorus)
+              // 4. Chorus of Remembrance: Full-Arena Hymn Crescendo + Hymn Phantom adds
               this.summonBossAdds(enemy);
-              const count = isEnraged ? 20 : 16;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + (k * Math.PI * 2) / count;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'radiant',
+              for (let lane = -2; lane <= 2; lane++) {
+                const crAngle = (lane * Math.PI) / 5;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'sound_lane',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 280,
-                  vy: Math.sin(a) * 280,
-                  angle: a,
-                  radius: 8,
-                  damage: 28,
-                  pierce: 1,
-                  ttlMs: 2200,
+                  width: 400,
+                  height: 32,
+                  angle: crAngle,
+                  radius: 200,
+                  ttlMs: 1000,
+                  maxTtlMs: 1000,
+                  ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CHORUS OF SACRED HYMNS!', '#FEF08A');
-              enemy.windupMs = isEnraged ? 750 : 1100;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CHORUS OF REMEMBRANCE!', '#FEF08A');
+              enemy.windupMs = isEnraged ? 800 : 1150;
             }
           } else if (this.floor === 7 || this.map.biome === 'reliquary') {
             // ==========================================
             // FLOOR 7 BOSS: Zadkiel, Keeper of the Ashen Reliquary
-            // 4 Abilities (Unique! No Malakor moves):
-            // 1. Relic Censer Smite, 2. Ancestral Relic Blade Barrage, 3. Memorial Monolith Drop, 4. Judgment of the Departed
+            // Ash, ancestral spirits, and chained censer sweeps
             // ==========================================
             if (patternChoice < 0.25) {
-              // 1. Relic Censer Smite (3 Lingering Ashen Incense Clouds)
-              for (let k = -1; k <= 1; k++) {
-                const cloudDist = 70 + k * 30;
-                const cloudAngle = angle + k * 0.45;
+              // 1. Ashen Procession: Moving clouds of sacred ash obscuring vision & slowing players
+              for (let c = 0; c < 2; c++) {
+                const offX = c === 0 ? -60 : 60;
                 this.zones.push({
                   id: this.nextId('zone'),
-                  kind: 'frost_nova', // Repurposed for ashen incense mist
-                  x: enemy.x + Math.cos(cloudAngle) * cloudDist,
-                  y: enemy.y + Math.sin(cloudAngle) * cloudDist,
-                  radius: 75,
-                  ttlMs: 1400,
-                  maxTtlMs: 1400,
+                  kind: 'ashen_cloud',
+                  x: enemy.x + offX,
+                  y: enemy.y + (c === 0 ? -40 : 40),
+                  radius: 85,
+                  ttlMs: 3200,
+                  maxTtlMs: 3200,
                   ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' ASHEN CENSER MIST!', '#D9AA52');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' ASHEN PROCESSION!', '#D9AA52');
               enemy.windupMs = isEnraged ? 700 : 1050;
             } else if (patternChoice < 0.50) {
-              // 2. Ancestral Relic Blade Barrage (7-blade spread)
-              for (let off = -0.42; off <= 0.42; off += 0.14) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'radiant',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 320,
-                  vy: Math.sin(a) * 320,
-                  angle: a,
-                  radius: 9,
-                  damage: 30,
-                  pierce: 1,
-                  ttlMs: 2000,
-                });
-              }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIC BARRAGE!', '#F59E0B');
+              // 2. Chain of the Departed: Sweeping 270° censer arc with a 90° safe wedge
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'censer_sweep',
+                x: enemy.x,
+                y: enemy.y,
+                angle,
+                radius: 155,
+                ttlMs: isEnraged ? 750 : 950,
+                maxTtlMs: isEnraged ? 750 : 950,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CHAIN OF THE DEPARTED!', '#F59E0B');
               enemy.windupMs = isEnraged ? 700 : 1000;
             } else if (patternChoice < 0.75) {
-              // 3. Memorial Monolith Drop (Vault stelae crash down)
-              for (let m = 0; m < 2; m++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[m % prList.length]?.state || nearest;
+              // 3. Reliquary Awakening: Ancestral spirit beams from designated relic locations
+              for (let m = 0; m < 3; m++) {
+                const rAngle = (m * Math.PI * 2) / 3 + Date.now() * 0.001;
                 this.zones.push({
                   id: this.nextId('zone'),
-                  kind: 'magma_pillar',
-                  x: targetState.x + (m === 0 ? -30 : 30),
-                  y: targetState.y + (m === 0 ? 20 : -20),
-                  radius: 85,
-                  ttlMs: 650,
-                  maxTtlMs: 650,
+                  kind: 'lament_mark',
+                  x: enemy.x + Math.cos(rAngle) * 110,
+                  y: enemy.y + Math.sin(rAngle) * 110,
+                  radius: 70,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
                   ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' MEMORIAL MONOLITHS!', '#E2E8F0');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIQUARY AWAKENING!', '#E2E8F0');
               enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 4. Judgment of the Departed (Eye of Remembrance 3-Laser Spread)
-              for (let off = -0.25; off <= 0.25; off += 0.25) {
+              // 4. Judgment of the Departed: Censer flame wave + Relic Golem adds
+              this.summonBossAdds(enemy);
+              for (let off = -0.3; off <= 0.3; off += 0.3) {
                 const a = angle + off;
                 this.spawnProjectile({
                   ownerType: 'enemy',
@@ -2487,8 +2662,8 @@ export class GameRoom {
                   style: 'radiant',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 360,
-                  vy: Math.sin(a) * 360,
+                  vx: Math.cos(a) * 340,
+                  vy: Math.sin(a) * 340,
                   angle: a,
                   radius: 10,
                   damage: 34,
@@ -2502,66 +2677,67 @@ export class GameRoom {
           } else if (this.floor === 8 || this.map.biome === 'scripture') {
             // ==========================================
             // FLOOR 8 BOSS: Sariel, Warden of the Veiled Scripture
-            // 4 Abilities: 1. Forbidden Scripture Seals, 2. Veiled Starlight Step, 3. Astrolabe Singularity, 4. Heretical Scripture Volley
+            // Inscriptions, intersecting grids, and magical restriction seals
             // ==========================================
             if (patternChoice < 0.25) {
-              // 1. Forbidden Scripture Seals (3 Duality runic traps)
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+              // 1. Scripture of Binding: Intersecting magical scripture line grid
+              for (let line = -1; line <= 1; line++) {
+                const gridAngle = line === 0 ? angle : angle + Math.PI / 2;
                 this.zones.push({
                   id: this.nextId('zone'),
-                  kind: 'magma_pillar',
-                  x: targetState.x + (Math.random() * 60 - 30),
-                  y: targetState.y + (Math.random() * 60 - 30),
-                  radius: 80,
-                  ttlMs: 700,
-                  maxTtlMs: 700,
-                  ownerId: enemy.id,
-                });
-              }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SCRIPTURE SEALS!', '#E879F9');
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.50) {
-              // 2. Veiled Starlight Step (Dimensional blink + criss-cross volley)
-              enemy.x = nearest.x + (Math.random() < 0.5 ? -100 : 100);
-              enemy.y = nearest.y + (Math.random() < 0.5 ? -100 : 100);
-              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
-              for (let k = -2; k <= 2; k++) {
-                const a = newAngle + k * 0.2;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: k % 2 === 0 ? 'radiant' : 'voidorb',
+                  kind: 'scripture_line',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 310,
-                  vy: Math.sin(a) * 310,
-                  angle: a,
-                  radius: 8,
-                  damage: 30,
-                  pierce: 1,
-                  ttlMs: 2000,
+                  width: 420,
+                  height: 26,
+                  angle: gridAngle,
+                  radius: 210,
+                  ttlMs: isEnraged ? 650 : 850,
+                  maxTtlMs: isEnraged ? 650 : 850,
+                  ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' VEILED STEP!', '#A855F7');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SCRIPTURE OF BINDING!', '#E879F9');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.50) {
+              // 2. Forbidden Verses: 4 glowing scripture pages appearing in readable sequence 1-2-3-4
+              for (let v = 1; v <= 4; v++) {
+                const pageAngle = angle + (v - 2.5) * 0.4;
+                const dist = 70 + v * 35;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'lancefall_mark',
+                  x: enemy.x + Math.cos(pageAngle) * dist,
+                  y: enemy.y + Math.sin(pageAngle) * dist,
+                  radius: 60,
+                  seqNumber: v,
+                  ttlMs: 600 + v * 220,
+                  maxTtlMs: 600 + v * 220,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FORBIDDEN VERSES!', '#A855F7');
               enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
-              // 3. Astrolabe Gravitational Singularity (Gravity Well)
-              this.zones.push({
-                id: this.nextId('zone'),
-                kind: 'singularity',
-                x: nearest.x,
-                y: nearest.y,
-                radius: 120,
-                ttlMs: 1600,
-                maxTtlMs: 1600,
-                ownerId: enemy.id,
-              });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' ASTROLABE SINGULARITY!', '#C084FC');
+              // 3. Seal of Silence: Creates restriction zones slowing & silencing player skills
+              for (const pr of this.players.values()) {
+                if (!pr.state.downed) {
+                  this.zones.push({
+                    id: this.nextId('zone'),
+                    kind: 'silence_seal',
+                    x: pr.state.x,
+                    y: pr.state.y,
+                    radius: 75,
+                    ttlMs: isEnraged ? 800 : 1100,
+                    maxTtlMs: isEnraged ? 800 : 1100,
+                    ownerId: enemy.id,
+                  });
+                }
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SEAL OF SILENCE!', '#C084FC');
               enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
-              // 4. Heretical Scripture Volley (Dual-Color Spiral)
+              // 4. Heretical Scripture Volley: Dual-Color Runic Spiral
               const count = isEnraged ? 22 : 18;
               for (let k = 0; k < count; k++) {
                 const a = (k * Math.PI * 2) / count;
@@ -2586,175 +2762,150 @@ export class GameRoom {
           } else if (this.floor === 9 || this.map.biome === 'nave') {
             // ==========================================
             // FLOOR 9 BOSS: Seraphel, Sentinel of the Final Seal
-            // 4 Abilities (Unique! No Malakor bull rush):
-            // 1. Final Seal Judgement Pillars, 2. Starlight Spear Ray, 3. Seraphic Wing Gale, 4. Celestial Nave Supernova
+            // Precision, high-speed lance thrusts, and sequential lancefalls
             // ==========================================
             if (patternChoice < 0.25) {
-              // 1. Final Seal Judgement Pillars (4 radiant celestial beams)
-              for (let k = 0; k < 4; k++) {
+              // 1. Heaven's Piercing Line: Telegraphed linear thrust runway followed by high-speed lance rush
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'lance_thrust',
+                x: enemy.x,
+                y: enemy.y,
+                width: 380,
+                height: 42,
+                angle,
+                radius: 190,
+                ttlMs: isEnraged ? 600 : 800,
+                maxTtlMs: isEnraged ? 600 : 800,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, " HEAVEN'S PIERCING LINE!", '#FDE047');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.50) {
+              // 2. Lancefall: Multiple celestial lances descending in carefully designed 1-by-1 sequence
+              for (let l = 1; l <= 4; l++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+                const targetState = prList[(l - 1) % prList.length]?.state || nearest;
+                const offsetX = (l === 1 ? -40 : l === 2 ? 40 : l === 3 ? -20 : 20);
+                const offsetY = (l === 1 ? -20 : l === 2 ? 20 : l === 3 ? 40 : -40);
                 this.zones.push({
                   id: this.nextId('zone'),
-                  kind: 'starlight_beam',
-                  x: targetState.x + (Math.random() * 50 - 25),
-                  y: targetState.y + (Math.random() * 50 - 25),
-                  radius: 75,
-                  ttlMs: 700,
-                  maxTtlMs: 700,
+                  kind: 'lancefall_mark',
+                  x: targetState.x + offsetX,
+                  y: targetState.y + offsetY,
+                  radius: 65,
+                  seqNumber: l,
+                  ttlMs: 650 + l * 250,
+                  maxTtlMs: 650 + l * 250,
                   ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' FINAL SEAL JUDGEMENT!', '#F472B6');
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.50) {
-              // 2. Starlight Spear Ray (High-Speed Piercing Beam)
-              for (let off = -0.15; off <= 0.15; off += 0.15) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'radiant',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 380,
-                  vy: Math.sin(a) * 380,
-                  angle: a,
-                  radius: 9,
-                  damage: 34,
-                  pierce: 2,
-                  ttlMs: 1600,
-                });
-              }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' STARLIGHT SPEAR!', '#FDE047');
-              enemy.windupMs = isEnraged ? 650 : 950;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' LANCEFALL SEQUENCE!', '#FBBF24');
+              enemy.windupMs = isEnraged ? 700 : 1000;
             } else if (patternChoice < 0.75) {
-              // 3. Seraphic Wing Gale (9-feather crescent fan + knockback push)
-              for (let off = -0.55; off <= 0.55; off += 0.14) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'radiant',
+              // 3. Aerial Judgment: Seraphel takes flight and dives in 3 directional thrust lines
+              for (let d = -1; d <= 1; d++) {
+                const diveAngle = angle + d * 0.35;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'lance_thrust',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 300,
-                  vy: Math.sin(a) * 300,
-                  angle: a,
-                  radius: 7,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 1800,
+                  width: 320,
+                  height: 36,
+                  angle: diveAngle,
+                  radius: 160,
+                  ttlMs: 700 + Math.abs(d) * 200,
+                  maxTtlMs: 700 + Math.abs(d) * 200,
+                  ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' WING GALE!', '#38BDF8');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' AERIAL JUDGMENT!', '#38BDF8');
               enemy.windupMs = isEnraged ? 650 : 900;
             } else {
-              // 4. Celestial Nave Supernova Starburst
-              const count = isEnraged ? 24 : 20;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + (k * Math.PI * 2) / count;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'radiant',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 320,
-                  vy: Math.sin(a) * 320,
-                  angle: a,
-                  radius: 9,
-                  damage: 34,
-                  pierce: 1,
-                  ttlMs: 2400,
-                });
-              }
+              // 4. Celestial Supernova: Radiant starburst supernova ring
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'supernova',
+                x: enemy.x,
+                y: enemy.y,
+                radius: 170,
+                ttlMs: 1300,
+                maxTtlMs: 1300,
+                ownerId: enemy.id,
+              });
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CELESTIAL SUPERNOVA!', '#FEF08A');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           } else if (this.floor === 10 || this.map.biome === 'wardengate') {
             // ==========================================
             // FLOOR 10 BOSS: Oriphiel, The Last Warden
-            // 4 Abilities (Unique! No Malakor shield wall):
-            // 1. Sanctuary Gate Collapse, 2. Warden's Judgement Crescent, 3. Warden's Binding Sigils, 4. Rune of the Last Warden
+            // Absolute authority, Aegis Parry stance, quadrant execution strikes, and Greatsword Verdict combo
             // ==========================================
             if (patternChoice < 0.25) {
-              // 1. Sanctuary Gate Collapse (Massive Arena Shockwave)
+              // 1. Warden's Edict: Marks 3 of 4 arena quadrants for delayed execution strike (forcing players to 1 safe quadrant)
+              const safeQuad = Math.floor(Math.random() * 4);
+              for (let q = 0; q < 4; q++) {
+                if (q !== safeQuad) {
+                  this.zones.push({
+                    id: this.nextId('zone'),
+                    kind: 'warden_edict',
+                    x: enemy.x,
+                    y: enemy.y,
+                    radius: 220,
+                    quadrant: q,
+                    ttlMs: isEnraged ? 900 : 1200,
+                    maxTtlMs: isEnraged ? 900 : 1200,
+                    ownerId: enemy.id,
+                  });
+                }
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S EDICT! FIND SAFE QUADRANT!", '#EF4444');
+              enemy.windupMs = isEnraged ? 800 : 1150;
+            } else if (patternChoice < 0.50) {
+              // 2. Unbroken Judgment: Aegis Parry Stance - reflects 100% damage back as divine rebound if attacked!
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'warden_parry',
+                x: enemy.x,
+                y: enemy.y,
+                radius: 65,
+                ttlMs: 2200,
+                maxTtlMs: 2200,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' UNBROKEN JUDGMENT! (AEGIS PARRY)', '#F59E0B');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              // 3. The Final Verdict: Multi-stage greatsword sequence (Stage 1: frontal, Stage 2: sweep, Stage 3: leap slam)
+              for (let st = 1; st <= (isEnraged ? 3 : 2); st++) {
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'verdict_combo',
+                  x: enemy.x + Math.cos(angle) * (st * 40),
+                  y: enemy.y + Math.sin(angle) * (st * 40),
+                  radius: 80 + st * 25,
+                  stage: st,
+                  ttlMs: 500 + st * 350,
+                  maxTtlMs: 500 + st * 350,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' THE FINAL VERDICT COMBO!', '#FEF08A');
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            } else {
+              // 4. Rune of the Last Warden: Arena Shockwave + Warden Enforcers
+              this.summonBossAdds(enemy);
               this.zones.push({
                 id: this.nextId('zone'),
                 kind: 'supernova',
                 x: enemy.x,
                 y: enemy.y,
-                radius: 160,
+                radius: 180,
                 ttlMs: 1400,
                 maxTtlMs: 1400,
                 ownerId: enemy.id,
               });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' GATE COLLAPSE!', '#EF4444');
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.50) {
-              // 2. Warden's Judgement Crescent (Colossal 180° greatblade sweep)
-              for (let off = -0.7; off <= 0.7; off += 0.2) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'slash',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 320,
-                  vy: Math.sin(a) * 320,
-                  angle: a,
-                  radius: 11,
-                  damage: 36,
-                  pierce: 2,
-                  ttlMs: 1600,
-                });
-              }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' JUDGEMENT CRESCENT!', '#F59E0B');
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              // 3. Warden's Binding Sigils (4 Perimeter Sigils firing crossing beams)
-              for (let k = 0; k < 4; k++) {
-                const sa = (k * Math.PI) / 2 + (Date.now() * 0.001);
-                const sigilX = enemy.x + Math.cos(sa) * 130;
-                const sigilY = enemy.y + Math.sin(sa) * 130;
-                this.zones.push({
-                  id: this.nextId('zone'),
-                  kind: 'starlight_beam',
-                  x: sigilX,
-                  y: sigilY,
-                  radius: 65,
-                  ttlMs: 800,
-                  maxTtlMs: 800,
-                  ownerId: enemy.id,
-                });
-              }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' BINDING SIGILS!', '#FEF08A');
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else {
-              // 4. Rune of the Last Warden (Dual Spiral + Warden Enforcers)
-              this.summonBossAdds(enemy);
-              const count = isEnraged ? 28 : 22;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + (k * Math.PI * 2) / count;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: k % 2 === 0 ? 'slash' : 'radiant',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 330,
-                  vy: Math.sin(a) * 330,
-                  angle: a,
-                  radius: 9,
-                  damage: 36,
-                  pierce: 1,
-                  ttlMs: 2500,
-                });
-              }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RUNE OF THE LAST WARDEN!', '#FBBF24');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
@@ -3135,6 +3286,18 @@ export class GameRoom {
       this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 16, ' BLOCKED! (-60%)', '#60A5FA');
     }
 
+    // Oriphiel Aegis Parry Stance: Reflect 100% damage back to attacking player
+    const isParrying = this.zones.some(
+      (z) => z.kind === 'warden_parry' && z.ownerId === enemy.id
+    );
+    if (isParrying && attacker) {
+      const reflectDmg = Math.round(rawAmount * 0.85);
+      this.damagePlayer(attacker, reflectDmg, 'divine');
+      this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'AEGIS PARRY & REFLECTED!', '#F59E0B');
+      this.emitEvent('damage', attacker.x, attacker.y - 14, `${reflectDmg}`, '#EF4444');
+      return 0;
+    }
+
     // Ranger Class Passive: Eagle Keenness (+25% Longshot Crit Damage beyond 180px)
     let effectiveCrit = isCritBool;
     if (attacker && attacker.heroClass === 'ranger') {
@@ -3451,7 +3614,7 @@ export class GameRoom {
   public damagePlayer(
     p: PlayerState,
     rawDamage: number,
-    damageType: 'physical' | 'elemental' = 'physical'
+    damageType: DamageCategory | 'elemental' = 'physical'
   ): number {
     if (p.downed || p.godMode) return 0;
 

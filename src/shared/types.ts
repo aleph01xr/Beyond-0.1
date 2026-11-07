@@ -523,10 +523,28 @@ export interface FieldZoneState {
     | 'magma_pillar'
     | 'singularity'
     | 'supernova'
-    | 'starlight_beam';
+    | 'starlight_beam'
+    | 'sound_lane'
+    | 'lament_mark'
+    | 'ashen_cloud'
+    | 'censer_sweep'
+    | 'scripture_line'
+    | 'silence_seal'
+    | 'lance_thrust'
+    | 'lancefall_mark'
+    | 'warden_edict'
+    | 'warden_parry'
+    | 'verdict_combo';
   x: number;
   y: number;
   radius: number;
+  width?: number;
+  height?: number;
+  angle?: number;
+  seqNumber?: number;
+  label?: string;
+  quadrant?: number;
+  stage?: number;
   ttlMs: number;
   maxTtlMs: number;
   ownerId: string;
