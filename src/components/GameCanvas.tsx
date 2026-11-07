@@ -17,6 +17,12 @@ import {
   drawSlimeSprite,
   drawShadowStalkerSprite,
   drawAstralSentinelSprite,
+  drawHymnPhantomSprite,
+  drawRelicGolemSprite,
+  drawVeiledHereticSprite,
+  drawCelestialArbiterSprite,
+  drawWardenEnforcerSprite,
+  drawGenericEnemySprite,
 } from '../client/enemySprites.ts';
 import { drawHumanoidBoss } from '../client/npcSprites.ts';
 import { sfx } from '../client/sound.ts';
@@ -157,13 +163,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   }
                 : map.biome === 'hymns'
                   ? {
-                      voidBg: '#110F1B',
-                      floorA: '#2A263D',
-                      floorB: '#221F33',
-                      moss: '#6B538C',
-                      wallTop: '#4E4466',
-                      wallFace: '#1A1728',
-                      pillar: '#8C73AD',
+                      voidBg: '#18130B',
+                      floorA: '#584E3C',
+                      floorB: '#4B4232',
+                      moss: '#D4AF37',
+                      wallTop: '#847458',
+                      wallFace: '#32291B',
+                      pillar: '#EAB308',
                     }
                   : map.biome === 'reliquary'
                     ? {
@@ -196,13 +202,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                             pillar: '#E6C254',
                           }
                         : {
-                            voidBg: '#0A0D18',
-                            floorA: '#1E253A',
-                            floorB: '#161C2E',
-                            moss: '#38BDF8',
-                            wallTop: '#374566',
-                            wallFace: '#101524',
-                            pillar: '#D9AA52',
+                            voidBg: '#1C1710',
+                            floorA: '#645B4B',
+                            floorB: '#544B3C',
+                            moss: '#F59E0B',
+                            wallTop: '#948772',
+                            wallFace: '#3E3526',
+                            pillar: '#F59E0B',
                           };
 
     ctx.fillStyle = palette.voidBg;
@@ -317,7 +323,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillRect(px, py + TILE_SIZE - 2, TILE_SIZE, 2);
             ctx.fillRect(px + TILE_SIZE - 2, py, 2, TILE_SIZE);
 
-            if (hash % 11 === 0) {
+            if (map.biome === 'hymns') {
+              if (hash % 10 === 0) {
+                // Sacred Inlaid Gilded Prayer Cross
+                ctx.fillStyle = '#D4AF37';
+                ctx.fillRect(px + 14, py + 8, 4, 16);
+                ctx.fillRect(px + 8, py + 12, 16, 4);
+                ctx.fillStyle = '#FEF08A';
+                ctx.fillRect(px + 15, py + 13, 2, 2);
+              } else if (hash % 6 === 0) {
+                // Holy Hymn Inscription / Gilded Gold Leaf
+                ctx.fillStyle = 'rgba(212, 175, 55, 0.45)';
+                ctx.fillRect(px + 6, py + 10, 12, 2);
+                ctx.fillRect(px + 6, py + 15, 18, 2);
+                ctx.fillRect(px + 6, py + 20, 10, 2);
+              }
+            } else if (map.biome === 'wardengate') {
+              if (hash % 9 === 0) {
+                // Solar Aegis Inlaid Floor Crest
+                ctx.fillStyle = '#F59E0B';
+                ctx.beginPath();
+                ctx.arc(px + 16, py + 16, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#FEF08A';
+                ctx.fillRect(px + 15, py + 11, 2, 10);
+                ctx.fillRect(px + 11, py + 15, 10, 2);
+              } else if (hash % 5 === 0) {
+                // Radiant Sanctuary Light Inlay
+                ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
+                ctx.fillRect(px + 4, py + 4, 24, 2);
+                ctx.fillRect(px + 4, py + 26, 24, 2);
+              }
+            } else if (hash % 11 === 0) {
               ctx.fillStyle = palette.moss;
               ctx.fillRect(px + 4, py + 4, 8, 6);
               ctx.fillRect(px + 8, py + 8, 6, 4);
@@ -334,6 +371,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillRect(px + 2, py + 2, TILE_SIZE - 4, 3);
             ctx.fillStyle = 'rgba(0,0,0,0.35)';
             ctx.fillRect(px, py + TILE_SIZE - 3, TILE_SIZE, 3);
+
+            // Sacred Wall Sconces with warm holy candle flames for hymns & wardengate biomes
+            if ((map.biome === 'hymns' || map.biome === 'wardengate') && hash % 4 === 0) {
+              ctx.fillStyle = '#D97706';
+              ctx.fillRect(px + 14, py + 10, 4, 6);
+              ctx.fillStyle = '#FBBF24';
+              ctx.fillRect(px + 13, py + 6, 6, 4);
+              ctx.fillStyle = '#FFFBEB';
+              ctx.fillRect(px + 15, py + 5, 2, 2);
+            }
           } else if (code === 3) {
             ctx.fillStyle = palette.floorA;
             ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
@@ -345,6 +392,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillRect(px + 4, py + 2, TILE_SIZE - 8, 16);
             ctx.fillStyle = 'rgba(255,255,255,0.18)';
             ctx.fillRect(px + 6, py + 4, TILE_SIZE - 12, 3);
+
+            // Gilded Angelic Wing Relief on hymns & wardengate pillars
+            if (map.biome === 'hymns' || map.biome === 'wardengate') {
+              ctx.fillStyle = '#FEF08A';
+              ctx.fillRect(px + 10, py + 8, 12, 3);
+              ctx.fillRect(px + 12, py + 11, 8, 2);
+            }
           }
         }
       }
@@ -1174,6 +1228,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           drawShadowStalkerSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'astral_sentinel') {
           drawAstralSentinelSprite(ctx, en, ex, ey, now);
+        } else if (en.kind === 'hymn_phantom') {
+          drawHymnPhantomSprite(ctx, en, ex, ey, now);
+        } else if (en.kind === 'relic_golem') {
+          drawRelicGolemSprite(ctx, en, ex, ey, now);
+        } else if (en.kind === 'veiled_heretic') {
+          drawVeiledHereticSprite(ctx, en, ex, ey, now);
+        } else if (en.kind === 'celestial_arbiter') {
+          drawCelestialArbiterSprite(ctx, en, ex, ey, now);
+        } else if (en.kind === 'warden_enforcer') {
+          drawWardenEnforcerSprite(ctx, en, ex, ey, now);
         } else if (en.kind === 'boss') {
           // Boss ground shadow
           ctx.fillStyle = 'rgba(0,0,0,0.48)';
@@ -1777,7 +1841,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2);
             }
           } else if (map.floor >= 6) {
-            drawHumanoidBoss(ctx, ex, ey, en.name, now);
+            drawHumanoidBoss(ctx, ex, ey, en.name, now, en);
           } else {
             // ==============================================================
             // FLOOR 1 BOSS: Warden Malakor (Highkeep Bastion Warden Knight)
@@ -1845,6 +1909,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#D97706';
             ctx.fillRect(ex + 24, ey + 8 + walkBob, 3, 6); // Pommel
           }
+        } else {
+          // Safe visible fallback for any undefined or custom enemy kinds
+          drawGenericEnemySprite(ctx, en, ex, ey, now);
         }
 
         if (en.markedMs > 0) {
@@ -1864,6 +1931,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const isEmber = map.biome === 'ember' || map.floor === 3;
         const isVoid = map.biome === 'void' || map.floor === 4;
         const isAstral = map.biome === 'astral' || map.floor === 5;
+        const isHymns = map.biome === 'hymns' || map.floor === 6;
 
         ctx.fillStyle = '#181820';
         ctx.fillRect(ex - barW / 2 - 1, ey - en.radius - 17, barW + 2, 6);
@@ -1877,7 +1945,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   ? '#9333EA'
                   : isAstral
                     ? '#38BDF8'
-                    : '#EF4444'
+                    : isHymns
+                      ? '#FBBF24'
+                      : '#EF4444'
             : en.elite
               ? '#F59E0B'
               : '#DC2626';
@@ -1896,7 +1966,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   ? '#F0ABFC'
                   : isAstral
                     ? '#BAE6FD'
-                    : '#FCA5A5';
+                    : isHymns
+                      ? '#FEF08A'
+                      : '#FCA5A5';
           ctx.fillText(
             en.enraged ? ` ${en.name} [ENRAGED] ` : en.name,
             ex,
@@ -1920,18 +1992,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.arc(ex, ey, en.radius + 2 + pulse * 0.5, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Rising rage fire embers
-            for (let f = 0; f < 5; f++) {
-              const fAngle = (f * Math.PI * 2) / 5 + now * 0.005;
-              const fx = ex + Math.cos(fAngle) * (en.radius + 3);
-              const fy = ey + Math.sin(fAngle) * (en.radius + 3) - Math.abs(Math.sin(now * 0.01 + f)) * 8;
-              ctx.fillStyle = f % 2 === 0 ? '#EF4444' : '#F97316';
+            // Subtle rising rage embers
+            for (let f = 0; f < 3; f++) {
+              const fAngle = (f * Math.PI * 2) / 3 + now * 0.004;
+              const fx = ex + Math.cos(fAngle) * (en.radius + 2);
+              const fy = ey + Math.sin(fAngle) * (en.radius + 2) - Math.abs(Math.sin(now * 0.008 + f)) * 6;
+              ctx.fillStyle = f % 2 === 0 ? '#EF4444' : '#F59E0B';
               ctx.beginPath();
-              ctx.arc(fx, fy, 3, 0, Math.PI * 2);
+              ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
               ctx.fill();
             }
 
-            if (Math.random() < 0.25) {
+            // Tasteful periodic burst (approx once every 0.8s) instead of constant flood
+            if (Math.random() < 0.035) {
               particleManager.spawnBossEnrageBurst(ex, ey, now);
             }
             ctx.restore();

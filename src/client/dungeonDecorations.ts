@@ -582,6 +582,11 @@ export function drawDungeonProp(
   const x = Math.round(prop.x);
   const y = Math.round(prop.y);
 
+  if (prop.kind === 'warden_gate') {
+    drawWardenGateProp(ctx, x, y, now);
+    return;
+  }
+
   if (prop.kind === 'crate') {
     // Weathered pine storage crate with iron nails & cross-braces
     ctx.fillStyle = 'rgba(0,0,0,0.38)';
@@ -1086,4 +1091,276 @@ export function drawTavernDecorations(
   ctx.arc(wx, wy, 3, 0, Math.PI * 2);
   ctx.fill();
 }
+
+/**
+ * Monumental Sanctuary Warden's Gate of Divine Protection (Floor 10 Landmark Gate)
+ */
+export function drawWardenGateProp(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  now: number
+): void {
+  // 1. Soft Shadow on Floor
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.48)';
+  ctx.fillRect(x - 94, y + 16, 188, 14);
+
+  // 2. Consecrated White Marble Threshold & Pedestal
+  ctx.fillStyle = '#D9D2C5'; // Base shadow stone
+  ctx.fillRect(x - 90, y + 12, 180, 8);
+  ctx.fillStyle = '#FAF8F5'; // Pure alabaster marble top
+  ctx.fillRect(x - 88, y + 10, 176, 5);
+  ctx.fillStyle = '#F59E0B'; // Gold inlay line
+  ctx.fillRect(x - 86, y + 11, 172, 1.5);
+
+  // Inlaid Golden Solar Protection Runes along threshold
+  ctx.fillStyle = '#FEF08A';
+  for (let r = -3; r <= 3; r++) {
+    const rx = x + r * 22;
+    ctx.fillRect(rx - 3, y + 12, 6, 2);
+    ctx.fillRect(rx - 1, y + 10, 2, 6);
+  }
+
+  // 3. Left & Right Monumental Fluted Alabaster Pillars
+  const pillarW = 28;
+  const pillarH = 110;
+  const leftX = x - 85;
+  const rightX = x + 57;
+  const topY = y - 95;
+
+  for (const px of [leftX, rightX]) {
+    // Pillar Base
+    ctx.fillStyle = '#C5BCAE';
+    ctx.fillRect(px - 2, y - 5, pillarW + 4, 18);
+    ctx.fillStyle = '#FAF8F5';
+    ctx.fillRect(px - 1, y - 4, pillarW + 2, 15);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(px, y - 2, pillarW, 2);
+
+    // Fluted Shaft
+    ctx.fillStyle = '#ECE7DF';
+    ctx.fillRect(px, topY, pillarW, pillarH);
+    ctx.fillStyle = '#FAF8F5';
+    ctx.fillRect(px + 2, topY, pillarW - 4, pillarH);
+
+    // Fluted Gold Grooves (3 gold vertical inlay flutes)
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(px + 6, topY + 4, 2, pillarH - 8);
+    ctx.fillRect(px + 13, topY + 4, 2, pillarH - 8);
+    ctx.fillRect(px + 20, topY + 4, 2, pillarH - 8);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(px + 7, topY + 4, 1, pillarH - 8);
+    ctx.fillRect(px + 14, topY + 4, 1, pillarH - 8);
+    ctx.fillRect(px + 21, topY + 4, 1, pillarH - 8);
+
+    // Sculpted Angel Guardian Statue Relief on Pillar
+    const angelY = topY + 28;
+    const ax = px + pillarW / 2;
+
+    // Sculpted Angel Wings
+    ctx.fillStyle = '#FEF08A';
+    ctx.beginPath();
+    ctx.moveTo(ax - 10, angelY - 6);
+    ctx.lineTo(ax - 2, angelY - 14);
+    ctx.lineTo(ax - 4, angelY + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(ax + 10, angelY - 6);
+    ctx.lineTo(ax + 2, angelY - 14);
+    ctx.lineTo(ax + 4, angelY + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Sculpted Angel Body & Robes
+    ctx.fillStyle = '#FFFBEB';
+    ctx.fillRect(ax - 4, angelY - 10, 8, 22);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(ax - 1, angelY - 8, 2, 18); // Gold stole
+
+    // Raised Sword of Protection
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(ax - 1, angelY - 22, 2, 14);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(ax - 4, angelY - 10, 8, 2); // Crossguard
+
+    // Pillar Capital (Top Header of Pillar)
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(px - 3, topY - 8, pillarW + 6, 9);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(px - 2, topY - 7, pillarW + 4, 7);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(px - 1, topY - 6, pillarW + 2, 3);
+  }
+
+  // 4. Double-Arched Sanctuary Header & Lintel
+  const lintelY = topY - 22;
+  const lintelW = 176;
+  ctx.fillStyle = '#B8AFA0';
+  ctx.fillRect(x - lintelW / 2 - 2, lintelY - 2, lintelW + 4, 18);
+  ctx.fillStyle = '#FAF8F5'; // Pristine alabaster
+  ctx.fillRect(x - lintelW / 2, lintelY, lintelW, 14);
+
+  // Gilded Arch Filigree & Inscription
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(x - lintelW / 2 + 4, lintelY + 2, lintelW - 8, 3);
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(x - lintelW / 2 + 6, lintelY + 3, lintelW - 12, 1);
+
+  // Central Grand Solar Sunburst Crest on Arch Lintel
+  const crestY = lintelY + 7;
+  ctx.fillStyle = '#F59E0B';
+  ctx.beginPath();
+  ctx.arc(x, crestY, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#FEF08A';
+  ctx.beginPath();
+  ctx.arc(x, crestY, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(x - 2, crestY - 2, 4, 4);
+
+  // Radiant Solar Rays extending from Crest
+  for (let r = 0; r < 8; r++) {
+    const rAng = (r * Math.PI) / 4;
+    ctx.strokeStyle = '#F59E0B';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(rAng) * 12, crestY + Math.sin(rAng) * 12);
+    ctx.lineTo(x + Math.cos(rAng) * 19, crestY + Math.sin(rAng) * 19);
+    ctx.stroke();
+  }
+
+  // Inscribed Sacred Text
+  ctx.font = '700 8px "JetBrains Mono", monospace';
+  ctx.fillStyle = '#F59E0B';
+  ctx.textAlign = 'center';
+  ctx.fillText('• WARDEN\'S GATE •', x, lintelY - 4);
+
+  // 5. Massive Closed Sanctuary Doors (Dual Ivory & Gold Panels)
+  const doorW = 56;
+  const doorH = 92;
+  const doorY = topY + 4;
+  const leftDoorX = x - doorW;
+  const rightDoorX = x;
+
+  // Door background (Consecrated ivory oak panels)
+  ctx.fillStyle = '#3D3427'; // Deep dark shadow seam
+  ctx.fillRect(leftDoorX - 1, doorY - 1, doorW * 2 + 2, doorH + 2);
+
+  // Left Door Panel
+  ctx.fillStyle = '#E5DDD0';
+  ctx.fillRect(leftDoorX, doorY, doorW - 1, doorH);
+  ctx.fillStyle = '#FAF8F5';
+  ctx.fillRect(leftDoorX + 3, doorY + 3, doorW - 7, doorH - 6);
+
+  // Right Door Panel
+  ctx.fillStyle = '#E5DDD0';
+  ctx.fillRect(rightDoorX + 1, doorY, doorW - 1, doorH);
+  ctx.fillStyle = '#FAF8F5';
+  ctx.fillRect(rightDoorX + 4, doorY + 3, doorW - 7, doorH - 6);
+
+  // Door Mouldings & Recessed Panels
+  for (const dx of [leftDoorX + 6, rightDoorX + 7]) {
+    // Upper Recessed Panel
+    ctx.fillStyle = '#D9D2C5';
+    ctx.fillRect(dx, doorY + 8, doorW - 14, 32);
+    ctx.fillStyle = '#FFFBEB';
+    ctx.fillRect(dx + 2, doorY + 10, doorW - 18, 28);
+
+    // Lower Recessed Panel
+    ctx.fillStyle = '#D9D2C5';
+    ctx.fillRect(dx, doorY + 48, doorW - 14, 36);
+    ctx.fillStyle = '#FFFBEB';
+    ctx.fillRect(dx + 2, doorY + 50, doorW - 18, 32);
+
+    // Embossed Gold Aegis Shield Studs on Panels
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(dx + 6, doorY + 14, 6, 6);
+    ctx.fillRect(dx + doorW - 22, doorY + 14, 6, 6);
+    ctx.fillRect(dx + 6, doorY + 56, 6, 6);
+    ctx.fillRect(dx + doorW - 22, doorY + 56, 6, 6);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(dx + 8, doorY + 16, 2, 2);
+    ctx.fillRect(dx + doorW - 20, doorY + 16, 2, 2);
+    ctx.fillRect(dx + 8, doorY + 58, 2, 2);
+    ctx.fillRect(dx + doorW - 20, doorY + 58, 2, 2);
+  }
+
+  // Heavy Iron-Gold Hinge Brackets (3 pairs of hinges)
+  ctx.fillStyle = '#B45309';
+  for (let h = 0; h < 3; h++) {
+    const hy = doorY + 12 + h * 30;
+    // Left Hinge
+    ctx.fillRect(leftDoorX, hy, 16, 4);
+    // Right Hinge
+    ctx.fillRect(rightDoorX + doorW - 16, hy, 16, 4);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(leftDoorX + 2, hy + 1, 12, 2);
+    ctx.fillRect(rightDoorX + doorW - 14, hy + 1, 12, 2);
+    ctx.fillStyle = '#B45309';
+  }
+
+  // 6. Central Divine Light Beam Leaking Through Door Seam
+  const seamX = x;
+  const seamPulse = 0.65 + Math.sin(now * 0.004) * 0.25;
+  ctx.fillStyle = `rgba(254, 240, 138, ${seamPulse})`;
+  ctx.fillRect(seamX - 1.5, doorY, 3, doorH);
+
+  // Light stream spreading onto floor threshold
+  ctx.beginPath();
+  ctx.moveTo(seamX - 2, doorY + doorH);
+  ctx.lineTo(seamX - 18, y + 16);
+  ctx.lineTo(seamX + 18, y + 16);
+  ctx.lineTo(seamX + 2, doorY + doorH);
+  ctx.closePath();
+  ctx.fillStyle = `rgba(254, 240, 138, ${seamPulse * 0.4})`;
+  ctx.fill();
+
+  // 7. CENTRAL SOLAR AEGIS SEAL LOCK MEDALLION
+  const lockY = doorY + doorH / 2;
+  const pulseR = 14 + Math.sin(now * 0.005) * 2;
+
+  // Outer Glowing Golden Rays
+  ctx.strokeStyle = `rgba(254, 240, 138, ${seamPulse})`;
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  ctx.arc(x, lockY, pulseR + 4, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Solid Gold Medallion Body
+  ctx.fillStyle = '#D97706';
+  ctx.beginPath();
+  ctx.arc(x, lockY, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#F59E0B';
+  ctx.beginPath();
+  ctx.arc(x, lockY, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#FEF08A';
+  ctx.beginPath();
+  ctx.arc(x, lockY, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Inlaid Solar Cross Keyhole Seal
+  ctx.fillStyle = '#451A03';
+  ctx.fillRect(x - 2, lockY - 5, 4, 10);
+  ctx.fillRect(x - 5, lockY - 2, 10, 4);
+  ctx.fillStyle = '#FFFBEB';
+  ctx.fillRect(x - 1, lockY - 1, 2, 2);
+
+  // Floating Holy Light Particles drifting from Gate Seal
+  for (let p = 0; p < 4; p++) {
+    const pPhase = (now * 0.0015 + p * 0.25) % 1;
+    const px = x + Math.sin(now * 0.004 + p * 1.7) * 24;
+    const py = lockY + 10 - pPhase * 40;
+    const pAlpha = Math.sin(pPhase * Math.PI) * 0.85;
+
+    ctx.fillStyle = `rgba(254, 240, 138, ${pAlpha})`;
+    ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+    ctx.fillStyle = `rgba(255, 255, 255, ${pAlpha})`;
+    ctx.fillRect(Math.round(px + 1), Math.round(py), 1, 1);
+  }
+}
+
 

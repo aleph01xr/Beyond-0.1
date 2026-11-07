@@ -92,8 +92,8 @@ export function generateDungeonFloor(
   const floorSeed = ((baseSeed >>> 0) + floor * 7919) >>> 0;
   const rng = mulberry32(floorSeed);
 
-  const width = 58;
-  const height = 44;
+  const width = 64;
+  const height = 48;
   const tiles = new Array<number>(width * height).fill(0);
 
   const biomeIndex = Math.max(0, Math.min(BIOMES.length - 1, floor - 1));
@@ -129,15 +129,36 @@ export function generateDungeonFloor(
     discovered: true,
   });
 
+  // Dedicated Grand Boss Arena (always substantially larger than regular rooms)
+  const bossW = 16 + Math.floor(rng() * 3); // 16 to 18 tiles wide
+  const bossH = 13 + Math.floor(rng() * 3); // 13 to 15 tiles high
+  const bossX = width - bossW - 4;
+  const bossY = Math.max(
+    4,
+    Math.min(
+      height - bossH - 4,
+      Math.floor(height / 2 - bossH / 2) + Math.floor(rng() * 7) - 3
+    )
+  );
+  rooms.push({
+    id: 1,
+    x: bossX,
+    y: bossY,
+    w: bossW,
+    h: bossH,
+    cx: Math.floor(bossX + bossW / 2),
+    cy: Math.floor(bossY + bossH / 2),
+    type: 'combat',
+    cleared: false,
+    discovered: false,
+  });
+
   let attempts = 0;
-  while (rooms.length < targetRoomCount && attempts < 260) {
+  while (rooms.length < targetRoomCount && attempts < 320) {
     attempts++;
-    const isBossCandidate = rooms.length === targetRoomCount - 1;
-    const rw = isBossCandidate ? 12 : 7 + Math.floor(rng() * 5);
-    const rh = isBossCandidate ? 11 : 7 + Math.floor(rng() * 4);
-    const rx = isBossCandidate
-      ? width - rw - 4 - Math.floor(rng() * 4)
-      : 4 + Math.floor(rng() * (width - rw - 8));
+    const rw = 7 + Math.floor(rng() * 5); // 7 to 11
+    const rh = 7 + Math.floor(rng() * 4); // 7 to 10
+    const rx = 4 + Math.floor(rng() * (width - rw - 8));
     const ry = 4 + Math.floor(rng() * (height - rh - 8));
 
     const overlaps = rooms.some(
@@ -176,6 +197,19 @@ export function generateDungeonFloor(
   if (sortedByDist.length >= 3) {
     const bossRoom = sortedByDist[sortedByDist.length - 1];
     bossRoom.type = 'boss';
+    // Guarantee boss room is always large even under custom seeds
+    if (bossRoom.w < 16 || bossRoom.h < 13) {
+      bossRoom.w = Math.max(16, bossRoom.w);
+      bossRoom.h = Math.max(13, bossRoom.h);
+      if (bossRoom.x + bossRoom.w >= width - 2) {
+        bossRoom.x = Math.max(2, width - bossRoom.w - 2);
+      }
+      if (bossRoom.y + bossRoom.h >= height - 2) {
+        bossRoom.y = Math.max(2, height - bossRoom.h - 2);
+      }
+      bossRoom.cx = Math.floor(bossRoom.x + bossRoom.w / 2);
+      bossRoom.cy = Math.floor(bossRoom.y + bossRoom.h / 2);
+    }
     const treasureRoom = sortedByDist[Math.floor(sortedByDist.length / 2)];
     if (treasureRoom.id !== bossRoom.id) {
       treasureRoom.type = 'treasure';
@@ -474,6 +508,17 @@ export function generateDungeonFloor(
           biomeSpec.id
         )
       );
+
+      if (floor === 10 || biomeSpec.id === 'wardengate') {
+        props.push({
+          id: `prop_${floor}_gate`,
+          kind: 'warden_gate',
+          x: centerWorldX,
+          y: centerWorldY - 90,
+          opened: false,
+          value: 100,
+        });
+      }
 
       portalPos = {
         x: centerWorldX,

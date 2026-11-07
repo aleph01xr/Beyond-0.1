@@ -280,20 +280,21 @@ export class ParticleManager {
   }
 
   public spawnBossEnrageBurst(bx: number, by: number, now: number): void {
-    for (let i = 0; i < 32; i++) {
-      const a = (i * Math.PI * 2) / 32 + (Math.random() - 0.5) * 0.2;
-      const speed = 120 + Math.random() * 180;
+    // Reduced from 32 down to 8 elegant sparks with shorter lifespan to prevent visual clutter
+    for (let i = 0; i < 8; i++) {
+      const a = (i * Math.PI * 2) / 8 + (Math.random() - 0.5) * 0.2;
+      const speed = 75 + Math.random() * 85;
       this.particles.push({
         x: bx,
         y: by,
         vx: Math.cos(a) * speed,
-        vy: Math.sin(a) * speed - 30,
+        vy: Math.sin(a) * speed - 15,
         color: i % 2 === 0 ? '#EF4444' : '#FDE047',
         secondaryColor: '#F97316',
-        size: 2.5 + Math.random() * 2,
+        size: 1.8 + Math.random() * 1.2,
         bornAt: now,
-        maxAgeMs: 600 + Math.random() * 300,
-        gravity: 80,
+        maxAgeMs: 320 + Math.random() * 180,
+        gravity: 40,
         friction: 0.92,
         shape: 'star',
         glow: true,

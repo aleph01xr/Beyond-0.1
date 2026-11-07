@@ -504,7 +504,7 @@ export interface ProjectileState {
 
 export interface PropState {
   id: string;
-  kind: 'crate' | 'chest' | 'relic_chest' | 'shrine' | 'coin' | 'potion';
+  kind: 'crate' | 'chest' | 'relic_chest' | 'shrine' | 'coin' | 'potion' | 'warden_gate';
   x: number;
   y: number;
   opened: boolean;

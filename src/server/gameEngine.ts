@@ -1470,7 +1470,12 @@ export class GameRoom {
       let nearestDist = Infinity;
       const enemyRoom = this.findRoomContaining(enemy.x, enemy.y);
       const isBoss = enemy.kind === 'boss';
-      const isRanged = enemy.kind === 'skeleton' || enemy.kind === 'cultist';
+      const isRanged =
+        enemy.kind === 'skeleton' ||
+        enemy.kind === 'cultist' ||
+        enemy.kind === 'hymn_phantom' ||
+        enemy.kind === 'veiled_heretic' ||
+        enemy.kind === 'astral_sentinel';
       const isAlerted = enemy.markedMs > 0 || enemy.hp < enemy.maxHp;
 
       for (const pr of this.players.values()) {
@@ -1681,6 +1686,192 @@ export class GameRoom {
             enemy.windupMs = 2100;
           }
         }
+      } else if (enemy.kind === 'hymn_phantom') {
+        // Spectral choir entity: floats smoothly at mid-range, looses oscillating Choral Wail sound waves
+        const spd = 92 * slowFactor;
+        if (nearestDist < 130) {
+          this.moveWithCollision(
+            enemy,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        } else if (nearestDist > 220) {
+          this.moveWithCollision(
+            enemy,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        }
+
+        if (enemy.windupMs <= 0) {
+          for (let k = -1; k <= 1; k += 2) {
+            const a = angle + k * 0.18;
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'arcane',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 220,
+              vy: Math.sin(a) * 220,
+              angle: a,
+              radius: 6,
+              damage: 18 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 2000,
+            });
+          }
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 12, 'CHORAL WAIL', '#C084FC');
+          enemy.windupMs = 1750;
+        }
+      } else if (enemy.kind === 'relic_golem') {
+        // Heavy ancient construct: relentless stomp, devastating seismic ground slam
+        const spd = 74 * slowFactor;
+        if (nearestDist > enemy.radius + 14) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+        if (nearestDist <= enemy.radius + 28 && enemy.windupMs <= 0) {
+          let baseHit = 26;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+          this.damagePlayer(nearest, baseHit + this.floor * 2, 'physical');
+          this.emitEvent('damage', nearest.x, nearest.y - 14, 'SEISMIC SLAM!', '#F59E0B');
+          // Radial ground tremor sparks
+          for (let k = 0; k < 6; k++) {
+            const sa = (k * Math.PI * 2) / 6;
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'slash',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(sa) * 160,
+              vy: Math.sin(sa) * 160,
+              angle: sa,
+              radius: 6,
+              damage: 14 + this.floor,
+              pierce: 1,
+              ttlMs: 800,
+            });
+          }
+          enemy.windupMs = 1800;
+        }
+      } else if (enemy.kind === 'veiled_heretic') {
+        // Corrupted scripture priest: kites at range, casts 3-way corrupted scripture sigil fan
+        const spd = 84 * slowFactor;
+        if (nearestDist < 140) {
+          this.moveWithCollision(
+            enemy,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        } else if (nearestDist > 230) {
+          this.moveWithCollision(
+            enemy,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        }
+
+        if (enemy.windupMs <= 0) {
+          for (let k = -1; k <= 1; k++) {
+            const a = angle + k * 0.22;
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'voidorb',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 215,
+              vy: Math.sin(a) * 215,
+              angle: a,
+              radius: 7,
+              damage: 19 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1900,
+            });
+          }
+          this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 12, 'CORRUPTED SCRIPTURE', '#A855F7');
+          enemy.windupMs = 1950;
+        }
+      } else if (enemy.kind === 'celestial_arbiter') {
+        // Swift radiant judge: rushes forward, performs solar judgement thrust & holy starlight rays
+        const spd = 112 * slowFactor;
+        if (nearestDist > enemy.radius + 16) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+
+        if (enemy.windupMs <= 0) {
+          if (nearestDist <= enemy.radius + 24) {
+            // Melee Judgement Cleave
+            let baseHit = 24;
+            if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+            this.damagePlayer(nearest, baseHit + this.floor * 2, 'elemental');
+            this.emitEvent('damage', nearest.x, nearest.y - 14, 'JUDGEMENT!', '#FDE047');
+            enemy.windupMs = 1100;
+          } else if (nearestDist <= 220) {
+            // Radiant Solar Starlight Ray
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'radiant',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(angle) * 310,
+              vy: Math.sin(angle) * 310,
+              angle,
+              radius: 8,
+              damage: 22 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1600,
+            });
+            this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 12, 'SOLAR THRUST', '#FBBF24');
+            enemy.windupMs = 1400;
+          }
+        }
+      } else if (enemy.kind === 'warden_enforcer') {
+        // Heavy bastion sentinel: advances with raised buckler, swings two-handed halberd cleave
+        const spd = 94 * slowFactor;
+        if (nearestDist > enemy.radius + 14) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+
+        if (nearestDist <= enemy.radius + 26 && enemy.windupMs <= 0) {
+          let baseHit = 25;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+          this.damagePlayer(nearest, baseHit + this.floor * 2, 'physical');
+          this.emitEvent('damage', nearest.x, nearest.y - 14, 'HALBERD CLEAVE!', '#38BDF8');
+          // Brief buckler defense stance
+          enemy.shieldWallMs = 1200;
+          // Dual arc slash projectiles
+          for (let off = -0.22; off <= 0.22; off += 0.44) {
+            const a = angle + off;
+            this.spawnProjectile({
+              ownerType: 'enemy',
+              ownerId: enemy.id,
+              style: 'slash',
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 230,
+              vy: Math.sin(a) * 230,
+              angle: a,
+              radius: 8,
+              damage: 18 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1200,
+            });
+          }
+          enemy.windupMs = 1500;
+        }
       } else if (enemy.kind === 'boss') {
         // Enrage transition when HP drops to <= 50%
         if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
@@ -1748,12 +1939,12 @@ export class GameRoom {
           if (this.floor === 1) {
             // ==========================================
             // FLOOR 1 BOSS: Warden Malakor (Outer Bailey)
+            // 4 Abilities: 1. Iron Bulwark, 2. Triple Cleave, 3. Bastion Ground Slam, 4. War Charge
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Shield Wall (Iron Bulwark stance: -60% damage for 3s)
+            if (patternChoice < 0.25) {
+              // 1. Iron Bulwark (Shield Wall: -60% damage for 3s + front shockwave)
               enemy.shieldWallMs = 3000;
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SHIELD WALL!', '#60A5FA');
-              // Front shockwave
               for (let off = -0.3; off <= 0.3; off += 0.3) {
                 const a = angle + off;
                 this.spawnProjectile({
@@ -1772,7 +1963,7 @@ export class GameRoom {
                 });
               }
               enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.70) {
+            } else if (patternChoice < 0.50) {
               // 2. Vanguard Triple Cleave
               for (let off = -0.28; off <= 0.28; off += 0.28) {
                 const a = angle + off;
@@ -1793,20 +1984,35 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CLEAVE!', '#EF4444');
               enemy.windupMs = isEnraged ? 700 : 1000;
+            } else if (patternChoice < 0.75) {
+              // 3. Bastion Ground Slam
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'boss_slam',
+                x: nearest.x,
+                y: nearest.y,
+                radius: 88,
+                ttlMs: isEnraged ? 600 : 800,
+                maxTtlMs: isEnraged ? 600 : 800,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' GROUND SLAM!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 3. Shield Rush Charge
+              // 4. Highkeep War Charge (Bull Rush)
               enemy.charging = true;
               enemy.chargeAngle = angle;
               enemy.chargeTimerMs = 580;
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'CHARGING!', '#F59E0B');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'WAR CHARGE!', '#F59E0B');
               enemy.windupMs = isEnraged ? 700 : 950;
             }
           } else if (this.floor === 2 || isCatacombs) {
             // ==========================================
             // FLOOR 2 BOSS: Archlich Vaelor (Sunken Crypt)
+            // 4 Abilities: 1. Glacial Frost Nova, 2. Soul Siphon Tether, 3. Seeking Soul Hail, 4. Necrotic Death Ring
             // ==========================================
-            if (patternChoice < 0.40) {
-              // 1. Frost Nova & Glacial Shackles (3 Frost Circles)
+            if (patternChoice < 0.25) {
+              // 1. Glacial Frost Nova (3 Frost Circles)
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -1825,18 +2031,25 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' FROST NOVA!', '#38BDF8');
               enemy.windupMs = isEnraged ? 750 : 1100;
+            } else if (patternChoice < 0.50) {
+              // 2. Soul Siphon Tether (Necrotic drain that heals Vaelor)
+              this.damagePlayer(nearest, 22 + this.floor * 2, 'elemental');
+              enemy.hp = Math.min(enemy.maxHp, enemy.hp + 45);
+              this.emitEvent('damage', nearest.x, nearest.y - 14, 'SOUL SIPHONED!', '#A855F7');
+              this.emitEvent('heal', enemy.x, enemy.y - enemy.radius - 16, '+45 HP', '#34D399');
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
-              // 2. Seeking Soul Orb Volley (Homing Cyan Soul Wisps)
-              for (let k = 0; k < 6; k++) {
-                const a = angle + (k - 2.5) * 0.22;
+              // 3. Seeking Soul Hail (5 Homing Cyan Soul Wisps)
+              for (let k = 0; k < 5; k++) {
+                const a = angle + (k - 2) * 0.24;
                 this.spawnProjectile({
                   ownerType: 'enemy',
                   ownerId: enemy.id,
                   style: 'voidorb',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 250,
-                  vy: Math.sin(a) * 250,
+                  vx: Math.cos(a) * 240,
+                  vy: Math.sin(a) * 240,
                   angle: a,
                   radius: 8,
                   damage: 22,
@@ -1848,7 +2061,7 @@ export class GameRoom {
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SOUL HAIL!', '#A855F7');
               enemy.windupMs = isEnraged ? 700 : 1000;
             } else {
-              // 3. Necrotic Death Ring
+              // 4. Necrotic Death Ring
               const count = isEnraged ? 16 : 12;
               for (let k = 0; k < count; k++) {
                 const a = (k * Math.PI * 2) / count;
@@ -1872,8 +2085,9 @@ export class GameRoom {
           } else if (this.floor === 3 || isEmber) {
             // ==========================================
             // FLOOR 3 BOSS: Ignis, Cinder Sovereign (Bastion)
+            // 4 Abilities: 1. Magma Eruptions, 2. Molten Fissure Wave, 3. Cinder Ember Spiral, 4. Volcanic Core Detonation
             // ==========================================
-            if (patternChoice < 0.40) {
+            if (patternChoice < 0.25) {
               // 1. Magma Eruption Pillars
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
@@ -1891,8 +2105,29 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' MAGMA ERUPTION!', '#EF4444');
               enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.50) {
+              // 2. Molten Fissure Wave
+              for (let off = -0.36; off <= 0.36; off += 0.18) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'fireball',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 260,
+                  vy: Math.sin(a) * 260,
+                  angle: a,
+                  radius: 9,
+                  damage: 24,
+                  pierce: 1,
+                  ttlMs: 1800,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FISSURE WAVE!', '#F97316');
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
-              // 2. Ignis Firestorm Spiral
+              // 3. Cinder Ember Spiral
               const count = isEnraged ? 18 : 14;
               const rot = Math.random() * Math.PI;
               for (let k = 0; k < count; k++) {
@@ -1912,28 +2147,30 @@ export class GameRoom {
                   ttlMs: 2400,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FIRESTORM!', '#F59E0B');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CINDER SPIRAL!', '#F59E0B');
               enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
-              // 3. Volcanic Core Slam
+              // 4. Volcanic Core Detonation (Hazard Zone)
               this.zones.push({
                 id: this.nextId('zone'),
-                kind: 'boss_slam',
+                kind: 'magma_pillar',
                 x: nearest.x,
                 y: nearest.y,
-                radius: 96,
-                ttlMs: isEnraged ? 650 : 800,
-                maxTtlMs: isEnraged ? 650 : 800,
+                radius: 110,
+                ttlMs: isEnraged ? 700 : 900,
+                maxTtlMs: isEnraged ? 700 : 900,
                 ownerId: enemy.id,
               });
-              enemy.windupMs = isEnraged ? 650 : 950;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CORE DETONATION!', '#EF4444');
+              enemy.windupMs = isEnraged ? 700 : 1000;
             }
           } else if (this.floor === 4 || isVoid) {
             // ==========================================
             // FLOOR 4 BOSS: Void-Eater Malice (Shadow Chasm)
+            // 4 Abilities: 1. Gravitational Singularity, 2. Void Tendril Flurry, 3. Void Step, 4. Abyssal Nova Spread
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Gravitational Singularity (Pulls all heroes towards center!)
+            if (patternChoice < 0.25) {
+              // 1. Gravitational Singularity
               this.zones.push({
                 id: this.nextId('zone'),
                 kind: 'singularity',
@@ -1946,8 +2183,29 @@ export class GameRoom {
               });
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SINGULARITY!', '#A855F7');
               enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.70) {
-              // 2. Void Step Teleport & Scythe Arc
+            } else if (patternChoice < 0.50) {
+              // 2. Void Tendril Flurry (6 radial shadow spikes)
+              for (let k = 0; k < 6; k++) {
+                const a = (k * Math.PI * 2) / 6 + angle;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'voidorb',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 310,
+                  vy: Math.sin(a) * 310,
+                  angle: a,
+                  radius: 8,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 1800,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' TENDRIL FLURRY!', '#C084FC');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              // 3. Void Step Teleport & Scythe Arc
               enemy.x = nearest.x + (Math.random() < 0.5 ? -90 : 90);
               enemy.y = nearest.y + (Math.random() < 0.5 ? -90 : 90);
               const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
@@ -1971,7 +2229,7 @@ export class GameRoom {
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' VOID STEP!', '#E879F9');
               enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 3. Abyssal Nova Spread
+              // 4. Abyssal Nova Spread
               const count = isEnraged ? 20 : 16;
               for (let k = 0; k < count; k++) {
                 const a = (k * Math.PI * 2) / count;
@@ -1995,8 +2253,9 @@ export class GameRoom {
           } else if (this.floor === 5 || isAstral) {
             // ==========================================
             // FLOOR 5 BOSS: Archon of Nothingness (Void Spire)
+            // 4 Abilities: 1. Celestial Supernova Ring, 2. Orbital Starlight Beams, 3. Cosmic Shard Volley, 4. Astral Constellation Spiral
             // ==========================================
-            if (patternChoice < 0.35) {
+            if (patternChoice < 0.25) {
               // 1. Celestial Supernova Ring (Expanding cosmic shockwave)
               this.zones.push({
                 id: this.nextId('zone'),
@@ -2008,9 +2267,9 @@ export class GameRoom {
                 maxTtlMs: 1200,
                 ownerId: enemy.id,
               });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SUPERNOVA NOVA!', '#F472B6');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SUPERNOVA!', '#F472B6');
               enemy.windupMs = isEnraged ? 850 : 1250;
-            } else if (patternChoice < 0.70) {
+            } else if (patternChoice < 0.50) {
               // 2. Orbital Starlight Beams (4 targeted beams)
               for (let k = 0; k < 4; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
@@ -2028,8 +2287,29 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' STARBEAM CASCADE!', '#38BDF8');
               enemy.windupMs = isEnraged ? 750 : 1050;
+            } else if (patternChoice < 0.75) {
+              // 3. Cosmic Shard Volley (6 homing starlight needles)
+              for (let k = -2; k <= 3; k++) {
+                const a = angle + k * 0.16;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'arcane',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 330,
+                  vy: Math.sin(a) * 330,
+                  angle: a,
+                  radius: 7,
+                  damage: 28,
+                  pierce: 1,
+                  ttlMs: 2000,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' COSMIC VOLLEY!', '#818CF8');
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 3. Cosmic Arc Spiral
+              // 4. Astral Constellation Spiral
               const count = isEnraged ? 22 : 18;
               const rot = Math.random() * Math.PI;
               for (let k = 0; k < count; k++) {
@@ -2049,14 +2329,15 @@ export class GameRoom {
                   ttlMs: 2400,
                 });
               }
-              enemy.windupMs = isEnraged ? 700 : 1000;
+              enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 6 || this.map.biome === 'hymns') {
             // ==========================================
             // FLOOR 6 BOSS: Elyndor, Keeper of the Last Hymn
+            // 4 Abilities: 1. Sacred Hymn Echoes, 2. Psalm of the Forgotten, 3. Melodic Arpeggio Barrage, 4. Chorus of Remembrance
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Hymn Echoes (Concentric Sacred Wave)
+            if (patternChoice < 0.25) {
+              // 1. Sacred Hymn Echoes (Concentric Harmonic Wave)
               this.zones.push({
                 id: this.nextId('zone'),
                 kind: 'supernova',
@@ -2067,10 +2348,10 @@ export class GameRoom {
                 maxTtlMs: 1300,
                 ownerId: enemy.id,
               });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SACRED HYMN ECHO!', '#A855F7');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SACRED HARP RESONANCE!', '#F59E0B');
               enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.70) {
-              // 2. Forgotten Psalm Pillars (3 targeted sacred seals)
+            } else if (patternChoice < 0.50) {
+              // 2. Psalm of the Forgotten (3 targeted sacred seals)
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2085,10 +2366,31 @@ export class GameRoom {
                   ownerId: enemy.id,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' PSALM SEALS!', '#FCD34D');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' PSALM SEALS!', '#FEF08A');
               enemy.windupMs = isEnraged ? 700 : 1000;
+            } else if (patternChoice < 0.75) {
+              // 3. Melodic Arpeggio Barrage (5-note sweeping harp chord volley)
+              for (let k = -2; k <= 2; k++) {
+                const a = angle + k * 0.16;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 295,
+                  vy: Math.sin(a) * 295,
+                  angle: a,
+                  radius: 8,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 2000,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' HARP ARPEGGIO CHORD!', '#FBBF24');
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              // 3. Chorus of Remembrance Spiral & Reinforcements
+              // 4. Chorus of Remembrance (Full-Arena Psalm Burst + Minion Chorus)
               this.summonBossAdds(enemy);
               const count = isEnraged ? 20 : 16;
               const rot = Math.random() * Math.PI;
@@ -2109,51 +2411,36 @@ export class GameRoom {
                   ttlMs: 2200,
                 });
               }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CHORUS OF SACRED HYMNS!', '#FEF08A');
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 7 || this.map.biome === 'reliquary') {
             // ==========================================
             // FLOOR 7 BOSS: Zadkiel, Keeper of the Ashen Reliquary
+            // 4 Abilities (Unique! No Malakor moves):
+            // 1. Relic Censer Smite, 2. Ancestral Relic Blade Barrage, 3. Memorial Monolith Drop, 4. Judgment of the Departed
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Ashen Relic Bastion (-50% damage taken for 3.5s + 8-way shockwave)
-              enemy.shieldWallMs = 3500;
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' ASHEN BASTION!', '#D9AA52');
-              for (let k = 0; k < 8; k++) {
-                const a = (k * Math.PI * 2) / 8;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
+            if (patternChoice < 0.25) {
+              // 1. Relic Censer Smite (3 Lingering Ashen Incense Clouds)
+              for (let k = -1; k <= 1; k++) {
+                const cloudDist = 70 + k * 30;
+                const cloudAngle = angle + k * 0.45;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'frost_nova', // Repurposed for ashen incense mist
+                  x: enemy.x + Math.cos(cloudAngle) * cloudDist,
+                  y: enemy.y + Math.sin(cloudAngle) * cloudDist,
+                  radius: 75,
+                  ttlMs: 1400,
+                  maxTtlMs: 1400,
                   ownerId: enemy.id,
-                  style: 'slash',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 260,
-                  vy: Math.sin(a) * 260,
-                  angle: a,
-                  radius: 9,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 1600,
                 });
               }
-              enemy.windupMs = isEnraged ? 750 : 1150;
-            } else if (patternChoice < 0.70) {
-              // 2. Reliquary Heavy Slam
-              this.zones.push({
-                id: this.nextId('zone'),
-                kind: 'boss_slam',
-                x: nearest.x,
-                y: nearest.y,
-                radius: 100,
-                ttlMs: isEnraged ? 600 : 750,
-                maxTtlMs: isEnraged ? 600 : 750,
-                ownerId: enemy.id,
-              });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIQUARY SLAM!', '#EF4444');
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              // 3. Ancestral Relic Blade Barrage
-              for (let off = -0.4; off <= 0.4; off += 0.16) {
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' ASHEN CENSER MIST!', '#D9AA52');
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.50) {
+              // 2. Ancestral Relic Blade Barrage (7-blade spread)
+              for (let off = -0.42; off <= 0.42; off += 0.14) {
                 const a = angle + off;
                 this.spawnProjectile({
                   ownerType: 'enemy',
@@ -2172,13 +2459,53 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RELIC BARRAGE!', '#F59E0B');
               enemy.windupMs = isEnraged ? 700 : 1000;
+            } else if (patternChoice < 0.75) {
+              // 3. Memorial Monolith Drop (Vault stelae crash down)
+              for (let m = 0; m < 2; m++) {
+                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
+                const targetState = prList[m % prList.length]?.state || nearest;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'magma_pillar',
+                  x: targetState.x + (m === 0 ? -30 : 30),
+                  y: targetState.y + (m === 0 ? 20 : -20),
+                  radius: 85,
+                  ttlMs: 650,
+                  maxTtlMs: 650,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' MEMORIAL MONOLITHS!', '#E2E8F0');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              // 4. Judgment of the Departed (Eye of Remembrance 3-Laser Spread)
+              for (let off = -0.25; off <= 0.25; off += 0.25) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 360,
+                  vy: Math.sin(a) * 360,
+                  angle: a,
+                  radius: 10,
+                  damage: 34,
+                  pierce: 2,
+                  ttlMs: 1800,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' JUDGMENT OF THE DEPARTED!', '#FEF08A');
+              enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 8 || this.map.biome === 'scripture') {
             // ==========================================
             // FLOOR 8 BOSS: Sariel, Warden of the Veiled Scripture
+            // 4 Abilities: 1. Forbidden Scripture Seals, 2. Veiled Starlight Step, 3. Astrolabe Singularity, 4. Heretical Scripture Volley
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Severed Scripture Glyphs (3 dual holy & void zones)
+            if (patternChoice < 0.25) {
+              // 1. Forbidden Scripture Seals (3 Duality runic traps)
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2195,8 +2522,8 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' SCRIPTURE SEALS!', '#E879F9');
               enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.70) {
-              // 2. Veiled Step & Criss-Cross Volley
+            } else if (patternChoice < 0.50) {
+              // 2. Veiled Starlight Step (Dimensional blink + criss-cross volley)
               enemy.x = nearest.x + (Math.random() < 0.5 ? -100 : 100);
               enemy.y = nearest.y + (Math.random() < 0.5 ? -100 : 100);
               const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
@@ -2219,8 +2546,22 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' VEILED STEP!', '#A855F7');
               enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              // 3. Astrolabe Gravitational Singularity (Gravity Well)
+              this.zones.push({
+                id: this.nextId('zone'),
+                kind: 'singularity',
+                x: nearest.x,
+                y: nearest.y,
+                radius: 120,
+                ttlMs: 1600,
+                maxTtlMs: 1600,
+                ownerId: enemy.id,
+              });
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' ASTROLABE SINGULARITY!', '#C084FC');
+              enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
-              // 3. Heretical Scripture Supernova
+              // 4. Heretical Scripture Volley (Dual-Color Spiral)
               const count = isEnraged ? 22 : 18;
               for (let k = 0; k < count; k++) {
                 const a = (k * Math.PI * 2) / count;
@@ -2239,14 +2580,17 @@ export class GameRoom {
                   ttlMs: 2200,
                 });
               }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' HERETICAL VOLLEY!', '#F43F5E');
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 9 || this.map.biome === 'nave') {
             // ==========================================
             // FLOOR 9 BOSS: Seraphel, Sentinel of the Final Seal
+            // 4 Abilities (Unique! No Malakor bull rush):
+            // 1. Final Seal Judgement Pillars, 2. Starlight Spear Ray, 3. Seraphic Wing Gale, 4. Celestial Nave Supernova
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Final Seal Judgement Pillars
+            if (patternChoice < 0.25) {
+              // 1. Final Seal Judgement Pillars (4 radiant celestial beams)
               for (let k = 0; k < 4; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2263,12 +2607,9 @@ export class GameRoom {
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, ' FINAL SEAL JUDGEMENT!', '#F472B6');
               enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.70) {
-              // 2. Seraphic Thrust Charge & Spear Burst
-              enemy.charging = true;
-              enemy.chargeAngle = angle;
-              enemy.chargeTimerMs = 600;
-              for (let off = -0.3; off <= 0.3; off += 0.15) {
+            } else if (patternChoice < 0.50) {
+              // 2. Starlight Spear Ray (High-Speed Piercing Beam)
+              for (let off = -0.15; off <= 0.15; off += 0.15) {
                 const a = angle + off;
                 this.spawnProjectile({
                   ownerType: 'enemy',
@@ -2276,19 +2617,40 @@ export class GameRoom {
                   style: 'radiant',
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 340,
-                  vy: Math.sin(a) * 340,
+                  vx: Math.cos(a) * 380,
+                  vy: Math.sin(a) * 380,
                   angle: a,
                   radius: 9,
                   damage: 34,
+                  pierce: 2,
+                  ttlMs: 1600,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' STARLIGHT SPEAR!', '#FDE047');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              // 3. Seraphic Wing Gale (9-feather crescent fan + knockback push)
+              for (let off = -0.55; off <= 0.55; off += 0.14) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'radiant',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 300,
+                  vy: Math.sin(a) * 300,
+                  angle: a,
+                  radius: 7,
+                  damage: 26,
                   pierce: 1,
                   ttlMs: 1800,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SERAPHIC THRUST!', '#FDE047');
-              enemy.windupMs = isEnraged ? 650 : 950;
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' WING GALE!', '#38BDF8');
+              enemy.windupMs = isEnraged ? 650 : 900;
             } else {
-              // 3. Celestial Nave Supernova Starburst
+              // 4. Celestial Nave Supernova Starburst
               const count = isEnraged ? 24 : 20;
               const rot = Math.random() * Math.PI;
               for (let k = 0; k < count; k++) {
@@ -2308,37 +2670,17 @@ export class GameRoom {
                   ttlMs: 2400,
                 });
               }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' CELESTIAL SUPERNOVA!', '#FEF08A');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           } else if (this.floor === 10 || this.map.biome === 'wardengate') {
             // ==========================================
             // FLOOR 10 BOSS: Oriphiel, The Last Warden
+            // 4 Abilities (Unique! No Malakor shield wall):
+            // 1. Sanctuary Gate Collapse, 2. Warden's Judgement Crescent, 3. Warden's Binding Sigils, 4. Rune of the Last Warden
             // ==========================================
-            if (patternChoice < 0.35) {
-              // 1. Warden's Aegis Bulwark (-70% damage for 4s + Enforcer Reinforcements)
-              enemy.shieldWallMs = 4000;
-              this.summonBossAdds(enemy);
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S AEGIS BULWARK!", '#38BDF8');
-              for (let k = 0; k < 10; k++) {
-                const a = (k * Math.PI * 2) / 10;
-                this.spawnProjectile({
-                  ownerType: 'enemy',
-                  ownerId: enemy.id,
-                  style: 'slash',
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 290,
-                  vy: Math.sin(a) * 290,
-                  angle: a,
-                  radius: 10,
-                  damage: 32,
-                  pierce: 1,
-                  ttlMs: 1800,
-                });
-              }
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.70) {
-              // 2. Sanctuary Gate Collapse (Massive Arena Slam)
+            if (patternChoice < 0.25) {
+              // 1. Sanctuary Gate Collapse (Massive Arena Shockwave)
               this.zones.push({
                 id: this.nextId('zone'),
                 kind: 'supernova',
@@ -2349,10 +2691,51 @@ export class GameRoom {
                 maxTtlMs: 1400,
                 ownerId: enemy.id,
               });
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SANCTUARY GATE COLLAPSE!', '#EF4444');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' GATE COLLAPSE!', '#EF4444');
               enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.50) {
+              // 2. Warden's Judgement Crescent (Colossal 180° greatblade sweep)
+              for (let off = -0.7; off <= 0.7; off += 0.2) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: 'enemy',
+                  ownerId: enemy.id,
+                  style: 'slash',
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 320,
+                  vy: Math.sin(a) * 320,
+                  angle: a,
+                  radius: 11,
+                  damage: 36,
+                  pierce: 2,
+                  ttlMs: 1600,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' JUDGEMENT CRESCENT!', '#F59E0B');
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              // 3. Warden's Binding Sigils (4 Perimeter Sigils firing crossing beams)
+              for (let k = 0; k < 4; k++) {
+                const sa = (k * Math.PI) / 2 + (Date.now() * 0.001);
+                const sigilX = enemy.x + Math.cos(sa) * 130;
+                const sigilY = enemy.y + Math.sin(sa) * 130;
+                this.zones.push({
+                  id: this.nextId('zone'),
+                  kind: 'starlight_beam',
+                  x: sigilX,
+                  y: sigilY,
+                  radius: 65,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
+                  ownerId: enemy.id,
+                });
+              }
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' BINDING SIGILS!', '#FEF08A');
+              enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
-              // 3. Warden's Final Execution Dual Spiral
+              // 4. Rune of the Last Warden (Dual Spiral + Warden Enforcers)
+              this.summonBossAdds(enemy);
               const count = isEnraged ? 28 : 22;
               const rot = Math.random() * Math.PI;
               for (let k = 0; k < count; k++) {
@@ -2372,7 +2755,7 @@ export class GameRoom {
                   ttlMs: 2500,
                 });
               }
-              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FINAL EXECUTION!', '#F59E0B');
+              this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' RUNE OF THE LAST WARDEN!', '#FBBF24');
               enemy.windupMs = isEnraged ? 700 : 1000;
             }
           }

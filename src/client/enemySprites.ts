@@ -814,3 +814,550 @@ export function drawAstralSentinelSprite(
   ctx.restore();
 }
 
+
+/**
+ * Hymn Phantom — Spectral choir spirit of the Forgotten Sanctuary.
+ * Flowing ethereal purple vestments, floating melodious hymn runes,
+ * glowing lavender soul eyes, sacred prayer chime, and undulating ghostly tails.
+ */
+export function drawHymnPhantomSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isWindup = en.state === 'windup';
+  const floatBob = Math.sin(now * 0.005 + ex * 0.18) * 3.5;
+  const sy = ey + floatBob;
+
+  // 1. Soft Consecrated Holy Golden Shadow
+  const shadowAlpha = 0.28 + Math.sin(now * 0.004) * 0.08;
+  ctx.fillStyle = `rgba(245, 158, 11, ${shadowAlpha})`;
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius + 1, en.radius * 1.1, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 2. Windup Melody Resonance Wave (Holy Golden Chords)
+  if (isWindup) {
+    const ringPulse = (now * 0.01) % (Math.PI * 2);
+    ctx.strokeStyle = 'rgba(254, 240, 138, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, en.radius + 4 + Math.sin(ringPulse) * 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 3. Ethereal Undulating Holy Spirit Tail (Luminous Warm Ivory & Gold Vapor)
+  const tailSway = Math.sin(now * 0.007 + ex) * 3;
+  ctx.fillStyle = 'rgba(217, 119, 6, 0.75)';
+  ctx.beginPath();
+  ctx.moveTo(-en.radius * 0.7, 4);
+  ctx.quadraticCurveTo(-en.radius * 0.4 + tailSway, en.radius * 0.9, tailSway, en.radius * 1.25);
+  ctx.quadraticCurveTo(en.radius * 0.4 + tailSway, en.radius * 0.9, en.radius * 0.7, 4);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(254, 243, 199, 0.92)';
+  ctx.beginPath();
+  ctx.moveTo(-en.radius * 0.5, 6);
+  ctx.quadraticCurveTo(tailSway * 0.6, en.radius * 0.8, tailSway * 0.8, en.radius * 1.1);
+  ctx.quadraticCurveTo(tailSway * 0.6, en.radius * 0.7, en.radius * 0.5, 6);
+  ctx.closePath();
+  ctx.fill();
+
+  // 4. Layered Consecrated Ivory Choir Robes
+  ctx.fillStyle = '#E5DDD0';
+  ctx.fillRect(-en.radius * 0.65, -en.radius * 0.4, en.radius * 1.3, en.radius * 0.9);
+  ctx.fillStyle = '#FAF8F5';
+  ctx.fillRect(-en.radius * 0.5, -en.radius * 0.3, en.radius, en.radius * 0.7);
+  // Gold hymnal stole / embroidery
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(-2, -en.radius * 0.25, 4, en.radius * 0.75);
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(-1, -en.radius * 0.1, 2, en.radius * 0.5);
+
+  // 5. Sacred Cowl & Glowing Choir Aureole
+  ctx.fillStyle = '#F3EFE6';
+  ctx.fillRect(-en.radius * 0.55, -en.radius * 1.15, en.radius * 1.1, en.radius * 0.85);
+  ctx.fillStyle = '#3E3426';
+  ctx.fillRect(-en.radius * 0.4, -en.radius * 1.05, en.radius * 0.8, en.radius * 0.65);
+
+  // Holy Choir Halo
+  ctx.strokeStyle = '#FEF08A';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(0, -en.radius * 1.15, en.radius * 0.6, 2.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // 6. Glowing Amber-Gold Soul Eyes
+  const isBlink = Math.sin(now * 0.002 + ex) > 0.97;
+  if (!isBlink) {
+    ctx.fillStyle = isWindup ? '#FFFFFF' : '#FEF08A';
+    ctx.fillRect(-en.radius * 0.32, -en.radius * 0.85, 3, isWindup ? 3 : 2);
+    ctx.fillRect(en.radius * 0.15, -en.radius * 0.85, 3, isWindup ? 3 : 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(-en.radius * 0.26, -en.radius * 0.85, 1, 1);
+    ctx.fillRect(en.radius * 0.21, -en.radius * 0.85, 1, 1);
+  }
+
+  // 7. Sacred Golden Prayer Chime in Hand
+  const chimeBob = Math.sin(now * 0.008) * 1.5;
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(en.radius * 0.55, -en.radius * 0.2 + chimeBob, 3, 7);
+  ctx.fillStyle = '#FBBF24';
+  ctx.fillRect(en.radius * 0.45, en.radius * 0.1 + chimeBob, 5, 4);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(en.radius * 0.5, en.radius * 0.15 + chimeBob, 2, 2);
+
+  // 8. Orbiting Holy Musical Notes & Hymnal Runes
+  for (let k = 0; k < 3; k++) {
+    const rAng = now * 0.003 + (k * Math.PI * 2) / 3;
+    const rx = Math.cos(rAng) * (en.radius + 6);
+    const ry = Math.sin(rAng) * (en.radius * 0.45) - 2;
+    ctx.fillStyle = '#FEF08A';
+    ctx.font = '700 7px serif';
+    ctx.fillText(k === 0 ? '♪' : k === 1 ? '♫' : '♩', rx - 2, ry + 2);
+    ctx.fillStyle = '#FFFBEB';
+    ctx.fillRect(rx + 2, ry - 3, 1, 1);
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Relic Golem — Heavy ancient bronze and carved basalt reliquary construct.
+ * Inlaid golden filigree, glowing amber relic core fissure, massive stone fist,
+ * and rune-engraved shoulder slabs.
+ */
+export function drawRelicGolemSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isMoving = en.state === 'chase';
+  const isWindup = en.state === 'windup';
+  const stompGait = isMoving ? Math.sin(now * 0.012 + ex) * 2.5 : Math.sin(now * 0.003) * 1;
+  const sy = ey + stompGait;
+
+  // 1. Heavy Grounded Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.52)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 2, en.radius * 1.45, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 2. Chiseled Stone Legs
+  const legSwing = isMoving ? Math.sin(now * 0.012 + ex) * 4 : 0;
+  ctx.fillStyle = '#292524';
+  ctx.fillRect(-en.radius * 0.7, en.radius * 0.4 + legSwing, en.radius * 0.55, en.radius * 0.6);
+  ctx.fillRect(en.radius * 0.15, en.radius * 0.4 - legSwing, en.radius * 0.55, en.radius * 0.6);
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(-en.radius * 0.7, en.radius * 0.85 + legSwing, en.radius * 0.55, 3);
+  ctx.fillRect(en.radius * 0.15, en.radius * 0.85 - legSwing, en.radius * 0.55, 3);
+
+  // 3. Heavy Weathered Bronze & Basalt Torso
+  ctx.fillStyle = '#1C1917';
+  ctx.fillRect(-en.radius * 0.9, -en.radius * 0.7, en.radius * 1.8, en.radius * 1.25);
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(-en.radius * 0.8, -en.radius * 0.6, en.radius * 1.6, en.radius * 1.05);
+
+  // Weathered gold chest filigree
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(-en.radius * 0.75, -en.radius * 0.55, en.radius * 1.5, 3);
+  ctx.fillRect(-en.radius * 0.75, en.radius * 0.35, en.radius * 1.5, 3);
+
+  // 4. Glowing Relic Heart Core Fissures
+  const corePulse = isWindup ? 1 : 0.75 + Math.sin(now * 0.008) * 0.25;
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(-en.radius * 0.3, -en.radius * 0.2, en.radius * 0.6, en.radius * 0.5);
+  ctx.fillStyle = '#F97316';
+  ctx.fillRect(-en.radius * 0.2, -en.radius * 0.12, en.radius * 0.4, en.radius * 0.35);
+  ctx.fillStyle = isWindup ? '#FFFFFF' : '#FEF08A';
+  ctx.fillRect(-2, -2, 4, 4);
+
+  // 5. Engraved Stone Shoulder Tablets
+  ctx.fillStyle = '#44403C';
+  ctx.fillRect(-en.radius * 1.15, -en.radius * 0.85, en.radius * 0.45, en.radius * 0.75);
+  ctx.fillRect(en.radius * 0.7, -en.radius * 0.85, en.radius * 0.45, en.radius * 0.75);
+  // Gold glyph marks on shoulders
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(-en.radius * 1.05, -en.radius * 0.75, en.radius * 0.25, 2);
+  ctx.fillRect(-en.radius * 1.05, -en.radius * 0.55, en.radius * 0.25, 2);
+  ctx.fillRect(en.radius * 0.8, -en.radius * 0.75, en.radius * 0.25, 2);
+  ctx.fillRect(en.radius * 0.8, -en.radius * 0.55, en.radius * 0.25, 2);
+
+  // 6. Weathered Stone Head & Amber Optical Slit
+  ctx.fillStyle = '#292524';
+  ctx.fillRect(-en.radius * 0.45, -en.radius * 1.25, en.radius * 0.9, en.radius * 0.6);
+  ctx.fillStyle = '#44403C';
+  ctx.fillRect(-en.radius * 0.35, -en.radius * 1.15, en.radius * 0.7, en.radius * 0.45);
+  // Glowing amber optical eye slit
+  ctx.fillStyle = isWindup ? '#FEF08A' : '#F59E0B';
+  ctx.fillRect(-en.radius * 0.25, -en.radius * 0.95, en.radius * 0.5, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-1, -en.radius * 0.95, 2, 2);
+
+  // 7. Heavy Stone Crushing Fist (Right Arm)
+  const fistRise = isWindup ? -8 : 0;
+  ctx.fillStyle = '#292524';
+  ctx.fillRect(en.radius * 0.85, -en.radius * 0.3 + fistRise, en.radius * 0.5, en.radius * 0.8);
+  ctx.fillStyle = '#78350F';
+  ctx.fillRect(en.radius * 0.8, en.radius * 0.2 + fistRise, en.radius * 0.6, 6);
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(en.radius * 0.9, en.radius * 0.3 + fistRise, 3, 3);
+
+  ctx.restore();
+}
+
+/**
+ * Veiled Heretic — Corrupted religious acolyte of the Chapel of Severed Light.
+ * Tattered ascetic robes, occult eye medallion, twisted bone wand crackling with void spark.
+ */
+export function drawVeiledHereticSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isWindup = en.state === 'windup';
+  const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex) * 2 : Math.sin(now * 0.003) * 1;
+  const sy = ey + walkBob;
+
+  // 1. Ground Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.42)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 2, en.radius * 1.15, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 2. Windup Occult Void Ring
+  if (isWindup) {
+    ctx.strokeStyle = 'rgba(232, 121, 249, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, en.radius * 0.8, en.radius * 0.9, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // 3. Tattered Corrupted Ascetic Robes
+  const hemSway = Math.sin(now * 0.006 + ex) * 2;
+  ctx.fillStyle = '#18181B';
+  ctx.beginPath();
+  ctx.moveTo(-en.radius * 0.7, -en.radius * 0.3);
+  ctx.lineTo(-en.radius * 0.8 + hemSway, en.radius * 0.9);
+  ctx.lineTo(en.radius * 0.8 + hemSway, en.radius * 0.9);
+  ctx.lineTo(en.radius * 0.7, -en.radius * 0.3);
+  ctx.closePath();
+  ctx.fill();
+
+  // Robe layers (Void-infused violet folds)
+  ctx.fillStyle = '#2E1065';
+  ctx.fillRect(-en.radius * 0.55, -en.radius * 0.2, en.radius * 1.1, en.radius * 1.05);
+  ctx.fillStyle = '#4C1D95';
+  ctx.fillRect(-en.radius * 0.35, -en.radius * 0.1, en.radius * 0.7, en.radius * 0.9);
+
+  // Shredded jagged hem fringe
+  ctx.fillStyle = '#18181B';
+  for (let f = 0; f < 4; f++) {
+    ctx.fillRect(-en.radius * 0.7 + f * 7, en.radius * 0.88, 4, 3 + (f % 2) * 2);
+  }
+
+  // 4. Occult Eye Medallion at Chest
+  ctx.fillStyle = '#D97706';
+  ctx.fillRect(-3, -en.radius * 0.05, 6, 6);
+  ctx.fillStyle = '#F43F5E';
+  ctx.fillRect(-1.5, 0.5, 3, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-0.5, 1, 1, 1);
+
+  // 5. Shrouded Ascetic Cowl & Head
+  ctx.fillStyle = '#1E1B4B';
+  ctx.fillRect(-en.radius * 0.55, -en.radius * 1.1, en.radius * 1.1, en.radius * 0.9);
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(-en.radius * 0.4, -en.radius * 1.0, en.radius * 0.8, en.radius * 0.7);
+
+  // Glowing Malevolent Magenta Eyes
+  ctx.fillStyle = isWindup ? '#F43F5E' : '#E11D48';
+  ctx.fillRect(-en.radius * 0.28, -en.radius * 0.75, 2.5, 2);
+  ctx.fillRect(en.radius * 0.1, -en.radius * 0.75, 2.5, 2);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-en.radius * 0.22, -en.radius * 0.75, 1, 1);
+  ctx.fillRect(en.radius * 0.16, -en.radius * 0.75, 1, 1);
+
+  // 6. Twisted Bone Scripture Wand (Right Arm)
+  const wandTilt = isWindup ? -0.5 : 0.15;
+  ctx.save();
+  ctx.translate(en.radius * 0.65, 0);
+  ctx.rotate(wandTilt);
+  // Bone shaft
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(-1.5, -en.radius * 0.9, 3, en.radius * 1.1);
+  // Twisted void crystal head
+  ctx.fillStyle = '#A855F7';
+  ctx.fillRect(-3, -en.radius * 1.1, 6, 5);
+  ctx.fillStyle = '#F43F5E';
+  ctx.fillRect(-1.5, -en.radius * 1.05, 3, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-0.5, -en.radius * 1.0, 1, 1);
+  ctx.restore();
+
+  // 7. Left Hand Gesture with void smoke motes
+  ctx.fillStyle = '#4C1D95';
+  ctx.fillRect(-en.radius * 0.75, 2, 4, 4);
+  const smokeBob = Math.sin(now * 0.01) * 2;
+  ctx.fillStyle = '#C084FC';
+  ctx.fillRect(-en.radius * 0.8, -2 + smokeBob, 2, 2);
+
+  ctx.restore();
+}
+
+/**
+ * Celestial Arbiter — Armored divine judge of the Celestial Nave.
+ * Pristine ivory & solar-gold plate, winged diadem, floating geometric solar halo,
+ * and radiant celestial judgement blades.
+ */
+export function drawCelestialArbiterSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isWindup = en.state === 'windup';
+  const hoverBob = Math.sin(now * 0.005 + ex * 0.15) * 3;
+  const sy = ey + hoverBob;
+
+  // 1. Soft Radiant Ground Shadow
+  ctx.fillStyle = 'rgba(234, 179, 8, 0.28)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius, en.radius * 1.1, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 2. Floating Geometric Solar Ring Halo
+  const haloRot = now * 0.002;
+  ctx.save();
+  ctx.rotate(haloRot);
+  ctx.strokeStyle = 'rgba(250, 204, 21, 0.75)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, -en.radius * 0.4, en.radius + 3, 0, Math.PI * 2);
+  ctx.stroke();
+  for (let s = 0; s < 4; s++) {
+    const sAng = (s * Math.PI) / 2;
+    const sx = Math.cos(sAng) * (en.radius + 3);
+    const syH = Math.sin(sAng) * (en.radius + 3) - en.radius * 0.4;
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(sx - 1.5, syH - 1.5, 3, 3);
+  }
+  ctx.restore();
+
+  // 3. Pristine Ivory & Solar-Gold Cuirass
+  ctx.fillStyle = '#F8FAFC';
+  ctx.fillRect(-en.radius * 0.65, -en.radius * 0.55, en.radius * 1.3, en.radius * 1.1);
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(-en.radius * 0.5, -en.radius * 0.45, en.radius, en.radius * 0.95);
+
+  // Solar gold breastplate filigree & lapis center
+  ctx.fillStyle = '#EAB308';
+  ctx.fillRect(-en.radius * 0.4, -en.radius * 0.35, en.radius * 0.8, 3);
+  ctx.fillRect(-en.radius * 0.4, en.radius * 0.15, en.radius * 0.8, 3);
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(-2, -en.radius * 0.15, 4, 4);
+
+  // 4. Angelic Shoulder Fins / Pauldrons
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(-en.radius * 0.95, -en.radius * 0.75, en.radius * 0.35, en.radius * 0.65);
+  ctx.fillRect(en.radius * 0.6, -en.radius * 0.75, en.radius * 0.35, en.radius * 0.65);
+  ctx.fillStyle = '#FEF08A';
+  ctx.fillRect(-en.radius * 0.9, -en.radius * 0.65, 2, en.radius * 0.45);
+  ctx.fillRect(en.radius * 0.85, -en.radius * 0.65, 2, en.radius * 0.45);
+
+  // 5. Winged Golden Diadem & Helm
+  ctx.fillStyle = '#F1F5F9';
+  ctx.fillRect(-en.radius * 0.45, -en.radius * 1.25, en.radius * 0.9, en.radius * 0.7);
+  ctx.fillStyle = '#EAB308';
+  ctx.fillRect(-en.radius * 0.55, -en.radius * 1.3, en.radius * 1.1, 3);
+  ctx.fillRect(-en.radius * 0.5, -en.radius * 1.45, 3, 5);
+  ctx.fillRect(en.radius * 0.35, -en.radius * 1.45, 3, 5);
+
+  // Radiant Starlight Visor Beam
+  ctx.fillStyle = isWindup ? '#FEF08A' : '#38BDF8';
+  ctx.fillRect(-en.radius * 0.3, -en.radius * 0.95, en.radius * 0.6, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-en.radius * 0.15, -en.radius * 0.95, en.radius * 0.3, 2);
+
+  // 6. Radiant Judgement Blade (Right Arm)
+  const bladeGlint = Math.sin(now * 0.008) * 0.08;
+  ctx.save();
+  ctx.translate(en.radius * 0.8, -en.radius * 0.1);
+  ctx.rotate(bladeGlint + (isWindup ? -0.4 : 0));
+  // Gold crossguard
+  ctx.fillStyle = '#EAB308';
+  ctx.fillRect(-4, 0, 8, 3);
+  ctx.fillStyle = '#92400E';
+  ctx.fillRect(-1, 3, 2, 5);
+  // Radiant crystal blade
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(-2, -en.radius * 1.4, 4, en.radius * 1.4);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-1, -en.radius * 1.35, 2, en.radius * 1.3);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+/**
+ * Warden Enforcer — Imposing elite guardian of the Warden's Gate.
+ * Heavy cobalt-steel plate armor, spiked bastion pauldrons, glowing azure visor,
+ * and massive two-handed Warden Halberd.
+ */
+export function drawWardenEnforcerSprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const isMoving = en.state === 'chase';
+  const isWindup = en.state === 'windup';
+  const marchBob = isMoving ? Math.sin(now * 0.013 + ex) * 2.5 : Math.sin(now * 0.003) * 1;
+  const sy = ey + marchBob;
+
+  // 1. Heavy Grounded Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 2, en.radius * 1.35, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // 2. Heavy Greaves / Legs
+  const legOffset = isMoving ? Math.sin(now * 0.013 + ex) * 4 : 0;
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(-en.radius * 0.65, en.radius * 0.45 + legOffset, en.radius * 0.5, en.radius * 0.6);
+  ctx.fillRect(en.radius * 0.15, en.radius * 0.45 - legOffset, en.radius * 0.5, en.radius * 0.6);
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(-en.radius * 0.65, en.radius * 0.75 + legOffset, en.radius * 0.5, 3);
+  ctx.fillRect(en.radius * 0.15, en.radius * 0.75 - legOffset, en.radius * 0.5, 3);
+
+  // 3. Cobalt-Steel Plate Cuirass & Tabard
+  ctx.fillStyle = '#0F172A';
+  ctx.fillRect(-en.radius * 0.85, -en.radius * 0.6, en.radius * 1.7, en.radius * 1.15);
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(-en.radius * 0.75, -en.radius * 0.5, en.radius * 1.5, en.radius * 1.0);
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(-en.radius * 0.6, -en.radius * 0.4, en.radius * 1.2, en.radius * 0.8);
+
+  // Cyan Warden Runes along center plate
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(-2, -en.radius * 0.35, 4, en.radius * 0.7);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(-1, -en.radius * 0.25, 2, en.radius * 0.5);
+
+  // 4. Spiked Bastion Pauldrons
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(-en.radius * 1.15, -en.radius * 0.8, en.radius * 0.45, en.radius * 0.65);
+  ctx.fillRect(en.radius * 0.7, -en.radius * 0.8, en.radius * 0.45, en.radius * 0.65);
+  // Spikes on pauldrons
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(-en.radius * 1.1, -en.radius * 1.0, 3, 5);
+  ctx.fillRect(en.radius * 0.95, -en.radius * 1.0, 3, 5);
+
+  // 5. Great Horned Warden Visor & Helm
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(-en.radius * 0.5, -en.radius * 1.25, en.radius, en.radius * 0.7);
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(-en.radius * 0.4, -en.radius * 1.15, en.radius * 0.8, en.radius * 0.55);
+
+  // Glowing Azure Visor Slit
+  ctx.fillStyle = isWindup ? '#FEF08A' : '#38BDF8';
+  ctx.fillRect(-en.radius * 0.28, -en.radius * 0.95, en.radius * 0.56, 3);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(-2, -en.radius * 0.95, 4, 2);
+
+  // 6. Colossal Warden's Halberd / Poleaxe (Right Arm)
+  const halberdTilt = isWindup ? -0.7 : 0.2;
+  ctx.save();
+  ctx.translate(en.radius * 0.75, 0);
+  ctx.rotate(halberdTilt);
+  // Shaft
+  ctx.fillStyle = '#475569';
+  ctx.fillRect(-1.5, -en.radius * 1.6, 3, en.radius * 2.2);
+  // Heavy axe crescent blade
+  ctx.fillStyle = '#64748B';
+  ctx.fillRect(1.5, -en.radius * 1.5, en.radius * 0.75, en.radius * 0.65);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(1.5 + en.radius * 0.65, -en.radius * 1.45, 3, en.radius * 0.55);
+  // Rear armor-piercing spike
+  ctx.fillStyle = '#94A3B8';
+  ctx.fillRect(-en.radius * 0.4, -en.radius * 1.35, en.radius * 0.4, 3);
+  ctx.restore();
+
+  // 7. Reinforced Kite Buckler on Left Arm
+  ctx.fillStyle = '#1E293B';
+  ctx.fillRect(-en.radius * 1.15, -en.radius * 0.2, 5, en.radius * 0.8);
+  ctx.fillStyle = '#38BDF8';
+  ctx.fillRect(-en.radius * 1.1, 0, 3, 4);
+
+  ctx.restore();
+}
+
+/**
+ * Generic Fallback Enemy — High quality dark fantasy mercenary shadow silhouette
+ * with glowing red visor and steel blade so any future mob is immediately visible.
+ */
+export function drawGenericEnemySprite(
+  ctx: CanvasRenderingContext2D,
+  en: EnemyState,
+  ex: number,
+  ey: number,
+  now: number
+): void {
+  const walkBob = Math.sin(now * 0.005 + ex) * 1.5;
+  const sy = ey + walkBob;
+
+  // Ground Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(ex, ey + en.radius - 2, en.radius * 1.2, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(ex, sy);
+
+  // Shaded Cloak
+  ctx.fillStyle = '#1F2937';
+  ctx.fillRect(-en.radius * 0.65, -en.radius * 0.5, en.radius * 1.3, en.radius * 1.1);
+  ctx.fillStyle = '#374151';
+  ctx.fillRect(-en.radius * 0.5, -en.radius * 0.4, en.radius, en.radius * 0.9);
+
+  // Masked Helm
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(-en.radius * 0.45, -en.radius * 1.1, en.radius * 0.9, en.radius * 0.65);
+
+  // Glowing Crimson Eyes
+  ctx.fillStyle = '#EF4444';
+  ctx.fillRect(-en.radius * 0.25, -en.radius * 0.85, 3, 2);
+  ctx.fillRect(en.radius * 0.1, -en.radius * 0.85, 3, 2);
+
+  // Steel Weapon in Hand
+  ctx.fillStyle = '#9CA3AF';
+  ctx.fillRect(en.radius * 0.6, -en.radius * 0.5, 3, en.radius * 0.9);
+
+  ctx.restore();
+}

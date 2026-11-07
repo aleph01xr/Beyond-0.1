@@ -520,13 +520,13 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                   }
                 : isHymns
                   ? {
-                      border: 'border-[#A855F7]',
-                      bg: 'bg-[#1E172A]/95',
-                      barTrack: 'bg-[#2B1D3D]',
-                      barFill: 'bg-gradient-to-r from-[#9333EA] via-[#C084FC] to-[#FDE047]',
-                      titleColor: 'text-[#E9D5FF]',
-                      badge: 'HYMN KEEPER',
-                      badgeColor: 'text-[#E9D5FF] border-[#A855F7]',
+                      border: 'border-[#F59E0B]',
+                      bg: 'bg-[#241D12]/95',
+                      barTrack: 'bg-[#382C18]',
+                      barFill: 'bg-gradient-to-r from-[#D97706] via-[#FBBF24] to-[#FFFBEB]',
+                      titleColor: 'text-[#FEF08A]',
+                      badge: 'SACRED CHOIR KEEPER',
+                      badgeColor: 'text-[#FEF08A] border-[#D97706]',
                     }
                   : isReliquary
                     ? {
@@ -560,13 +560,13 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                           }
                         : isWardenGate
                           ? {
-                              border: 'border-[#38BDF8]',
-                              bg: 'bg-[#121A2A]/95',
-                              barTrack: 'bg-[#1C283F]',
-                              barFill: 'bg-gradient-to-r from-[#0284C7] via-[#38BDF8] to-[#FDE047]',
-                              titleColor: 'text-[#E0F2FE]',
+                              border: 'border-[#F59E0B]',
+                              bg: 'bg-[#261E14]/95',
+                              barTrack: 'bg-[#3A2D1B]',
+                              barFill: 'bg-gradient-to-r from-[#D97706] via-[#FBBF24] to-[#FFFBEB]',
+                              titleColor: 'text-[#FEF08A]',
                               badge: 'THE LAST WARDEN',
-                              badgeColor: 'text-[#E0F2FE] border-[#38BDF8]',
+                              badgeColor: 'text-[#FEF08A] border-[#F59E0B]',
                             }
                           : {
                               border: 'border-[#6E2932]',
