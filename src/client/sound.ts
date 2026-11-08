@@ -556,6 +556,1096 @@ class RetroAudioEngine {
     });
   }
 
+  // ==========================================
+  // BOSS ABILITY SFX — FLOORS 1 to 10
+  // ==========================================
+
+  public playBossAbility(boss: string, ability: string): void {
+    const key = `${boss.toLowerCase()}_${ability.toLowerCase().replace(/['’]/g, '').replace(/\s+/g, '_')}`;
+
+    switch (key) {
+      // ——— FLOOR 1: Warden Malakor ———
+      case 'malakor_iron_bulwark':
+      case 'warden_malakor_iron_bulwark':
+        this.playMalakorIronBulwark(); break;
+      case 'malakor_triple_cleave':
+      case 'warden_malakor_triple_cleave':
+        this.playMalakorTripleCleave(); break;
+      case 'malakor_bastion_ground_slam':
+      case 'warden_malakor_bastion_ground_slam':
+        this.playMalakorBastionGroundSlam(); break;
+      case 'malakor_war_charge':
+      case 'warden_malakor_war_charge':
+        this.playMalakorWarCharge(); break;
+
+      // ——— FLOOR 2: Archlich Vaelor ———
+      case 'vaelor_glacial_frost_nova':
+      case 'archlich_vaelor_glacial_frost_nova':
+        this.playVaelorGlacialFrostNova(); break;
+      case 'vaelor_soul_siphon_tether':
+      case 'archlich_vaelor_soul_siphon_tether':
+        this.playVaelorSoulSiphonTether(); break;
+      case 'vaelor_seeking_soul_hail':
+      case 'archlich_vaelor_seeking_soul_hail':
+        this.playVaelorSeekingSoulHail(); break;
+      case 'vaelor_necrotic_death_ring':
+      case 'archlich_vaelor_necrotic_death_ring':
+        this.playVaelorNecroticDeathRing(); break;
+
+      // ——— FLOOR 3: Ignis, Cinder Sovereign ———
+      case 'ignis_magma_eruptions':
+        this.playIgnisMagmaEruptions(); break;
+      case 'ignis_molten_fissure_wave':
+        this.playIgnisMoltenFissureWave(); break;
+      case 'ignis_cinder_ember_spiral':
+        this.playIgnisCinderEmberSpiral(); break;
+      case 'ignis_volcanic_core_detonation':
+        this.playIgnisVolcanicCoreDetonation(); break;
+
+      // ——— FLOOR 4: Void-Eater Malice ———
+      case 'malice_gravitational_singularity':
+      case 'void-eater_malice_gravitational_singularity':
+        this.playMaliceGravitationalSingularity(); break;
+      case 'malice_void_tendril_flurry':
+      case 'void-eater_malice_void_tendril_flurry':
+        this.playMaliceVoidTendrilFlurry(); break;
+      case 'malice_void_step':
+      case 'void-eater_malice_void_step':
+        this.playMaliceVoidStep(); break;
+      case 'malice_abyssal_nova_spread':
+      case 'void-eater_malice_abyssal_nova_spread':
+        this.playMaliceAbyssalNovaSpread(); break;
+
+      // ——— FLOOR 5: Archon of Nothingness ———
+      case 'archon_celestial_supernova_ring':
+      case 'archon_of_nothingness_celestial_supernova_ring':
+        this.playArchonCelestialSupernovaRing(); break;
+      case 'archon_orbital_starlight_beams':
+      case 'archon_of_nothingness_orbital_starlight_beams':
+        this.playArchonOrbitalStarlightBeams(); break;
+      case 'archon_cosmic_shard_volley':
+      case 'archon_of_nothingness_cosmic_shard_volley':
+        this.playArchonCosmicShardVolley(); break;
+      case 'archon_astral_constellation_spiral':
+      case 'archon_of_nothingness_astral_constellation_spiral':
+        this.playArchonAstralConstellationSpiral(); break;
+
+      // ——— FLOOR 6: Elyndor, Keeper of the Last Hymn ———
+      case 'elyndor_resonant_crescendo':
+        this.playElyndorResonantCrescendo(); break;
+      case 'elyndor_lament_of_the_forgotten':
+        this.playElyndorLamentOfTheForgotten(); break;
+      case 'elyndor_divine_chorus_beams':
+        this.playElyndorDivineChorusBeams(); break;
+      case 'elyndor_chorus_of_remembrance':
+        this.playElyndorChorusOfRemembrance(); break;
+
+      // ——— FLOOR 7: Zadkiel, Keeper of the Ashen Reliquary ———
+      case 'zadkiel_ashen_procession':
+        this.playZadkielAshenProcession(); break;
+      case 'zadkiel_chain_of_the_departed':
+        this.playZadkielChainOfTheDeparted(); break;
+      case 'zadkiel_reliquary_awakening':
+        this.playZadkielReliquaryAwakening(); break;
+      case 'zadkiel_judgment_of_the_departed':
+        this.playZadkielJudgmentOfTheDeparted(); break;
+
+      // ——— FLOOR 8: Sariel, Warden of the Veiled Scripture ———
+      case 'sariel_scripture_of_binding':
+        this.playSarielScriptureOfBinding(); break;
+      case 'sariel_forbidden_verses':
+        this.playSarielForbiddenVerses(); break;
+      case 'sariel_seal_of_silence':
+        this.playSarielSealOfSilence(); break;
+      case 'sariel_heretical_volley':
+        this.playSarielHereticalVolley(); break;
+
+      // ——— FLOOR 9: Seraphel, Sentinel of the Final Seal ———
+      case 'seraphel_heavens_piercing_line':
+      case 'seraphel_heavens_piercing_line!':
+        this.playSeraphelHeavensPiercingLine(); break;
+      case 'seraphel_lancefall_sequence':
+        this.playSeraphelLancefallSequence(); break;
+      case 'seraphel_aerial_judgment':
+        this.playSeraphelAerialJudgment(); break;
+      case 'seraphel_sentinel_spearfall_cascade':
+        this.playSeraphelSentinelSpearfallCascade(); break;
+
+      // ——— FLOOR 10: Oriphiel, The Last Warden ———
+      case 'oriphiel_wardens_edict':
+      case 'oriphiel_wardens_edict!_find_safe_quadrant!':
+        this.playOriphielWardensEdict(); break;
+      case 'oriphiel_unbroken_judgment':
+      case 'oriphiel_unbroken_judgment!_(aegis_parry)':
+        this.playOriphielUnbrokenJudgment(); break;
+      case 'oriphiel_the_final_verdict_combo':
+        this.playOriphielTheFinalVerdictCombo(); break;
+      case 'oriphiel_bastion_ground_shatter':
+        this.playOriphielBastionGroundShatter(); break;
+
+      default:
+        console.warn(`[sfx] Unknown boss ability: ${boss} / ${ability}`);
+    }
+  }
+
+  // ——— FLOOR 1: Warden Malakor (heavy knight / shield) ———
+
+  private playMalakorIronBulwark(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(110, now);
+    osc.frequency.exponentialRampToValueAtTime(45, now + 0.35);
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.42);
+
+    const clang = ctx.createOscillator();
+    const clangGain = ctx.createGain();
+    clang.type = 'square';
+    clang.frequency.setValueAtTime(320, now);
+    clang.frequency.exponentialRampToValueAtTime(140, now + 0.18);
+    clangGain.gain.setValueAtTime(0.07, now);
+    clangGain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    clang.connect(clangGain);
+    clangGain.connect(dest);
+    clang.start(now);
+    clang.stop(now + 0.24);
+  }
+
+  private playMalakorTripleCleave(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    for (let i = 0; i < 3; i++) {
+      const t = now + i * 0.09;
+      if (noise) {
+        const src = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        src.buffer = noise;
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1800 - i * 200, t);
+        filter.Q.value = 2.5;
+        g.gain.setValueAtTime(0.08, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+        src.connect(filter);
+        filter.connect(g);
+        g.connect(dest);
+        src.start(t);
+        src.stop(t + 0.15);
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(280 - i * 30, t);
+      osc.frequency.exponentialRampToValueAtTime(80, t + 0.12);
+      gain.gain.setValueAtTime(0.09, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.15);
+    }
+  }
+
+  private playMalakorBastionGroundSlam(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(75, now);
+    osc.frequency.exponentialRampToValueAtTime(22, now + 0.45);
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.52);
+
+    if (noise) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = noise;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(700, now);
+      filter.frequency.exponentialRampToValueAtTime(80, now + 0.55);
+      g.gain.setValueAtTime(0.16, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + 0.65);
+    }
+  }
+
+  private playMalakorWarCharge(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    if (noise) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = noise;
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(400, now);
+      filter.frequency.exponentialRampToValueAtTime(1400, now + 0.4);
+      g.gain.setValueAtTime(0.05, now);
+      g.gain.linearRampToValueAtTime(0.12, now + 0.25);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + 0.6);
+    }
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.35);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.48);
+  }
+
+  // ——— FLOOR 2: Archlich Vaelor (frost / necrotic) ———
+
+  private playVaelorGlacialFrostNova(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [180, 240, 320, 420].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const t = now + i * 0.03;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.4, t + 0.5);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.58);
+    });
+  }
+
+  private playVaelorSoulSiphonTether(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(70, now);
+    osc.frequency.linearRampToValueAtTime(40, now + 0.7);
+    gain.gain.setValueAtTime(0.09, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.3);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.85);
+  }
+
+  private playVaelorSeekingSoulHail(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 6; i++) {
+      const t = now + i * 0.06;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(520 + i * 40, t);
+      osc.frequency.exponentialRampToValueAtTime(180, t + 0.2);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    }
+  }
+
+  private playVaelorNecroticDeathRing(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(55, now);
+    osc.frequency.exponentialRampToValueAtTime(25, now + 0.7);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.8);
+  }
+
+  // ——— FLOOR 3: Ignis, Cinder Sovereign (fire / magma) ———
+
+  private playIgnisMagmaEruptions(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    [0, 0.15, 0.3].forEach((delay) => {
+      const t = now + delay;
+      if (noise) {
+        const src = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const g = ctx.createGain();
+        src.buffer = noise;
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(900, t);
+        filter.frequency.exponentialRampToValueAtTime(150, t + 0.35);
+        g.gain.setValueAtTime(0.13, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+        src.connect(filter);
+        filter.connect(g);
+        g.connect(dest);
+        src.start(t);
+        src.stop(t + 0.42);
+      }
+    });
+  }
+
+  private playIgnisMoltenFissureWave(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.55);
+    gain.gain.setValueAtTime(0.13, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.65);
+  }
+
+  private playIgnisCinderEmberSpiral(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 8; i++) {
+      const t = now + i * 0.045;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(380 + i * 45, t);
+      osc.frequency.exponentialRampToValueAtTime(120, t + 0.15);
+      gain.gain.setValueAtTime(0.05, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.17);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.18);
+    }
+  }
+
+  private playIgnisVolcanicCoreDetonation(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(60, now);
+    osc.frequency.exponentialRampToValueAtTime(20, now + 0.6);
+    gain.gain.setValueAtTime(0.17, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.7);
+
+    if (noise) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = noise;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(1200, now);
+      filter.frequency.exponentialRampToValueAtTime(100, now + 0.7);
+      g.gain.setValueAtTime(0.15, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + 0.8);
+    }
+  }
+
+  // ——— FLOOR 4: Void-Eater Malice (void / gravity) ———
+
+  private playMaliceGravitationalSingularity(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(45, now);
+    osc.frequency.exponentialRampToValueAtTime(18, now + 1.0);
+    gain.gain.setValueAtTime(0.11, now);
+    gain.gain.linearRampToValueAtTime(0.08, now + 0.4);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 1.15);
+  }
+
+  private playMaliceVoidTendrilFlurry(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 6; i++) {
+      const t = now + i * 0.05;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(220 + i * 30, t);
+      osc.frequency.exponentialRampToValueAtTime(70, t + 0.18);
+      gain.gain.setValueAtTime(0.065, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.22);
+    }
+  }
+
+  private playMaliceVoidStep(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(900, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.2);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.28);
+  }
+
+  private playMaliceAbyssalNovaSpread(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [0, 0.12, 0.24].forEach((delay, i) => {
+      const t = now + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(80 - i * 15, t);
+      osc.frequency.exponentialRampToValueAtTime(25, t + 0.4);
+      gain.gain.setValueAtTime(0.1, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.48);
+    });
+  }
+
+  // ——— FLOOR 5: Archon of Nothingness (astral / cosmic) ———
+
+  private playArchonCelestialSupernovaRing(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [300, 450, 600, 800].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const t = now + i * 0.04;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.5, t + 0.55);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.65);
+    });
+  }
+
+  private playArchonOrbitalStarlightBeams(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [0, 0.18, 0.36].forEach((delay) => {
+      const t = now + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(700, t);
+      osc.frequency.linearRampToValueAtTime(280, t + 0.3);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.38);
+    });
+  }
+
+  private playArchonCosmicShardVolley(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 7; i++) {
+      const t = now + i * 0.04;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(580 + i * 50, t);
+      osc.frequency.exponentialRampToValueAtTime(200, t + 0.16);
+      gain.gain.setValueAtTime(0.055, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    }
+  }
+
+  private playArchonAstralConstellationSpiral(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 10; i++) {
+      const t = now + i * 0.05;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(400 + i * 60, t);
+      osc.frequency.exponentialRampToValueAtTime(150 + i * 20, t + 0.25);
+      gain.gain.setValueAtTime(0.05, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.32);
+    }
+  }
+
+  // ——— FLOOR 6: Elyndor, Keeper of the Last Hymn ———
+
+  private playElyndorResonantCrescendo(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [261.63, 329.63, 392.0, 523.25].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      const t = now + i * 0.08;
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(0.09, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.65);
+    });
+  }
+
+  private playElyndorLamentOfTheForgotten(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, now);
+    osc.frequency.exponentialRampToValueAtTime(220, now + 0.7);
+    gain.gain.setValueAtTime(0.07, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.8);
+  }
+
+  private playElyndorDivineChorusBeams(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [523.25, 659.25, 783.99].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const t = now + i * 0.05;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.linearRampToValueAtTime(freq * 1.2, t + 0.4);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.48);
+    });
+  }
+
+  private playElyndorChorusOfRemembrance(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 8; i++) {
+      const t = now + i * 0.06;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(330 + i * 55, t);
+      osc.frequency.exponentialRampToValueAtTime(180, t + 0.3);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.38);
+    }
+  }
+
+  // ——— FLOOR 7: Zadkiel, Keeper of the Ashen Reliquary ———
+
+  private playZadkielAshenProcession(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    if (noise) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = noise;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(500, now);
+      filter.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+      g.gain.setValueAtTime(0.12, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + 0.6);
+    }
+  }
+
+  private playZadkielChainOfTheDeparted(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 4; i++) {
+      const t = now + i * 0.07;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(450 - i * 40, t);
+      osc.frequency.exponentialRampToValueAtTime(150, t + 0.12);
+      gain.gain.setValueAtTime(0.07, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.16);
+    }
+  }
+
+  private playZadkielReliquaryAwakening(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.exponentialRampToValueAtTime(240, now + 0.6);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.68);
+  }
+
+  private playZadkielJudgmentOfTheDeparted(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.5);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.58);
+  }
+
+  // ——— FLOOR 8: Sariel, Warden of the Veiled Scripture ———
+
+  private playSarielScriptureOfBinding(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.linearRampToValueAtTime(200, now + 0.4);
+    gain.gain.setValueAtTime(0.08, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.48);
+  }
+
+  private playSarielForbiddenVerses(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 5; i++) {
+      const t = now + i * 0.05;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(300 + i * 60, t);
+      osc.frequency.exponentialRampToValueAtTime(90, t + 0.15);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    }
+  }
+
+  private playSarielSealOfSilence(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, now);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.35);
+    gain.gain.setValueAtTime(0.09, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.42);
+  }
+
+  private playSarielHereticalVolley(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 6; i++) {
+      const t = now + i * 0.04;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(400 + i * 35, t);
+      osc.frequency.exponentialRampToValueAtTime(140, t + 0.12);
+      gain.gain.setValueAtTime(0.05, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.15);
+    }
+  }
+
+  // ——— FLOOR 9: Seraphel, Sentinel of the Final Seal ———
+
+  private playSeraphelHeavensPiercingLine(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(180, now + 0.5);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.58);
+  }
+
+  private playSeraphelLancefallSequence(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 5; i++) {
+      const t = now + i * 0.07;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(650 - i * 50, t);
+      osc.frequency.exponentialRampToValueAtTime(120, t + 0.15);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    }
+  }
+
+  private playSeraphelAerialJudgment(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(750, now + 0.25);
+    osc.frequency.exponentialRampToValueAtTime(60, now + 0.55);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.62);
+  }
+
+  private playSeraphelSentinelSpearfallCascade(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    for (let i = 0; i < 8; i++) {
+      const t = now + i * 0.04;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(700 - i * 30, t);
+      osc.frequency.exponentialRampToValueAtTime(150, t + 0.12);
+      gain.gain.setValueAtTime(0.06, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.15);
+    }
+  }
+
+  // ——— FLOOR 10: Oriphiel, The Last Warden ———
+
+  private playOriphielWardensEdict(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [440, 554.37, 659.25].forEach((freq) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.06, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.65);
+    });
+  }
+
+  private playOriphielUnbrokenJudgment(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(900, now + 0.15);
+    osc.frequency.exponentialRampToValueAtTime(100, now + 0.45);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.52);
+  }
+
+  private playOriphielTheFinalVerdictCombo(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+
+    [0, 0.15, 0.3].forEach((delay, i) => {
+      const t = now + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(140 + i * 60, t);
+      osc.frequency.exponentialRampToValueAtTime(40, t + 0.25);
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.3);
+    });
+  }
+
+  private playOriphielBastionGroundShatter(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.exponentialRampToValueAtTime(18, now + 0.7);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.78);
+
+    if (noise) {
+      const src = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const g = ctx.createGain();
+      src.buffer = noise;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(1000, now);
+      filter.frequency.exponentialRampToValueAtTime(60, now + 0.75);
+      g.gain.setValueAtTime(0.18, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      src.connect(filter);
+      filter.connect(g);
+      g.connect(dest);
+      src.start(now);
+      src.stop(now + 0.85);
+    }
+  }
+
   /**
    * Start low-volume background tavern ambience: crackling fireplace hearth & soft tavern crowd murmurs.
    */

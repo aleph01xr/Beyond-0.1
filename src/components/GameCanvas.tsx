@@ -601,6 +601,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             screenShake = Math.min(8, screenShake + 3.0);
           } else if (ev.text.includes('Relic')) {
             sfx.playRelicChime();
+          } else if (ev.kind === 'status') {
+            const txt = ev.text.trim().toUpperCase();
+            if (txt.includes('SHIELD WALL')) sfx.playBossAbility('malakor', 'iron_bulwark');
+            else if (txt.includes('CLEAVE')) sfx.playBossAbility('malakor', 'triple_cleave');
+            else if (txt.includes('GROUND SLAM')) sfx.playBossAbility('malakor', 'bastion_ground_slam');
+            else if (txt.includes('WAR CHARGE')) sfx.playBossAbility('malakor', 'war_charge');
+            else if (txt.includes('FROST NOVA')) sfx.playBossAbility('vaelor', 'glacial_frost_nova');
+            else if (txt.includes('SOUL SIPHON')) sfx.playBossAbility('vaelor', 'soul_siphon_tether');
+            else if (txt.includes('SOUL HAIL')) sfx.playBossAbility('vaelor', 'seeking_soul_hail');
+            else if (txt.includes('DEATH RING')) sfx.playBossAbility('vaelor', 'necrotic_death_ring');
+            else if (txt.includes('MAGMA')) sfx.playBossAbility('ignis', 'magma_eruptions');
+            else if (txt.includes('FISSURE WAVE')) sfx.playBossAbility('ignis', 'molten_fissure_wave');
+            else if (txt.includes('CINDER SPIRAL')) sfx.playBossAbility('ignis', 'cinder_ember_spiral');
+            else if (txt.includes('CORE DETONATION')) sfx.playBossAbility('ignis', 'volcanic_core_detonation');
+            else if (txt.includes('SINGULARITY')) sfx.playBossAbility('malice', 'gravitational_singularity');
+            else if (txt.includes('TENDRIL FLURRY')) sfx.playBossAbility('malice', 'void_tendril_flurry');
+            else if (txt.includes('VOID STEP')) sfx.playBossAbility('malice', 'void_step');
+            else if (txt.includes('ABYSSAL NOVA')) sfx.playBossAbility('malice', 'abyssal_nova_spread');
+            else if (txt.includes('SUPERNOVA')) sfx.playBossAbility('archon', 'celestial_supernova_ring');
+            else if (txt.includes('STARBEAM')) sfx.playBossAbility('archon', 'orbital_starlight_beams');
+            else if (txt.includes('COSMIC VOLLEY')) sfx.playBossAbility('archon', 'cosmic_shard_volley');
+            else if (txt.includes('RESONANT CRESCENDO')) sfx.playBossAbility('elyndor', 'resonant_crescendo');
+            else if (txt.includes('LAMENT')) sfx.playBossAbility('elyndor', 'lament_of_the_forgotten');
+            else if (txt.includes('DIVINE CHORUS')) sfx.playBossAbility('elyndor', 'divine_chorus_beams');
+            else if (txt.includes('ASHEN PROCESSION')) sfx.playBossAbility('zadkiel', 'ashen_procession');
+            else if (txt.includes('CHAIN OF THE DEPARTED')) sfx.playBossAbility('zadkiel', 'chain_of_the_departed');
+            else if (txt.includes('RELIQUARY AWAKENING')) sfx.playBossAbility('zadkiel', 'reliquary_awakening');
+            else if (txt.includes('SCRIPTURE OF BINDING')) sfx.playBossAbility('sariel', 'scripture_of_binding');
+            else if (txt.includes('FORBIDDEN VERSES')) sfx.playBossAbility('sariel', 'forbidden_verses');
+            else if (txt.includes('SEAL OF SILENCE')) sfx.playBossAbility('sariel', 'seal_of_silence');
+            else if (txt.includes('HERETICAL VOLLEY')) sfx.playBossAbility('sariel', 'heretical_volley');
+            else if (txt.includes("HEAVEN'S PIERCING LINE")) sfx.playBossAbility('seraphel', 'heavens_piercing_line');
+            else if (txt.includes('LANCEFALL')) sfx.playBossAbility('seraphel', 'lancefall_sequence');
+            else if (txt.includes('AERIAL JUDGMENT')) sfx.playBossAbility('seraphel', 'aerial_judgment');
+            else if (txt.includes("WARDEN'S EDICT")) sfx.playBossAbility('oriphiel', 'wardens_edict');
+            else if (txt.includes('UNBROKEN JUDGMENT')) sfx.playBossAbility('oriphiel', 'unbroken_judgment');
+            else if (txt.includes('FINAL VERDICT')) sfx.playBossAbility('oriphiel', 'the_final_verdict_combo');
           }
         }
       }
