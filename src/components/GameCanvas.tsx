@@ -25,7 +25,7 @@ import {
   drawGenericEnemySprite,
 } from '../client/enemySprites.ts';
 import { drawHumanoidBoss } from '../client/npcSprites.ts';
-import { sfx } from '../client/sound.ts';
+import { sfx, soundManager } from '../client/sound.ts';
 import {
   HERO_CLASSES,
   TILE_SIZE,
@@ -692,11 +692,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             mouseScreenRef.current.y - screenPlayerY,
             mouseScreenRef.current.x - screenPlayerX
           );
+
+          if (me.statuses && me.statuses.some(s => s.type === 'disoriented')) {
+            aimAngleRef.current += Math.sin(now * 0.018) * 0.18;
+          }
         }
       }
 
       let camX = Math.round(cameraRef.current.x - cw / 2);
       let camY = Math.round(cameraRef.current.y - ch / 2);
+      soundManager.setListenerPosition(cameraRef.current.x, cameraRef.current.y);
 
       if (screenShake > 0.05) {
         const shakeAngle = Math.random() * Math.PI * 2;
@@ -806,169 +811,339 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           ctx.save();
           if (isCatacombs) {
-            // Sunken Crypt: Necrotic Soul Well stasis circle
-            ctx.fillStyle = 'rgba(126, 34, 206, 0.22)';
+            // ================================================================
+            // FLOOR 2: Archlich Vaelor — Necrotic Glacial Frost Well
+            // ================================================================
+            ctx.fillStyle = 'rgba(76, 29, 149, 0.28)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Hazard warning border
-            ctx.strokeStyle = 'rgba(168, 85, 247, 0.75)';
-            ctx.lineWidth = 2;
+            // Concentric freezing frost rings
+            for (let r = 1; r <= 3; r++) {
+              const wr = (z.radius * (r / 3) + now * 0.015) % z.radius;
+              ctx.strokeStyle = `rgba(34, 211, 238, ${0.6 - (wr / z.radius) * 0.5})`;
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              ctx.arc(z.x, z.y, wr, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+
+            // Hazard perimeter with glowing rune spikes
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.9)';
+            ctx.lineWidth = 2.5;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Expanding cyan rune ring (fill countdown gauge)
-            ctx.strokeStyle = 'rgba(34, 211, 238, 0.95)';
+            // Rotating 8-Pointed Necrotic Crypt Seal
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            ctx.rotate(now * 0.002);
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.85)';
+            ctx.lineWidth = 1.8;
+            for (let i = 0; i < 4; i++) {
+              const a = (i * Math.PI) / 4;
+              ctx.beginPath();
+              ctx.moveTo(-Math.cos(a) * (z.radius * 0.65), -Math.sin(a) * (z.radius * 0.65));
+              ctx.lineTo(Math.cos(a) * (z.radius * 0.65), Math.sin(a) * (z.radius * 0.65));
+              ctx.stroke();
+            }
+            // 4 Skull diamonds on rune circle
+            for (let s = 0; s < 4; s++) {
+              const sa = (s * Math.PI) / 2;
+              const sx = Math.cos(sa) * (z.radius * 0.55);
+              const sy = Math.sin(sa) * (z.radius * 0.55);
+              ctx.fillStyle = '#C084FC';
+              ctx.fillRect(sx - 3, sy - 3, 6, 6);
+            }
+            ctx.restore();
+
+            // Shrinking countdown frost ring (timing gauge)
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
             ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Inner spectral square rune
-            ctx.strokeStyle = 'rgba(168, 85, 247, 0.6)';
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(z.x - 16, z.y - 16, 32, 32);
           } else if (isEmber) {
-            // Cindervault: Volcanic Magma Eruption crater
-            ctx.fillStyle = 'rgba(234, 88, 12, 0.28)';
+            // ================================================================
+            // FLOOR 3: Ignis, Cinder Sovereign — Magma Caldera Shatter
+            // ================================================================
+            ctx.fillStyle = 'rgba(234, 88, 12, 0.32)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Outer danger rim
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
-            ctx.lineWidth = 2.5;
+            // Swirling molten caldera waves
+            for (let r = 1; r <= 3; r++) {
+              const wr = (z.radius * (r / 3) + now * 0.02) % z.radius;
+              ctx.strokeStyle = `rgba(249, 115, 22, ${0.7 - (wr / z.radius) * 0.6})`;
+              ctx.lineWidth = 1.6;
+              ctx.beginPath();
+              ctx.arc(z.x, z.y, wr, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+
+            // Outer danger rim with incandescent teeth
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Expanding incandescent shockwave (fill countdown gauge)
-            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-            ctx.lineWidth = 3.5;
+            // 8 Jagged Volcanic Fissures radiating from center
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            ctx.lineWidth = 2;
+            for (let f = 0; f < 8; f++) {
+              const fa = (f * Math.PI) / 4;
+              ctx.beginPath();
+              ctx.moveTo(0, 0);
+              const midDist = z.radius * 0.5;
+              const perp = (f % 2 === 0 ? 1 : -1) * 6;
+              ctx.lineTo(Math.cos(fa) * midDist - Math.sin(fa) * perp, Math.sin(fa) * midDist + Math.cos(fa) * perp);
+              ctx.lineTo(Math.cos(fa) * z.radius, Math.sin(fa) * z.radius);
+              ctx.stroke();
+            }
+            ctx.restore();
+
+            // Expanding volcanic core detonation fill
+            ctx.fillStyle = 'rgba(254, 240, 138, 0.38)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Shrinking timing ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Molten core ring
-            ctx.strokeStyle = 'rgba(249, 115, 22, 0.9)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * 0.5 * progress, 0, Math.PI * 2);
-            ctx.stroke();
           } else if (isVoid) {
-            // Abyssal Shadow Chasm: Singularity Collapse Rift
-            ctx.fillStyle = 'rgba(88, 28, 135, 0.35)';
+            // ================================================================
+            // FLOOR 4: Void-Eater Malice — Singularity Event Horizon Collapse
+            // ================================================================
+            ctx.fillStyle = 'rgba(59, 7, 100, 0.38)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Outer dark rim
-            ctx.strokeStyle = 'rgba(147, 51, 234, 0.85)';
-            ctx.lineWidth = 2.5;
+            // Outer dark violet rim
+            ctx.strokeStyle = 'rgba(168, 85, 247, 0.95)';
+            ctx.lineWidth = 2.8;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Expanding crimson energy shockwave
+            // Inward swirling gravitational spiral lines
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            ctx.rotate(-now * 0.0035);
+            ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
+            ctx.lineWidth = 1.8;
+            for (let a = 0; a < 6; a++) {
+              const ang = (a * Math.PI) / 3;
+              ctx.beginPath();
+              ctx.moveTo(Math.cos(ang) * z.radius, Math.sin(ang) * z.radius);
+              ctx.quadraticCurveTo(
+                Math.cos(ang + 0.6) * (z.radius * 0.5),
+                Math.sin(ang + 0.6) * (z.radius * 0.5),
+                0,
+                0
+              );
+              ctx.stroke();
+            }
+            // Event horizon dark center
+            ctx.fillStyle = '#0F0718';
+            ctx.beginPath();
+            ctx.arc(0, 0, z.radius * 0.35, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            // Shrinking event horizon collapse ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
             ctx.strokeStyle = 'rgba(244, 63, 94, 0.95)';
             ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Inner collapsing void ring
-            ctx.strokeStyle = 'rgba(232, 121, 249, 0.85)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * (1 - progress), 0, Math.PI * 2);
-            ctx.stroke();
           } else if (isAstral) {
-            // Aetherial Void Spire: Astral Nova Starburst
-            ctx.fillStyle = 'rgba(14, 165, 233, 0.25)';
+            // ================================================================
+            // FLOOR 5: Archon of Nothingness — Astral Starburst Nova
+            // ================================================================
+            ctx.fillStyle = 'rgba(14, 165, 233, 0.28)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
             // Outer starlight boundary
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+            ctx.lineWidth = 2.8;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Expanding golden nova shockwave
-            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-            ctx.lineWidth = 3.5;
+            // Rotating 12-pointed celestial zodiac rune ring
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            ctx.rotate(now * 0.0025);
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+            ctx.lineWidth = 1.6;
             ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.arc(0, 0, z.radius * 0.65, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Inner sky-blue core ring
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
-            ctx.lineWidth = 2;
+            for (let p = 0; p < 8; p++) {
+              const pa = (p * Math.PI) / 4;
+              const px = Math.cos(pa) * (z.radius * 0.65);
+              const py = Math.sin(pa) * (z.radius * 0.65);
+              ctx.fillStyle = p % 2 === 0 ? '#FEF08A' : '#38BDF8';
+              ctx.fillRect(px - 2.5, py - 2.5, 5, 5);
+            }
+            ctx.restore();
+
+            // Shrinking starlight focus ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+            ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * 0.6 * progress, 0, Math.PI * 2);
+            ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
             ctx.stroke();
+
           } else {
-            // Highkeep: Heavy stone ground slam & heavy threat area
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
+            // ================================================================
+            // FLOOR 1: Warden Malakor — Highkeep Bastion Ground Shatter
+            // ================================================================
+            ctx.fillStyle = 'rgba(153, 27, 27, 0.26)';
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Outer danger rim
-            ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
-            ctx.lineWidth = 2.5;
+            // Outer red & gold danger rim
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.lineWidth = 3;
             ctx.beginPath();
             ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Expanding gold impact wave
-            ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+            // Concentric shockwave ripples
+            for (let r = 1; r <= 3; r++) {
+              const wr = (z.radius * (r / 3) + now * 0.015) % z.radius;
+              ctx.strokeStyle = `rgba(245, 158, 11, ${0.7 - (wr / z.radius) * 0.6})`;
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.arc(z.x, z.y, wr, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+
+            // Highkeep Lion Crest & Crossed Bastion Claymores in center
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(-10, -12, 20, 24);
+            ctx.strokeStyle = '#FEF08A';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-10, -12, 20, 24);
+            // Crossed claymores
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-14, -14); ctx.lineTo(14, 14);
+            ctx.moveTo(14, -14); ctx.lineTo(-14, 14);
+            ctx.stroke();
+            ctx.restore();
+
+            // Shrinking timing ring
+            const shrinkR = Math.max(4, z.radius * (1 - progress));
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
             ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+            ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
             ctx.stroke();
           }
           ctx.restore();
         } else if (z.kind === 'frost_nova') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
-          // Frost nova ground fill
-          ctx.fillStyle = 'rgba(34, 211, 238, 0.24)';
+          // Frost nova ground fill with subtle frosty radial gradient
+          const frostGrad = ctx.createRadialGradient(z.x, z.y, 4, z.x, z.y, z.radius);
+          frostGrad.addColorStop(0, 'rgba(186, 230, 253, 0.45)');
+          frostGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.28)');
+          frostGrad.addColorStop(1, 'rgba(14, 165, 233, 0.12)');
+          ctx.fillStyle = frostGrad;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.fill();
 
-          // Outer cyan perimeter rim
+          // Outer cyan crystalline perimeter rim with frost spikes
           ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.stroke();
 
+          // Inner frosty ice crack rim
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, z.radius - 4, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // 12 Outer perimeter crystalline ice teeth
+          for (let sp = 0; sp < 12; sp++) {
+            const spAng = (sp * Math.PI) / 6 + now * 0.001;
+            const px1 = z.x + Math.cos(spAng) * (z.radius - 3);
+            const py1 = z.y + Math.sin(spAng) * (z.radius - 3);
+            const px2 = z.x + Math.cos(spAng) * (z.radius + 6);
+            const py2 = z.y + Math.sin(spAng) * (z.radius + 6);
+            ctx.strokeStyle = '#BAE6FD';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(px1, py1);
+            ctx.lineTo(px2, py2);
+            ctx.stroke();
+          }
+
           // Shrinking radial warning timer ring (shows exact time left before freeze blast!)
           const shrinkR = Math.max(4, z.radius * (1 - progress));
-          ctx.strokeStyle = 'rgba(186, 230, 253, 0.95)';
-          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.98)';
+          ctx.lineWidth = 3.5;
           ctx.beginPath();
           ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Rotating 8-point frost star glyph emblem
+          // Rotating 8-point frost snowflake fractal glyph emblem
           ctx.save();
           ctx.translate(z.x, z.y);
-          ctx.rotate(now * 0.003);
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-          ctx.lineWidth = 2;
+          ctx.rotate(now * 0.0025);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.lineWidth = 2.2;
+          for (let f = 0; f < 8; f++) {
+            const fa = (f * Math.PI) / 4;
+            const fx = Math.cos(fa) * (z.radius * 0.65);
+            const fy = Math.sin(fa) * (z.radius * 0.65);
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(fx, fy);
+            // Snowflake branch ticks
+            const bx1 = Math.cos(fa) * (z.radius * 0.38);
+            const by1 = Math.sin(fa) * (z.radius * 0.38);
+            const perpA = fa + Math.PI / 2;
+            ctx.moveTo(bx1 - Math.cos(perpA) * 6, by1 - Math.sin(perpA) * 6);
+            ctx.lineTo(bx1 + Math.cos(perpA) * 6, by1 + Math.sin(perpA) * 6);
+            ctx.stroke();
+          }
+          // Center ice diamond
+          ctx.fillStyle = '#FFFFFF';
           ctx.beginPath();
-          ctx.moveTo(-18, 0); ctx.lineTo(18, 0);
-          ctx.moveTo(0, -18); ctx.lineTo(0, 18);
-          ctx.moveTo(-12, -12); ctx.lineTo(12, 12);
-          ctx.moveTo(-12, 12); ctx.lineTo(12, -12);
-          ctx.stroke();
+          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.fill();
           ctx.restore();
           ctx.restore();
 
@@ -976,29 +1151,61 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else if (z.kind === 'magma_pillar') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
-          // Molten earth ground fill
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+          // Molten earth ground fill with scorched incandescent core
+          const magmaGrad = ctx.createRadialGradient(z.x, z.y, 4, z.x, z.y, z.radius);
+          magmaGrad.addColorStop(0, 'rgba(254, 240, 138, 0.55)');
+          magmaGrad.addColorStop(0.35, 'rgba(249, 115, 22, 0.42)');
+          magmaGrad.addColorStop(0.8, 'rgba(220, 38, 38, 0.28)');
+          magmaGrad.addColorStop(1, 'rgba(68, 10, 10, 0.15)');
+          ctx.fillStyle = magmaGrad;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.fill();
 
           // Outer fiery danger rim
           ctx.strokeStyle = 'rgba(249, 115, 22, 0.95)';
-          ctx.lineWidth = 3;
+          ctx.lineWidth = 3.5;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Incandescent expanding eruption fill gauge
-          ctx.fillStyle = 'rgba(254, 240, 138, 0.35)';
+          // 8 Jagged Volcanic Fissures radiating through crust
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.85)';
+          ctx.lineWidth = 2;
+          for (let f = 0; f < 8; f++) {
+            const fa = (f * Math.PI) / 4;
+            const rMid = z.radius * 0.5;
+            const rEnd = z.radius * 0.9;
+            const x1 = z.x + Math.cos(fa) * rMid + (f % 2 === 0 ? 3 : -3);
+            const y1 = z.y + Math.sin(fa) * rMid + (f % 2 === 0 ? -3 : 3);
+            const x2 = z.x + Math.cos(fa) * rEnd;
+            const y2 = z.y + Math.sin(fa) * rEnd;
+            ctx.beginPath();
+            ctx.moveTo(z.x, z.y);
+            ctx.lineTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+          }
+
+          // Expanding incandescent eruption gauge ring
+          const currentEruptR = z.radius * progress;
+          ctx.fillStyle = 'rgba(254, 240, 138, 0.4)';
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+          ctx.arc(z.x, z.y, currentEruptR, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
-          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.98)';
+          ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius * progress, 0, Math.PI * 2);
+          ctx.arc(z.x, z.y, currentEruptR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Shrinking perimeter containment countdown ring
+          const shrinkR = Math.max(4, z.radius * (1 - progress));
+          ctx.strokeStyle = 'rgba(249, 115, 22, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(z.x, z.y, shrinkR, 0, Math.PI * 2);
           ctx.stroke();
 
           ctx.restore();
@@ -1010,54 +1217,62 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.translate(z.x, z.y);
 
           // Outer gravitational distortion field with warning border
-          ctx.fillStyle = 'rgba(147, 51, 234, 0.32)';
+          const singGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, z.radius);
+          singGrad.addColorStop(0, 'rgba(15, 7, 24, 0.9)');
+          singGrad.addColorStop(0.3, 'rgba(88, 28, 135, 0.55)');
+          singGrad.addColorStop(0.75, 'rgba(147, 51, 234, 0.35)');
+          singGrad.addColorStop(1, 'rgba(244, 63, 94, 0.15)');
+          ctx.fillStyle = singGrad;
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(192, 132, 252, 0.9)';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Inward pull vector field indicators (8 arrows pointing toward center)
-          ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
-          ctx.lineWidth = 1.8;
-          for (let a = 0; a < 8; a++) {
-            const ang = (a * Math.PI) / 4 + now * 0.002;
-            const rOuter = z.radius * 0.9;
-            const rInner = z.radius * 0.45;
-            const x1 = Math.cos(ang) * rOuter;
-            const y1 = Math.sin(ang) * rOuter;
-            const x2 = Math.cos(ang) * rInner;
-            const y2 = Math.sin(ang) * rInner;
-            ctx.beginPath();
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-            ctx.stroke();
-          }
-
-          // Dual counter-rotating accretion disks
-          ctx.rotate(rotAngle);
           ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(0, 0, z.radius * (1 - progress * 0.4), 0, Math.PI * 1.5);
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
 
-          ctx.rotate(-rotAngle * 2.2);
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.85)';
+          // Inward gravitational vortex spiral tendrils (8 curved lines)
+          ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
           ctx.lineWidth = 2;
+          for (let a = 0; a < 8; a++) {
+            const baseAng = (a * Math.PI) / 4 + now * 0.003;
+            ctx.beginPath();
+            for (let step = 0; step < 16; step++) {
+              const rStep = z.radius * (1 - step / 16);
+              const aStep = baseAng + step * 0.12;
+              const sx = Math.cos(aStep) * rStep;
+              const sy = Math.sin(aStep) * rStep;
+              if (step === 0) ctx.moveTo(sx, sy);
+              else ctx.lineTo(sx, sy);
+            }
+            ctx.stroke();
+          }
+
+          // Dual counter-rotating accretion disk rings
+          ctx.rotate(rotAngle);
+          ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
+          ctx.lineWidth = 3.5;
           ctx.beginPath();
-          ctx.arc(0, 0, z.radius * 0.6, 0, Math.PI * 1.5);
+          ctx.arc(0, 0, z.radius * (1 - progress * 0.35), 0, Math.PI * 1.6);
           ctx.stroke();
 
-          // Pitch black void core
-          ctx.fillStyle = '#0F0B1E';
+          ctx.rotate(-rotAngle * 2.4);
+          ctx.strokeStyle = 'rgba(192, 132, 252, 0.9)';
+          ctx.lineWidth = 2.5;
           ctx.beginPath();
-          ctx.arc(0, 0, z.radius * 0.38, 0, Math.PI * 2);
+          ctx.arc(0, 0, z.radius * 0.62, 0, Math.PI * 1.6);
+          ctx.stroke();
+
+          // Black hole event horizon core
+          ctx.fillStyle = '#0F0718';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.35, 0, Math.PI * 2);
           ctx.fill();
+          ctx.strokeStyle = 'rgba(244, 63, 94, 0.95)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
 
           ctx.restore();
           particleManager.spawnSingularityInwardWisps(z.x, z.y, z.radius, now);
@@ -1067,20 +1282,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.save();
           // Outer cosmic shockwave ring
           ctx.strokeStyle = 'rgba(244, 114, 182, 0.95)';
-          ctx.lineWidth = 4;
+          ctx.lineWidth = 4.5;
           ctx.beginPath();
           ctx.arc(z.x, z.y, currentRadius, 0, Math.PI * 2);
           ctx.stroke();
 
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+          ctx.lineWidth = 2.5;
           ctx.beginPath();
           ctx.arc(z.x, z.y, Math.max(2, currentRadius - 8), 0, Math.PI * 2);
           ctx.stroke();
 
+          // Rotating 12-point celestial constellation ticks
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.rotate(now * 0.002);
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.8)';
+          ctx.lineWidth = 1.8;
+          for (let c = 0; c < 12; c++) {
+            const ca = (c * Math.PI) / 6;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(ca) * (currentRadius * 0.6), Math.sin(ca) * (currentRadius * 0.6));
+            ctx.lineTo(Math.cos(ca) * currentRadius, Math.sin(ca) * currentRadius);
+            ctx.stroke();
+          }
+          ctx.restore();
+
           // Outer boundary threat outline
-          ctx.strokeStyle = 'rgba(254, 240, 138, 0.7)';
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.75)';
+          ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.stroke();
@@ -1090,47 +1320,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else if (z.kind === 'starlight_beam') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
-          // Target lock-on ground circle
-          ctx.fillStyle = 'rgba(253, 224, 71, 0.22)';
+          // Target lock-on ground circle with radiant golden starlight fill
+          ctx.fillStyle = 'rgba(253, 224, 71, 0.28)';
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.strokeStyle = 'rgba(250, 204, 21, 0.95)';
-          ctx.lineWidth = 3;
+          ctx.lineWidth = 3.5;
           ctx.beginPath();
           ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
           ctx.stroke();
 
           // Shrinking lock-on countdown ring
           const lockR = Math.max(4, z.radius * (1 - progress));
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.98)';
+          ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.arc(z.x, z.y, lockR, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Rotating crosshair reticle ticks
+          // Rotating crosshair reticle ticks & celestial zodiac diamond
           ctx.save();
           ctx.translate(z.x, z.y);
           ctx.rotate(now * 0.004);
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.9)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(253, 224, 71, 0.95)';
+          ctx.lineWidth = 2.2;
           for (let c = 0; c < 4; c++) {
             const cAng = (c * Math.PI) / 2;
             ctx.beginPath();
-            ctx.moveTo(Math.cos(cAng) * (z.radius - 8), Math.sin(cAng) * (z.radius - 8));
-            ctx.lineTo(Math.cos(cAng) * (z.radius + 6), Math.sin(cAng) * (z.radius + 6));
+            ctx.moveTo(Math.cos(cAng) * (z.radius - 10), Math.sin(cAng) * (z.radius - 10));
+            ctx.lineTo(Math.cos(cAng) * (z.radius + 8), Math.sin(cAng) * (z.radius + 8));
             ctx.stroke();
           }
+          // Center radiant 4-point star
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(-3, -3, 6, 6);
+          ctx.fillRect(-6, -1, 12, 2);
+          ctx.fillRect(-1, -6, 2, 12);
           ctx.restore();
 
-          // Heavenly beam pillar indicator
-          const beamGrad = ctx.createLinearGradient(z.x, z.y - 140, z.x, z.y);
+          // Heavenly beam pillar indicator descending from above
+          const beamGrad = ctx.createLinearGradient(z.x, z.y - 160, z.x, z.y);
           beamGrad.addColorStop(0, 'rgba(253, 224, 71, 0)');
-          beamGrad.addColorStop(1, 'rgba(253, 224, 71, 0.45)');
+          beamGrad.addColorStop(0.7, 'rgba(253, 224, 71, 0.35)');
+          beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0.65)');
           ctx.fillStyle = beamGrad;
-          ctx.fillRect(z.x - z.radius * 0.5, z.y - 140, z.radius, 140);
+          ctx.fillRect(z.x - z.radius * 0.6, z.y - 160, z.radius * 1.2, 160);
           ctx.restore();
         } else if (z.kind === 'sound_lane') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
@@ -2071,113 +2307,147 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (isCatacombs) {
             // ==============================================================
             // FLOOR 2 BOSS: Archlich Vaelor (The Sunken Crypt Archlich)
-            // Levitating Skeletal Necromancer Lord with floating robes,
-            // horned bone crown, soul staff, and orbiting soul wisps
+            // Floating Skeletal Necromancer Lord with floating silk shrouds,
+            // 8-gem ivory crown, Dread Soul Lantern emitting cyan spirit wisps,
+            // floating bone vertebrae, and orbiting frost soul wisps
             // ==============================================================
-            const lichFloat = Math.sin(now * 0.004) * 6;
-            const by = ey - 4 + lichFloat;
+            const lichFloat = Math.sin(now * 0.004) * 7;
+            const by = ey - 6 + lichFloat;
 
-            // Ethereal purple & cyan ground aura
-            const auraPulse = 28 + Math.sin(now * 0.006) * 5;
+            // 1. Ethereal Dual Cyan & Necrotic Violet Ground Sanctuary Aura
+            const auraPulse = 32 + Math.sin(now * 0.006) * 6;
             const auraGrad = ctx.createRadialGradient(ex, ey + 18, 4, ex, ey + 18, auraPulse);
-            auraGrad.addColorStop(0, 'rgba(34, 211, 238, 0.35)');
-            auraGrad.addColorStop(0.5, 'rgba(126, 34, 206, 0.25)');
+            auraGrad.addColorStop(0, 'rgba(34, 211, 238, 0.45)');
+            auraGrad.addColorStop(0.45, 'rgba(126, 34, 206, 0.3)');
+            auraGrad.addColorStop(0.85, 'rgba(59, 130, 246, 0.15)');
             auraGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
             ctx.fillStyle = auraGrad;
             ctx.beginPath();
             ctx.arc(ex, ey + 18, auraPulse, 0, Math.PI * 2);
             ctx.fill();
 
-            // Tattered dark obsidian shroud / outer robe
-            ctx.fillStyle = '#171126';
-            ctx.fillRect(ex - 22, by - 14, 44, 42);
-            // Tattered fraying bottom teeth
-            for (let t = 0; t < 5; t++) {
-              ctx.fillRect(ex - 22 + t * 9, by + 28, 7, 7 + (t % 2) * 5);
+            // Concentric Crypt Rune Ground Circle
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey + 18, 26, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 2. Floating Tattered Dark Obsidian Shroud & Trailing Frost Silk
+            ctx.fillStyle = '#0F091F';
+            ctx.fillRect(ex - 24, by - 14, 48, 46);
+            // Tattered frayed trailing edge
+            for (let t = 0; t < 7; t++) {
+              const toothH = 8 + ((t * 7) % 9) + Math.sin(now * 0.008 + t) * 3;
+              ctx.fillRect(ex - 24 + t * 7, by + 32, 6, toothH);
             }
 
-            // Inner royal necrotic purple robe
-            ctx.fillStyle = '#4C1D95';
-            ctx.fillRect(ex - 15, by - 10, 30, 38);
+            // Inner Royal Necrotic Purple Robe with silver lining
+            ctx.fillStyle = '#3B0764';
+            ctx.fillRect(ex - 18, by - 10, 36, 42);
+            ctx.fillStyle = '#581C87';
+            ctx.fillRect(ex - 14, by - 8, 28, 38);
 
-            // Runic spine embroidery (glowing cyan)
+            // Frost Runic Spine Embroidery (Cyan Glint)
             ctx.fillStyle = '#22D3EE';
-            ctx.fillRect(ex - 2, by - 6, 4, 28);
-            ctx.fillRect(ex - 8, by, 16, 2);
-            ctx.fillRect(ex - 6, by + 10, 12, 2);
-
-            // Skeletal collar / shoulder bone structure
-            ctx.fillStyle = '#CBD5E1';
-            ctx.fillRect(ex - 18, by - 16, 36, 6);
-            ctx.fillStyle = '#94A3B8';
-            ctx.fillRect(ex - 20, by - 14, 6, 8);
-            ctx.fillRect(ex + 14, by - 14, 6, 8);
-
-            // Floating Skeletal Bone Skull
-            ctx.fillStyle = '#F1F5F9';
-            ctx.fillRect(ex - 10, by - 32, 20, 16);
-            // Cheekbone shadows & nose cavity
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 10, by - 20, 3, 4);
-            ctx.fillRect(ex + 7, by - 20, 3, 4);
-            ctx.fillRect(ex - 1, by - 22, 2, 4);
-            // Deep sunken eye sockets
-            ctx.fillStyle = '#0F172A';
-            ctx.fillRect(ex - 7, by - 28, 5, 5);
-            ctx.fillRect(ex + 2, by - 28, 5, 5);
-
-            // Piercing Spectral Cyan Soul Eyes (glowing)
-            ctx.fillStyle = '#22D3EE';
-            ctx.fillRect(ex - 6, by - 27, 3, 3);
-            ctx.fillRect(ex + 3, by - 27, 3, 3);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 5, by - 26, 1, 1);
-            ctx.fillRect(ex + 4, by - 26, 1, 1);
-
-            // Ancient Horned Bone Crown (blackened gold + ivory spires)
-            ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex - 12, by - 36, 24, 4);
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 2, by - 37, 4, 3);
-            // 3 Ivory Horn Spires
-            ctx.fillStyle = '#F1F5F9';
-            ctx.fillRect(ex - 12, by - 44, 4, 9);
-            ctx.fillRect(ex - 2, by - 48, 4, 13);
-            ctx.fillRect(ex + 8, by - 44, 4, 9);
-            // Crown soul gem
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex - 1, by - 35, 2, 2);
-
-            // Left Hand: Dread Soul Staff with pulsating spirit lantern
-            ctx.fillStyle = '#292524';
-            ctx.fillRect(ex - 27, by - 44, 5, 60);
-            ctx.fillStyle = '#E2E8F0';
-            ctx.fillRect(ex - 30, by - 48, 11, 4);
-            ctx.fillRect(ex - 29, by - 44, 9, 8);
-            // Spirit flame inside lantern
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex - 28, by - 42, 7, 6);
+            ctx.fillRect(ex - 2, by - 6, 4, 32);
+            ctx.fillRect(ex - 10, by, 20, 2);
+            ctx.fillRect(ex - 8, by + 10, 16, 2);
+            ctx.fillRect(ex - 6, by + 20, 12, 2);
             ctx.fillStyle = '#E0F2FE';
-            ctx.fillRect(ex - 26, by - 40, 3, 3);
+            ctx.fillRect(ex - 1, by + 2, 2, 2);
+            ctx.fillRect(ex - 1, by + 12, 2, 2);
 
-            // Right Hand: Skeletal claw casting floating necrotic sphere
-            ctx.fillStyle = '#CBD5E1';
-            ctx.fillRect(ex + 18, by - 6, 6, 4);
-            const orbBob = Math.sin(now * 0.009) * 3;
-            ctx.fillStyle = '#7C3AED';
-            ctx.fillRect(ex + 20, by - 18 + orbBob, 8, 8);
-            ctx.fillStyle = '#C084FC';
-            ctx.fillRect(ex + 22, by - 16 + orbBob, 4, 4);
-            ctx.fillStyle = '#A5F3FC';
-            ctx.fillRect(ex + 23, by - 15 + orbBob, 2, 2);
+            // Skeletal Shoulder Pauldron Plates (Horned Bone Clavicle)
+            ctx.fillStyle = '#E2E8F0';
+            ctx.fillRect(ex - 22, by - 18, 44, 7);
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillRect(ex - 24, by - 16, 8, 10);
+            ctx.fillRect(ex + 16, by - 16, 8, 10);
+            // Bone Spikes on shoulders
+            ctx.fillStyle = '#F8FAFC';
+            ctx.fillRect(ex - 22, by - 24, 4, 7);
+            ctx.fillRect(ex + 18, by - 24, 4, 7);
 
-            // 3 Orbiting Necrotic Soul Wisps
-            for (let i = 0; i < 3; i++) {
-              const ang = now * 0.003 + (i * Math.PI * 2) / 3;
-              const wx = ex + Math.cos(ang) * 32;
-              const wy = by + Math.sin(ang) * 16;
-              ctx.fillStyle = 'rgba(34, 211, 238, 0.85)';
-              ctx.fillRect(wx - 3, wy - 3, 6, 6);
+            // Floating Skeletal Skull Face
+            ctx.fillStyle = '#F1F5F9';
+            ctx.fillRect(ex - 11, by - 34, 22, 17);
+            // Cheekbone hollows & nasal cavity
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(ex - 11, by - 21, 4, 4);
+            ctx.fillRect(ex + 7, by - 21, 4, 4);
+            ctx.fillRect(ex - 1, by - 23, 2, 4);
+            // Sunken orbital sockets
+            ctx.fillStyle = '#090514';
+            ctx.fillRect(ex - 8, by - 30, 6, 6);
+            ctx.fillRect(ex + 2, by - 30, 6, 6);
+
+            // Piercing Frost Cyan Soul Eyes with white core flare
+            ctx.fillStyle = '#22D3EE';
+            ctx.fillRect(ex - 7, by - 29, 4, 4);
+            ctx.fillRect(ex + 3, by - 29, 4, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(ex - 6, by - 28, 2, 2);
+            ctx.fillRect(ex + 4, by - 28, 2, 2);
+
+            // Ancient Horned Bone Crown with 3 Ivory Spires & Soul Gem
+            ctx.fillStyle = '#B45309';
+            ctx.fillRect(ex - 13, by - 38, 26, 5);
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(ex - 11, by - 39, 22, 2);
+            // Triple Horned Ivory Spires
+            ctx.fillStyle = '#F8FAFC';
+            ctx.fillRect(ex - 13, by - 48, 4, 11);
+            ctx.fillRect(ex - 2, by - 53, 4, 16);
+            ctx.fillRect(ex + 9, by - 48, 4, 11);
+            ctx.fillStyle = '#E2E8F0';
+            ctx.fillRect(ex - 11, by - 45, 2, 7);
+            ctx.fillRect(ex, by - 50, 2, 12);
+            ctx.fillRect(ex + 11, by - 45, 2, 7);
+            // Crown Soul Diamond
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillRect(ex - 2, by - 37, 4, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(ex - 1, by - 36, 2, 2);
+
+            // Left Hand: Dread Soul Staff & Suspended Soul Lantern
+            const staffX = ex - 28;
+            ctx.fillStyle = '#292524';
+            ctx.fillRect(staffX, by - 46, 5, 66);
+            // Lantern Cage
+            ctx.fillStyle = '#D97706';
+            ctx.fillRect(staffX - 4, by - 50, 13, 4);
+            ctx.fillRect(staffX - 3, by - 46, 11, 10);
+            // Pulsating Soul Flame inside Lantern
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillRect(staffX - 2, by - 44, 9, 7);
+            ctx.fillStyle = '#E0F2FE';
+            ctx.fillRect(staffX, by - 42, 5, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(staffX + 1, by - 41, 3, 2);
+
+            // Right Hand: Skeletal Claw holding Orbiting Necrotic Orb
+            ctx.fillStyle = '#E2E8F0';
+            ctx.fillRect(ex + 18, by - 6, 7, 5);
+            const orbBob = Math.sin(now * 0.009) * 3.5;
+            ctx.fillStyle = '#6D28D9';
+            ctx.fillRect(ex + 22, by - 20 + orbBob, 10, 10);
+            ctx.fillStyle = '#A855F7';
+            ctx.fillRect(ex + 24, by - 18 + orbBob, 6, 6);
+            ctx.fillStyle = '#38BDF8';
+            ctx.fillRect(ex + 25, by - 17 + orbBob, 4, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(ex + 26, by - 16 + orbBob, 2, 2);
+
+            // 4 Orbiting Frost Soul Wisps (Concentric Orbiting Phantoms)
+            for (let i = 0; i < 4; i++) {
+              const ang = now * 0.0035 + (i * Math.PI * 2) / 4;
+              const wx = ex + Math.cos(ang) * 36;
+              const wy = by + Math.sin(ang) * 18;
+              ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
+              ctx.fillRect(wx - 3.5, wy - 3.5, 7, 7);
+              ctx.fillStyle = '#E0F2FE';
+              ctx.fillRect(wx - 2, wy - 2, 4, 4);
               ctx.fillStyle = '#FFFFFF';
               ctx.fillRect(wx - 1, wy - 1, 2, 2);
             }
@@ -2187,106 +2457,114 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Hulking Volcanic Behemoth of cooled obsidian rock, pulsating
             // lava veins, sweeping demonic horns, blazing flame hair, and greataxe
             // ==============================================================
-            const lavaThrob = 0.8 + Math.sin(now * 0.008) * 0.2;
+            const lavaThrob = 0.85 + Math.sin(now * 0.008) * 0.18;
+            const breathBob = Math.sin(now * 0.005) * 2;
 
-            // Scorched ground lava reservoir
-            ctx.fillStyle = 'rgba(234, 88, 12, 0.35)';
+            // 1. Scorched Ground Caldera & Molten Lava Reservoir
+            ctx.fillStyle = 'rgba(234, 88, 12, 0.4)';
             ctx.beginPath();
-            ctx.arc(ex, ey + 18, 38 * lavaThrob, 0, Math.PI * 2);
+            ctx.arc(ex, ey + 18, 42 * lavaThrob, 0, Math.PI * 2);
             ctx.fill();
 
-            // Heavy Charred Basalt Torso
-            ctx.fillStyle = '#18181B';
-            ctx.fillRect(ex - 26, ey - 28 + walkBob, 52, 48);
+            ctx.strokeStyle = 'rgba(251, 146, 60, 0.65)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(ex, ey + 18, 32, 0, Math.PI * 2);
+            ctx.stroke();
 
-            // Glowing Molten Lava Core Fissures
-            ctx.fillStyle = '#B91C1C';
-            ctx.fillRect(ex - 18, ey - 22 + walkBob, 36, 34);
+            // 2. Colossal Charred Basalt Demon Torso & Obsidian Pauldrons
+            ctx.fillStyle = '#18181B';
+            ctx.fillRect(ex - 28, ey - 30 + walkBob + breathBob, 56, 52);
+            ctx.fillStyle = '#27272A';
+            ctx.fillRect(ex - 24, ey - 26 + walkBob + breathBob, 48, 44);
+
+            // 3. Glowing Molten Lava Core Fissures & White-Hot Furnace
+            ctx.fillStyle = '#991B1B';
+            ctx.fillRect(ex - 19, ey - 22 + walkBob + breathBob, 38, 36);
             ctx.fillStyle = '#EA580C';
-            ctx.fillRect(ex - 12, ey - 16 + walkBob, 24, 22);
+            ctx.fillRect(ex - 13, ey - 16 + walkBob + breathBob, 26, 24);
             // Incandescent White-Hot Furnace Chest
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 6, ey - 10 + walkBob, 12, 10);
-
-            // Branching glowing lava fissures across armor
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 24, ey - 8 + walkBob, 8, 3);
-            ctx.fillRect(ex + 16, ey - 8 + walkBob, 8, 3);
-            ctx.fillRect(ex - 16, ey + 8 + walkBob, 32, 4);
-            ctx.fillRect(ex - 2, ey + 12 + walkBob, 4, 8);
-
-            // Heavy Spiked Magma Pauldrons
-            ctx.fillStyle = '#27272A';
-            ctx.fillRect(ex - 32, ey - 28 + walkBob, 14, 18);
-            ctx.fillRect(ex + 18, ey - 28 + walkBob, 14, 18);
-            // Lava Shoulder Spikes
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 30, ey - 36 + walkBob, 4, 9);
-            ctx.fillRect(ex + 26, ey - 36 + walkBob, 4, 9);
-
-            // Charred Volcanic Demon Head
-            ctx.fillStyle = '#18181B';
-            ctx.fillRect(ex - 14, ey - 40 + walkBob, 28, 18);
-
-            // Burning White-Hot Eyes & Molten Maw
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 9, ey - 34 + walkBob, 6, 4);
-            ctx.fillRect(ex + 3, ey - 34 + walkBob, 6, 4);
+            ctx.fillRect(ex - 7, ey - 10 + walkBob + breathBob, 14, 12);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 7, ey - 33 + walkBob, 2, 2);
-            ctx.fillRect(ex + 5, ey - 33 + walkBob, 2, 2);
-            // Fanged glowing fiery maw
-            ctx.fillStyle = '#EA580C';
-            ctx.fillRect(ex - 8, ey - 26 + walkBob, 16, 3);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 6, ey - 25 + walkBob, 2, 2);
-            ctx.fillRect(ex + 4, ey - 25 + walkBob, 2, 2);
+            ctx.fillRect(ex - 4, ey - 7 + walkBob + breathBob, 8, 6);
 
-            // Sweeping Volcanic Demonic Horns
+            // Branching glowing lava fissures across armor plates
+            ctx.fillStyle = '#F97316';
+            ctx.fillRect(ex - 26, ey - 8 + walkBob, 10, 3);
+            ctx.fillRect(ex + 16, ey - 8 + walkBob, 10, 3);
+            ctx.fillRect(ex - 18, ey + 8 + walkBob, 36, 4);
+            ctx.fillRect(ex - 2, ey + 12 + walkBob, 4, 10);
+            ctx.fillRect(ex - 14, ey - 24 + walkBob, 28, 3);
+
+            // Heavy Obsidian Spiked Pauldrons
             ctx.fillStyle = '#27272A';
-            // Left sweeping horn
-            ctx.fillRect(ex - 22, ey - 48 + walkBob, 8, 12);
-            ctx.fillRect(ex - 28, ey - 56 + walkBob, 8, 10);
-            ctx.fillRect(ex - 34, ey - 62 + walkBob, 8, 8);
-            // Right sweeping horn
-            ctx.fillRect(ex + 14, ey - 48 + walkBob, 8, 12);
-            ctx.fillRect(ex + 20, ey - 56 + walkBob, 8, 10);
-            ctx.fillRect(ex + 26, ey - 62 + walkBob, 8, 8);
-            // Incandescent red-hot horn tips
+            ctx.fillRect(ex - 34, ey - 32 + walkBob, 14, 18);
+            ctx.fillRect(ex + 20, ey - 32 + walkBob, 14, 18);
+            // Pauldron magma fissures
             ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 34, ey - 66 + walkBob, 4, 6);
-            ctx.fillRect(ex + 30, ey - 66 + walkBob, 4, 6);
+            ctx.fillRect(ex - 32, ey - 28 + walkBob, 10, 3);
+            ctx.fillRect(ex + 22, ey - 28 + walkBob, 10, 3);
 
-            // Flickering Flame Hair / Fire Crown
-            const flame1 = Math.sin(now * 0.02) * 3;
-            const flame2 = Math.cos(now * 0.025) * 3;
-            ctx.fillStyle = '#DC2626';
-            ctx.fillRect(ex - 10, ey - 50 + flame1 + walkBob, 20, 12);
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 8, ey - 54 + flame2 + walkBob, 16, 8);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 4, ey - 56 + flame1 + walkBob, 8, 5);
-
-            // Colossal Molten Greataxe (Right Hand)
-            ctx.fillStyle = '#3F3F46';
-            ctx.fillRect(ex + 25, ey - 58 + walkBob, 6, 78);
-            // Obsidian double axe blade
+            // 4. Demon Head & Obsidian Horns
             ctx.fillStyle = '#18181B';
-            ctx.fillRect(ex + 16, ey - 60 + walkBob, 24, 26);
-            // Molten glowing axe cutting edges
+            ctx.fillRect(ex - 15, ey - 48 + walkBob, 30, 20);
+            // Sweeping Demonic Basalt Horns with glowing magma tips
+            ctx.fillStyle = '#27272A';
+            ctx.fillRect(ex - 27, ey - 60 + walkBob, 10, 20);
+            ctx.fillRect(ex + 17, ey - 60 + walkBob, 10, 20);
+            ctx.fillRect(ex - 33, ey - 72 + walkBob, 10, 14);
+            ctx.fillRect(ex + 23, ey - 72 + walkBob, 10, 14);
+            // Horn magma glowing tips
             ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex + 14, ey - 58 + walkBob, 4, 22);
-            ctx.fillRect(ex + 38, ey - 58 + walkBob, 4, 22);
+            ctx.fillRect(ex - 33, ey - 76 + walkBob, 7, 7);
+            ctx.fillRect(ex + 26, ey - 76 + walkBob, 7, 7);
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex + 14, ey - 52 + walkBob, 2, 10);
-            ctx.fillRect(ex + 40, ey - 52 + walkBob, 2, 10);
+            ctx.fillRect(ex - 31, ey - 74 + walkBob, 3, 3);
+            ctx.fillRect(ex + 28, ey - 74 + walkBob, 3, 3);
 
-            // Rising Fiery Cinder Embers
-            for (let i = 0; i < 4; i++) {
-              const sparkT = (now * 0.0016 + i * 0.25) % 1;
-              const sx = ex - 24 + ((i * 19 + 7) % 48) + Math.sin(now * 0.01 + i) * 5;
-              const sy = ey + 10 - sparkT * 64;
-              const sz = sparkT > 0.7 ? 1 : 2;
+            // Flickering Flame Hair Crown
+            for (let f = 0; f < 5; f++) {
+              const flameH = 12 + Math.sin(now * 0.02 + f * 1.5) * 5;
+              ctx.fillStyle = f % 2 === 0 ? '#F97316' : '#FEF08A';
+              ctx.fillRect(ex - 12 + f * 5, ey - 48 - flameH + walkBob, 4, flameH);
+            }
+
+            // Blazing Lava Eyes
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(ex - 9, ey - 40 + walkBob, 6, 4);
+            ctx.fillRect(ex + 3, ey - 40 + walkBob, 6, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(ex - 7, ey - 39 + walkBob, 2, 2);
+            ctx.fillRect(ex + 5, ey - 39 + walkBob, 2, 2);
+
+            // 5. Colossal Magma Greataxe (Right Hand)
+            const axeSway = Math.sin(now * 0.006) * 0.1;
+            ctx.save();
+            ctx.translate(ex + 30, ey - 18 + walkBob);
+            ctx.rotate(axeSway);
+            // Ashwood Haft
+            ctx.fillStyle = '#44403C';
+            ctx.fillRect(-3, -48, 6, 72);
+            // Double-Bitted Obsidian Axe Blades with Molten Edge
+            ctx.fillStyle = '#18181B';
+            ctx.fillRect(-22, -46, 19, 28);
+            ctx.fillRect(3, -46, 19, 28);
+            // Molten cutting edges
+            ctx.fillStyle = '#F97316';
+            ctx.fillRect(-24, -48, 4, 32);
+            ctx.fillRect(20, -48, 4, 32);
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(-23, -44, 2, 24);
+            ctx.fillRect(21, -44, 2, 24);
+            ctx.restore();
+
+            // Rising Embers
+            for (let i = 0; i < 6; i++) {
+              const sparkT = (now * 0.0016 + i * 0.2) % 1;
+              const sx = ex - 26 + ((i * 19 + 7) % 52) + Math.sin(now * 0.01 + i) * 6;
+              const sy = ey + 10 - sparkT * 70;
+              const sz = sparkT > 0.7 ? 1.5 : 2.5;
               ctx.fillStyle = sparkT > 0.5 ? '#F97316' : '#FEF08A';
               ctx.fillRect(Math.round(sx), Math.round(sy), sz, sz);
             }
@@ -2296,312 +2574,367 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Colossal Void Dragon with undulating dark matter tendrils,
             // pulsating magenta event horizon core, obsidian spires, and crimson eye glare
             // ==============================================================
-            const voidPulse = Math.sin(now * 0.005) * 6;
+            const voidPulse = Math.sin(now * 0.005) * 7;
             const vy = ey - 6 + voidPulse;
 
-            // Swirling Dark Void Singularity Ground Accretion Disk
+            // 1. Swirling Dark Void Singularity Ground Accretion Disk
             const diskRot = now * 0.002;
-            const voidGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 44);
-            voidGrad.addColorStop(0, 'rgba(147, 51, 234, 0.55)');
-            voidGrad.addColorStop(0.4, 'rgba(88, 28, 135, 0.35)');
-            voidGrad.addColorStop(0.8, 'rgba(244, 63, 94, 0.15)');
+            const voidGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 48);
+            voidGrad.addColorStop(0, 'rgba(147, 51, 234, 0.65)');
+            voidGrad.addColorStop(0.4, 'rgba(88, 28, 135, 0.45)');
+            voidGrad.addColorStop(0.8, 'rgba(244, 63, 94, 0.2)');
             voidGrad.addColorStop(1, 'rgba(15, 7, 24, 0)');
             ctx.fillStyle = voidGrad;
             ctx.beginPath();
-            ctx.arc(ex, ey + 16, 44, 0, Math.PI * 2);
+            ctx.arc(ex, ey + 16, 48, 0, Math.PI * 2);
             ctx.fill();
 
-            // Rotating Accretion Dust Particles
-            for (let d = 0; d < 6; d++) {
-              const dAngle = diskRot + (d * Math.PI) / 3;
-              const dDist = 26 + Math.sin(now * 0.004 + d) * 12;
+            // Concentric Accretion Horizon Lines
+            ctx.strokeStyle = 'rgba(232, 121, 249, 0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(ex, ey + 16, 34, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 2. Rotating Accretion Dust Particles
+            for (let d = 0; d < 8; d++) {
+              const dAngle = diskRot + (d * Math.PI) / 4;
+              const dDist = 28 + Math.sin(now * 0.004 + d) * 14;
               const dx = ex + Math.cos(dAngle) * dDist;
               const dy = ey + 16 + Math.sin(dAngle) * (dDist * 0.45);
               ctx.fillStyle = d % 2 === 0 ? '#F43F5E' : '#C084FC';
-              ctx.fillRect(dx - 1.5, dy - 1.5, 3, 3);
+              ctx.fillRect(dx - 2, dy - 2, 4, 4);
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(dx - 1, dy - 1, 2, 2);
             }
 
-            // Undulating Void Tendrils (6 articulated shadowy appendages)
+            // 3. Undulating Void Tendrils (6 articulated shadowy appendages)
             for (let i = 0; i < 6; i++) {
               const tAng = now * 0.0035 + (i * Math.PI * 2) / 6;
-              const tDist = 32 + Math.sin(now * 0.006 + i) * 6;
+              const tDist = 34 + Math.sin(now * 0.006 + i) * 8;
               const tx = ex + Math.cos(tAng) * tDist;
-              const ty = vy + Math.sin(tAng * 1.6) * 18;
+              const ty = vy + Math.sin(tAng * 1.6) * 20;
               ctx.fillStyle = '#3B0764';
-              ctx.fillRect(tx - 5, ty - 5, 10, 10);
+              ctx.fillRect(tx - 6, ty - 6, 12, 12);
               ctx.fillStyle = '#7C3AED';
-              ctx.fillRect(tx - 3, ty - 3, 6, 6);
+              ctx.fillRect(tx - 4, ty - 4, 8, 8);
               ctx.fillStyle = '#F43F5E';
-              ctx.fillRect(tx - 1, ty - 1, 2, 2);
+              ctx.fillRect(tx - 1.5, ty - 1.5, 3, 3);
             }
 
-            // Dark Obsidian Abyssal Dragon Torso & Wings
+            // 4. Dark Obsidian Abyssal Dragon Torso & Wings
             ctx.fillStyle = '#0F0718';
-            ctx.fillRect(ex - 28, vy - 26, 56, 48);
+            ctx.fillRect(ex - 30, vy - 28, 60, 52);
             ctx.fillStyle = '#2E1065';
-            ctx.fillRect(ex - 22, vy - 20, 44, 38);
+            ctx.fillRect(ex - 24, vy - 22, 48, 42);
 
-            // Wing Ribs with Crimson Energy Lines
+            // Dragon Wing Ribs with Crimson Energy Lines
             ctx.fillStyle = '#E11D48';
-            ctx.fillRect(ex - 26, vy - 22, 6, 2);
-            ctx.fillRect(ex + 20, vy - 22, 6, 2);
-            ctx.fillRect(ex - 28, vy - 14, 8, 2);
-            ctx.fillRect(ex + 20, vy - 14, 8, 2);
-            ctx.fillRect(ex - 24, vy - 6, 6, 2);
-            ctx.fillRect(ex + 18, vy - 6, 6, 2);
+            ctx.fillRect(ex - 28, vy - 24, 8, 2);
+            ctx.fillRect(ex + 20, vy - 24, 8, 2);
+            ctx.fillRect(ex - 30, vy - 16, 10, 2);
+            ctx.fillRect(ex + 20, vy - 16, 10, 2);
+            ctx.fillRect(ex - 26, vy - 8, 8, 2);
+            ctx.fillRect(ex + 18, vy - 8, 8, 2);
 
-            // Pulsating Void Core (Magenta Singularity Event Horizon)
-            const coreThrob = 1 + Math.sin(now * 0.009) * 0.15;
+            // 5. Pulsating Void Core (Magenta Singularity Event Horizon)
+            const coreThrob = 1 + Math.sin(now * 0.009) * 0.18;
             ctx.fillStyle = '#581C87';
-            ctx.fillRect(ex - 14 * coreThrob, vy - 14 * coreThrob, 28 * coreThrob, 28 * coreThrob);
+            ctx.fillRect(ex - 15 * coreThrob, vy - 15 * coreThrob, 30 * coreThrob, 30 * coreThrob);
             ctx.fillStyle = '#9333EA';
-            ctx.fillRect(ex - 9 * coreThrob, vy - 9 * coreThrob, 18 * coreThrob, 18 * coreThrob);
+            ctx.fillRect(ex - 10 * coreThrob, vy - 10 * coreThrob, 20 * coreThrob, 20 * coreThrob);
             ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 5, vy - 5, 10, 10);
+            ctx.fillRect(ex - 6, vy - 6, 12, 12);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 2, vy - 2, 4, 4);
+            ctx.fillRect(ex - 2.5, vy - 2.5, 5, 5);
 
             // Horned Dragon Skull with Armored Brow
             ctx.fillStyle = '#1E1B4B';
-            ctx.fillRect(ex - 16, vy - 42, 32, 22);
+            ctx.fillRect(ex - 18, vy - 44, 36, 24);
             ctx.fillStyle = '#311042';
-            ctx.fillRect(ex - 12, vy - 38, 24, 16);
+            ctx.fillRect(ex - 14, vy - 40, 28, 18);
 
             // Sweeping Void Horns with Glowing Tips
             ctx.fillStyle = '#1E1B4B';
-            ctx.fillRect(ex - 26, vy - 52, 10, 16);
-            ctx.fillRect(ex + 16, vy - 52, 10, 16);
-            ctx.fillRect(ex - 32, vy - 62, 10, 12);
-            ctx.fillRect(ex + 22, vy - 62, 10, 12);
+            ctx.fillRect(ex - 28, vy - 54, 11, 18);
+            ctx.fillRect(ex + 17, vy - 54, 11, 18);
+            ctx.fillRect(ex - 34, vy - 66, 11, 14);
+            ctx.fillRect(ex + 23, vy - 66, 11, 14);
             // Horn glowing tips
             ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 32, vy - 66, 6, 6);
-            ctx.fillRect(ex + 26, vy - 66, 6, 6);
+            ctx.fillRect(ex - 34, vy - 70, 7, 7);
+            ctx.fillRect(ex + 27, vy - 70, 7, 7);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 30, vy - 64, 2, 2);
-            ctx.fillRect(ex + 28, vy - 64, 2, 2);
+            ctx.fillRect(ex - 32, vy - 68, 3, 3);
+            ctx.fillRect(ex + 29, vy - 68, 3, 3);
 
             // Glowing Crimson Spectral Eyes (Double Slits)
             ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 10, vy - 34, 7, 4);
-            ctx.fillRect(ex + 3, vy - 34, 7, 4);
+            ctx.fillRect(ex - 11, vy - 36, 8, 4);
+            ctx.fillRect(ex + 3, vy - 36, 8, 4);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 8, vy - 33, 3, 2);
-            ctx.fillRect(ex + 5, vy - 33, 3, 2);
+            ctx.fillRect(ex - 9, vy - 35, 3, 2);
+            ctx.fillRect(ex + 5, vy - 35, 3, 2);
 
             // Fanged Abyssal Maw
             ctx.fillStyle = '#0F0718';
-            ctx.fillRect(ex - 9, vy - 26, 18, 5);
+            ctx.fillRect(ex - 10, vy - 28, 20, 6);
             ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 7, vy - 25, 2, 3);
-            ctx.fillRect(ex - 2, vy - 25, 4, 3);
-            ctx.fillRect(ex + 5, vy - 25, 2, 3);
+            ctx.fillRect(ex - 8, vy - 27, 3, 4);
+            ctx.fillRect(ex - 2, vy - 27, 4, 4);
+            ctx.fillRect(ex + 5, vy - 27, 3, 4);
 
-            // Orbiting Abyssal Void Shards
+            // 4 Orbiting Abyssal Void Shards
             for (let i = 0; i < 4; i++) {
               const ang = now * 0.003 + (i * Math.PI) / 2;
-              const ox = ex + Math.cos(ang) * 36;
-              const oy = vy + Math.sin(ang) * 20;
+              const ox = ex + Math.cos(ang) * 40;
+              const oy = vy + Math.sin(ang) * 22;
               ctx.fillStyle = '#9333EA';
-              ctx.fillRect(ox - 3, oy - 3, 6, 6);
+              ctx.fillRect(ox - 3.5, oy - 3.5, 7, 7);
               ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(ox - 1, oy - 1, 2, 2);
+              ctx.fillRect(ox - 1.5, oy - 1.5, 3, 3);
             }
           } else if (isAstral) {
             // ==============================================================
             // FLOOR 5 BOSS: Archon of Nothingness (The Celestial Cosmic Titan)
             // Towering Celestial Entity with rotating zodiac rune halo,
-            // starlight crystal wings, star-forged cobalt armor, and cosmic greatblade
+            // starlight crystal quad-wings, star-forged cobalt armor, and cosmic greatblade
             // ==============================================================
-            const starFloat = Math.sin(now * 0.0035) * 6;
+            const starFloat = Math.sin(now * 0.0035) * 7;
             const ay = ey - 8 + starFloat;
 
-            // Radiant Multilayer Starlight Ground Aura
-            const starGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 48);
-            starGrad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
-            starGrad.addColorStop(0.4, 'rgba(14, 165, 233, 0.35)');
-            starGrad.addColorStop(0.8, 'rgba(254, 240, 138, 0.18)');
+            // 1. Radiant Multilayer Starlight Ground Aura
+            const starGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 52);
+            starGrad.addColorStop(0, 'rgba(56, 189, 248, 0.65)');
+            starGrad.addColorStop(0.4, 'rgba(14, 165, 233, 0.45)');
+            starGrad.addColorStop(0.8, 'rgba(254, 240, 138, 0.22)');
             starGrad.addColorStop(1, 'rgba(7, 18, 28, 0)');
             ctx.fillStyle = starGrad;
             ctx.beginPath();
-            ctx.arc(ex, ey + 16, 48, 0, Math.PI * 2);
+            ctx.arc(ex, ey + 16, 52, 0, Math.PI * 2);
             ctx.fill();
 
-            // Concentric Rotating Celestial Zodiac Halo (Behind Head)
+            // 2. Concentric Rotating Celestial Zodiac Halo (Behind Head)
             const haloRot = now * 0.0015;
             ctx.save();
-            ctx.translate(ex, ay - 38);
+            ctx.translate(ex, ay - 42);
             ctx.rotate(haloRot);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.arc(0, 0, 32, 0, Math.PI * 2);
+            ctx.arc(0, 0, 36, 0, Math.PI * 2);
             ctx.stroke();
+
+            // Inner Astrolabe Ring
+            ctx.strokeStyle = 'rgba(254, 240, 138, 0.7)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.arc(0, 0, 24, 0, Math.PI * 2);
+            ctx.stroke();
+
             // 8 Star Points on Halo
             for (let h = 0; h < 8; h++) {
               const hAng = (h * Math.PI) / 4;
-              const hx = Math.cos(hAng) * 32;
-              const hy = Math.sin(hAng) * 32;
+              const hx = Math.cos(hAng) * 36;
+              const hy = Math.sin(hAng) * 36;
               ctx.fillStyle = h % 2 === 0 ? '#FEF08A' : '#38BDF8';
-              ctx.fillRect(hx - 2, hy - 2, 4, 4);
+              ctx.fillRect(hx - 2.5, hy - 2.5, 5, 5);
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(hx - 1, hy - 1, 2, 2);
             }
             ctx.restore();
 
-            // Celestial Cosmic Quad-Wings
-            const wingFlap = Math.sin(now * 0.004) * 4;
-            // Upper Large Wings
-            ctx.fillStyle = 'rgba(56, 189, 248, 0.75)';
-            ctx.fillRect(ex - 42, ay - 38 + wingFlap, 20, 42);
-            ctx.fillRect(ex + 22, ay - 38 - wingFlap, 20, 42);
-            ctx.fillStyle = 'rgba(254, 240, 138, 0.9)';
-            ctx.fillRect(ex - 36, ay - 32 + wingFlap, 12, 28);
-            ctx.fillRect(ex + 24, ay - 32 - wingFlap, 12, 28);
+            // 3. Celestial Cosmic Quad-Wings
+            const wingFlap = Math.sin(now * 0.004) * 5;
+            // Upper Large Starlight Wings
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.8)';
+            ctx.fillRect(ex - 46, ay - 40 + wingFlap, 22, 46);
+            ctx.fillRect(ex + 24, ay - 40 - wingFlap, 22, 46);
+            ctx.fillStyle = 'rgba(254, 240, 138, 0.95)';
+            ctx.fillRect(ex - 38, ay - 34 + wingFlap, 14, 32);
+            ctx.fillRect(ex + 26, ay - 34 - wingFlap, 14, 32);
             // Lower Small Wings
-            ctx.fillStyle = 'rgba(2, 132, 199, 0.65)';
-            ctx.fillRect(ex - 34, ay - 2 + wingFlap * 0.5, 14, 24);
-            ctx.fillRect(ex + 20, ay - 2 - wingFlap * 0.5, 14, 24);
+            ctx.fillStyle = 'rgba(2, 132, 199, 0.7)';
+            ctx.fillRect(ex - 36, ay - 2 + wingFlap * 0.5, 16, 26);
+            ctx.fillRect(ex + 20, ay - 2 - wingFlap * 0.5, 16, 26);
 
-            // Star-Forged Heavy Armor Torso
+            // 4. Star-Forged Heavy Armor Torso & Pauldrons
             ctx.fillStyle = '#0B1A30';
-            ctx.fillRect(ex - 22, ay - 24, 44, 44);
+            ctx.fillRect(ex - 24, ay - 26, 48, 48);
             ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 16, ay - 18, 32, 34);
+            ctx.fillRect(ex - 18, ay - 20, 36, 38);
 
             // Cosmic Shoulder Pauldrons with Gold Filigree
             ctx.fillStyle = '#0369A1';
-            ctx.fillRect(ex - 28, ay - 26, 10, 16);
-            ctx.fillRect(ex + 18, ay - 26, 10, 16);
+            ctx.fillRect(ex - 30, ay - 28, 12, 18);
+            ctx.fillRect(ex + 18, ay - 28, 12, 18);
             ctx.fillStyle = '#EAB308';
-            ctx.fillRect(ex - 27, ay - 24, 8, 4);
-            ctx.fillRect(ex + 19, ay - 24, 8, 4);
+            ctx.fillRect(ex - 29, ay - 26, 10, 4);
+            ctx.fillRect(ex + 19, ay - 26, 10, 4);
 
             // Pulsating Celestial Core (Solar Diamond Star)
             ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 10, ay - 12, 20, 20);
+            ctx.fillRect(ex - 11, ay - 13, 22, 22);
             ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex - 7, ay - 9, 14, 14);
+            ctx.fillRect(ex - 8, ay - 10, 16, 16);
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 4, ay - 6, 8, 8);
+            ctx.fillRect(ex - 5, ay - 7, 10, 10);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 2, ay - 4, 4, 4);
+            ctx.fillRect(ex - 2.5, ay - 4.5, 5, 5);
 
             // Celestial Crown Helmet
             ctx.fillStyle = '#0F172A';
-            ctx.fillRect(ex - 14, ay - 40, 28, 18);
+            ctx.fillRect(ex - 15, ay - 42, 30, 20);
             ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 11, ay - 36, 22, 12);
+            ctx.fillRect(ex - 12, ay - 38, 24, 14);
             // Triple Golden Spire Crown
             ctx.fillStyle = '#EAB308';
-            ctx.fillRect(ex - 12, ay - 46, 24, 6);
-            ctx.fillRect(ex - 12, ay - 52, 4, 8);
-            ctx.fillRect(ex - 2, ay - 56, 4, 12);
-            ctx.fillRect(ex + 8, ay - 52, 4, 8);
+            ctx.fillRect(ex - 13, ay - 48, 26, 7);
+            ctx.fillRect(ex - 13, ay - 55, 4, 9);
+            ctx.fillRect(ex - 2, ay - 60, 4, 14);
+            ctx.fillRect(ex + 9, ay - 55, 4, 9);
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 1, ay - 54, 2, 4);
+            ctx.fillRect(ex - 1, ay - 58, 2, 5);
 
             // Piercing Radiant Gold Starlight Eyes
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 8, ay - 32, 5, 4);
-            ctx.fillRect(ex + 3, ay - 32, 5, 4);
+            ctx.fillRect(ex - 9, ay - 34, 6, 4);
+            ctx.fillRect(ex + 3, ay - 34, 6, 4);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 6, ay - 31, 2, 2);
-            ctx.fillRect(ex + 4, ay - 31, 2, 2);
+            ctx.fillRect(ex - 7, ay - 33, 3, 2);
+            ctx.fillRect(ex + 5, ay - 33, 3, 2);
 
             // Star-Forged Celestial Greatblade (Right Hand) with Shimmering Glow
             const bladeSway = Math.sin(now * 0.005) * 0.08;
             ctx.save();
-            ctx.translate(ex + 25, ay - 20);
+            ctx.translate(ex + 28, ay - 22);
             ctx.rotate(bladeSway);
             // Gold Hilt & Crossguard
             ctx.fillStyle = '#EAB308';
-            ctx.fillRect(-6, 0, 14, 4);
+            ctx.fillRect(-7, 0, 16, 5);
             ctx.fillStyle = '#A16207';
-            ctx.fillRect(-1, 4, 4, 8);
+            ctx.fillRect(-1.5, 5, 5, 9);
             // Radiant Crystal Blade
             ctx.fillStyle = '#0284C7';
-            ctx.fillRect(-2, -54, 6, 54);
+            ctx.fillRect(-3, -58, 8, 58);
             ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(-1, -52, 4, 50);
+            ctx.fillRect(-2, -56, 6, 54);
             ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(0, -50, 2, 46);
+            ctx.fillRect(-0.5, -54, 3, 50);
             ctx.restore();
 
             // Rising Celestial Stardust Sparks
-            for (let s = 0; s < 5; s++) {
-              const sparkT = (now * 0.0014 + s * 0.2) % 1;
-              const sx = ex - 28 + ((s * 21 + 5) % 56) + Math.sin(now * 0.008 + s) * 6;
-              const sy = ay + 12 - sparkT * 70;
+            for (let s = 0; s < 6; s++) {
+              const sparkT = (now * 0.0014 + s * 0.17) % 1;
+              const sx = ex - 30 + ((s * 21 + 5) % 60) + Math.sin(now * 0.008 + s) * 7;
+              const sy = ay + 12 - sparkT * 75;
               ctx.fillStyle = s % 2 === 0 ? '#38BDF8' : '#FEF08A';
-              ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2);
+              ctx.fillRect(Math.round(sx), Math.round(sy), 2.5, 2.5);
             }
           } else if (map.floor >= 6) {
             drawHumanoidBoss(ctx, ex, ey, en.name, now, en);
           } else {
             // ==============================================================
             // FLOOR 1 BOSS: Warden Malakor (Highkeep Bastion Warden Knight)
-            // Heavy steel plate armor, red heraldic battle cape, winged helm,
-            // gold lion crest, greatsword, and tower kite shield
+            // Heavy steel plate armor, red heraldic battle cape with gold filigree,
+            // winged great-helm, glowing amber visor, lion crest tower shield,
+            // and shimmering runic broadsword
             // ==============================================================
-            // Red war cape draped behind
-            ctx.fillStyle = '#881337';
-            ctx.fillRect(ex - 24, ey - 18 + walkBob, 48, 42);
-            ctx.fillStyle = '#BE123C';
-            ctx.fillRect(ex - 20, ey - 14 + walkBob, 40, 36);
+            const capeWave = Math.sin(now * 0.006) * 2.5;
 
-            // Heavy Steel Plate Torso & Armor
+            // 1. Bastion Sanctuary Ground Disc
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
+            ctx.beginPath();
+            ctx.arc(ex, ey + 18, 30, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // 2. Flowing Crimson War Mantle draped behind
+            ctx.fillStyle = '#881337';
+            ctx.fillRect(ex - 26, ey - 20 + walkBob, 52, 46);
+            ctx.fillStyle = '#BE123C';
+            ctx.fillRect(ex - 22, ey - 16 + walkBob + capeWave, 44, 40);
+            // Gold Mantle Hem
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(ex - 24, ey + 22 + walkBob + capeWave, 48, 3);
+
+            // 3. Heavy Steel Plate Torso & Armor Plates
+            ctx.fillStyle = '#1E293B';
+            ctx.fillRect(ex - 22, ey - 24 + walkBob, 44, 42);
             ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 20, ey - 22 + walkBob, 40, 38);
+            ctx.fillRect(ex - 18, ey - 20 + walkBob, 36, 36);
             ctx.fillStyle = '#475569';
-            ctx.fillRect(ex - 16, ey - 18 + walkBob, 32, 30);
+            ctx.fillRect(ex - 14, ey - 16 + walkBob, 28, 30);
 
             // Golden Highkeep Heraldry & Belt
             ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex - 12, ey - 2 + walkBob, 24, 6);
+            ctx.fillRect(ex - 14, ey + walkBob, 28, 7);
             ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 4, ey - 10 + walkBob, 8, 8); // Lion chest emblem
+            ctx.fillRect(ex - 5, ey - 10 + walkBob, 10, 10); // Lion chest emblem
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(ex - 3, ey - 8 + walkBob, 6, 6);
 
-            // Spiked Steel Pauldrons
+            // Spiked Steel Pauldrons with Gold Trim
             ctx.fillStyle = '#64748B';
-            ctx.fillRect(ex - 26, ey - 24 + walkBob, 12, 14);
-            ctx.fillRect(ex + 14, ey - 24 + walkBob, 12, 14);
+            ctx.fillRect(ex - 28, ey - 26 + walkBob, 14, 16);
+            ctx.fillRect(ex + 14, ey - 26 + walkBob, 14, 16);
             ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex - 24, ey - 22 + walkBob, 8, 3);
-            ctx.fillRect(ex + 16, ey - 22 + walkBob, 8, 3);
+            ctx.fillRect(ex - 26, ey - 24 + walkBob, 10, 4);
+            ctx.fillRect(ex + 16, ey - 24 + walkBob, 10, 4);
+            ctx.fillStyle = '#94A3B8';
+            ctx.fillRect(ex - 28, ey - 32 + walkBob, 5, 7); // Shoulder Spikes
+            ctx.fillRect(ex + 23, ey - 32 + walkBob, 5, 7);
 
-            // Winged Great-Helm with Golden Wings
+            // Winged Great-Helm with Golden Crest
             ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 14, ey - 36 + walkBob, 28, 18);
+            ctx.fillRect(ex - 15, ey - 38 + walkBob, 30, 20);
             // Golden Helm Wings / Crest
             ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 18, ey - 42 + walkBob, 6, 12);
-            ctx.fillRect(ex - 3, ey - 44 + walkBob, 6, 10);
-            ctx.fillRect(ex + 12, ey - 42 + walkBob, 6, 12);
+            ctx.fillRect(ex - 20, ey - 46 + walkBob, 7, 14);
+            ctx.fillRect(ex - 4, ey - 48 + walkBob, 8, 12);
+            ctx.fillRect(ex + 13, ey - 46 + walkBob, 7, 14);
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(ex - 18, ey - 44 + walkBob, 3, 10);
+            ctx.fillRect(ex - 2, ey - 46 + walkBob, 4, 8);
+            ctx.fillRect(ex + 15, ey - 44 + walkBob, 3, 10);
+
             // Steel visor faceplate
-            ctx.fillStyle = '#1E293B';
-            ctx.fillRect(ex - 10, ey - 30 + walkBob, 20, 8);
+            ctx.fillStyle = '#0F172A';
+            ctx.fillRect(ex - 11, ey - 32 + walkBob, 22, 10);
             // Glowing Amber Visor Slits
             ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 8, ey - 28 + walkBob, 6, 3);
-            ctx.fillRect(ex + 2, ey - 28 + walkBob, 6, 3);
+            ctx.fillRect(ex - 9, ey - 30 + walkBob, 7, 4);
+            ctx.fillRect(ex + 2, ey - 30 + walkBob, 7, 4);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(ex - 7, ey - 29 + walkBob, 3, 2);
+            ctx.fillRect(ex + 4, ey - 29 + walkBob, 3, 2);
 
-            // Left Hand: Tower Kite Shield
-            ctx.fillStyle = '#475569';
-            ctx.fillRect(ex - 30, ey - 16 + walkBob, 14, 34);
+            // Left Hand: Tower Kite Greatshield
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(ex - 32, ey - 18 + walkBob, 16, 38);
             ctx.fillStyle = '#991B1B';
-            ctx.fillRect(ex - 28, ey - 14 + walkBob, 10, 30);
+            ctx.fillRect(ex - 30, ey - 16 + walkBob, 12, 34);
             ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 25, ey - 8 + walkBob, 4, 16);
-            ctx.fillRect(ex - 27, ey - 2 + walkBob, 8, 4);
+            ctx.fillRect(ex - 27, ey - 10 + walkBob, 6, 20); // Lion heraldry on shield
+            ctx.fillRect(ex - 29, ey - 4 + walkBob, 10, 6);
+            ctx.fillStyle = '#FEF08A';
+            ctx.fillRect(ex - 26, ey - 8 + walkBob, 4, 14);
 
-            // Right Hand: Heavy Broadsword
-            ctx.fillStyle = '#64748B';
-            ctx.fillRect(ex + 22, ey - 46 + walkBob, 7, 54);
-            ctx.fillStyle = '#E2E8F0';
-            ctx.fillRect(ex + 24, ey - 44 + walkBob, 3, 48);
+            // Right Hand: Heavy Broadsword with Shimmering Fuller
+            const swordX = ex + 22;
+            ctx.fillStyle = '#475569';
+            ctx.fillRect(swordX, ey - 50 + walkBob, 8, 60);
+            ctx.fillStyle = '#CBD5E1';
+            ctx.fillRect(swordX + 2, ey - 48 + walkBob, 4, 54);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(swordX + 3, ey - 46 + walkBob, 2, 50);
+            // Gold Crossguard & Pommel
             ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex + 17, ey - 8 + walkBob, 17, 5); // Crossguard
+            ctx.fillRect(swordX - 6, ey - 8 + walkBob, 20, 6);
             ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex + 24, ey + 8 + walkBob, 3, 6); // Pommel
+            ctx.fillRect(swordX + 2, ey + 10 + walkBob, 4, 7);
           }
         } else {
           // Safe visible fallback for any undefined or custom enemy kinds
@@ -3042,6 +3375,64 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.beginPath();
           ctx.ellipse(hx, hy + 11, 18 + auraPulse * 0.5, 7, 0, 0, Math.PI * 2);
           ctx.stroke();
+        }
+        // Floor Status Effects Visual Feedback
+        if (p.statuses && p.statuses.length > 0) {
+          const statusCount = p.statuses.length;
+          p.statuses.forEach((s, sIdx) => {
+            const angle = (now * 0.002) + (sIdx * (Math.PI * 2) / statusCount);
+            const dist = 22 + Math.sin(now * 0.003 + sIdx) * 3;
+            const sx = hx + Math.cos(angle) * dist;
+            const sy = hy - 10 + Math.sin(angle) * (dist * 0.4);
+
+            let color = '#CBD5E1';
+            let char = '●';
+
+            if (s.type === 'guard_broken') { color = '#60A5FA'; char = '!'; }
+            else if (s.type === 'frostbite') { color = '#38BDF8'; char = '*'; }
+            else if (s.type === 'scorched') { color = '#EF4444'; char = '^'; }
+            else if (s.type === 'voidmarked') { 
+              color = '#A855F7'; char = 'o'; 
+              // Pulsing radius for voidmark detonation
+              if (s.detonationTimerMs !== undefined) {
+                const pct = 1 - (s.detonationTimerMs / 3000);
+                ctx.strokeStyle = `rgba(168, 85, 247, ${0.4 + Math.sin(now * 0.02) * 0.2})`;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(hx, hy, 95 * pct, 0, Math.PI * 2);
+                ctx.stroke();
+              }
+            }
+            else if (s.type === 'disoriented') { color = '#818CF8'; char = '?'; }
+            else if (s.type === 'charmed') { color = '#FDE68A'; char = '+'; }
+            else if (s.type === 'ashen_curse') { color = '#D9AA52'; char = 'x'; }
+            else if (s.type === 'silenced') { color = '#A855F7'; char = 'X'; }
+            else if (s.type === 'impaled') { color = '#FBBF24'; char = '|'; }
+            else if (s.type === 'condemned') { 
+              color = '#FDE047'; char = '!'; 
+              // Radiant judgment circle
+              if (s.detonationTimerMs !== undefined) {
+                const pulse = 0.5 + Math.sin(now * 0.01) * 0.2;
+                ctx.fillStyle = `rgba(253, 224, 71, ${0.05 * pulse})`;
+                ctx.beginPath();
+                ctx.arc(hx, hy, 45, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+
+            ctx.fillStyle = color;
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(char, sx, sy);
+            
+            // Draw small timer arc
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 7, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * (s.durationMs / s.maxDurationMs)));
+            ctx.stroke();
+          });
         }
 
         // Aim angle & facing direction

@@ -18,6 +18,8 @@ import {
   type NpcState,
   type PlayerInputState,
   type PlayerState,
+  type PlayerStatusEffect,
+  type PlayerStatusType,
   type ProjectileState,
   type PropState,
   type RoomSummary,
@@ -104,23 +106,27 @@ export class GameRoom {
 
   public static computeHealingAmount(
     baseHealing: number,
-    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null
+    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null,
+    target?: PlayerState | null
   ): number {
     if (baseHealing <= 0) return 0;
-    if (!healer || healer.heroClass !== 'cleric') {
-      return Math.max(1, Math.round(baseHealing));
+    
+    let healing = baseHealing;
+
+    if (healer && healer.heroClass === 'cleric') {
+      const lvl = Math.max(1, healer.level || 1);
+      const fth = Math.max(0, healer.faith || 0);
+      const levelMult = 1 + (lvl - 1) * 0.05;
+      const faithMult = 1 + fth * 0.03;
+      healing = healing * levelMult * faithMult;
     }
 
-    const lvl = Math.max(1, healer.level || 1);
-    const fth = Math.max(0, healer.faith || 0);
+    // Floor 7: Ashen Curse - Reduces healing received by 45%
+    if (target && target.statuses && target.statuses.some(s => s.type === 'ashen_curse')) {
+      healing *= 0.55;
+    }
 
-    // Level scaling: +5% per level beyond Level 1
-    const levelMult = 1 + (lvl - 1) * 0.05;
-    // Faith scaling: +3% per Faith point
-    const faithMult = 1 + fth * 0.03;
-
-    const scaled = baseHealing * levelMult * faithMult;
-    return Math.max(1, Math.round(scaled));
+    return Math.max(1, Math.round(healing));
   }
 
   public computeHealingAmount(
@@ -217,6 +223,7 @@ export class GameRoom {
       pr.state.x = this.spawnPoint.x + Math.cos(offsetAngle) * 20;
       pr.state.y = this.spawnPoint.y + Math.sin(offsetAngle) * 20;
       pr.state.readyNextFloor = false;
+      pr.state.statuses = [];
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -226,6 +233,145 @@ export class GameRoom {
         pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + 25);
       }
       idx++;
+    }
+  }
+
+  public applyPlayerStatus(
+    p: PlayerState,
+    statusType: PlayerStatusType,
+    durationMs: number,
+    value?: number,
+    sourceId?: string
+  ): void {
+    if (p.downed || p.godMode) return;
+
+    // Resistance scaling
+    const classDef = HERO_CLASSES[p.heroClass];
+    const res = classDef?.resistances || {
+      physical: 0, fire: 0, frost: 0, lightning: 0, poison: 0, bleed: 0
+    };
+    
+    let resMult = 1.0;
+    if (statusType === 'frostbite') resMult = 1 - (res.frost || 0);
+    if (statusType === 'scorched') resMult = 1 - (res.fire || 0);
+    if (statusType === 'ashen_curse') resMult = 1 - (res.poison || 0); // Ashen curse scales with poison res for simplicity
+    
+    const effectiveDuration = durationMs * Math.max(0.2, resMult);
+
+    const existing = p.statuses.find(s => s.type === statusType);
+    if (existing) {
+      existing.durationMs = Math.max(existing.durationMs, effectiveDuration);
+      existing.maxDurationMs = Math.max(existing.maxDurationMs, effectiveDuration);
+      if (value !== undefined) existing.value = value;
+      return;
+    }
+
+    const id = this.nextId('status');
+    p.statuses.push({
+      id,
+      type: statusType,
+      durationMs: effectiveDuration,
+      maxDurationMs: effectiveDuration,
+      value,
+      sourceId,
+      detonationTimerMs: (statusType === 'voidmarked' || statusType === 'condemned') ? 3000 : undefined
+    });
+
+    let label = statusType.toUpperCase().replace('_', ' ');
+    let color = '#CBD5E1';
+    switch (statusType) {
+      case 'guard_broken': color = '#60A5FA'; break;
+      case 'frostbite': color = '#38BDF8'; break;
+      case 'scorched': color = '#EF4444'; break;
+      case 'voidmarked': color = '#A855F7'; break;
+      case 'disoriented': color = '#818CF8'; break;
+      case 'charmed': color = '#FDE68A'; break;
+      case 'ashen_curse': color = '#D9AA52'; break;
+      case 'silenced': color = '#A855F7'; break;
+      case 'impaled': color = '#FBBF24'; break;
+      case 'condemned': color = '#FDE047'; break;
+    }
+    this.emitEvent('status', p.x, p.y - 32, `[${label}]`, color);
+  }
+
+  private detonateVoidmark(p: PlayerState, s: PlayerStatusEffect): void {
+    this.emitEvent('status', p.x, p.y - 20, 'VOID DETONATION!', '#A855F7');
+    const dmg = 35 + this.floor * 5;
+    this.damagePlayer(p, dmg, 'arcane');
+    for (const other of this.players.values()) {
+      if (other.state.id !== p.id && !other.state.downed && Math.hypot(other.state.x - p.x, other.state.y - p.y) <= 95) {
+        this.damagePlayer(other.state, Math.round(dmg * 0.75), 'arcane');
+        this.emitEvent('status', other.state.x, other.state.y - 14, 'VOID BLAST!', '#A855F7');
+      }
+    }
+  }
+
+  private detonateCondemned(p: PlayerState, s: PlayerStatusEffect): void {
+    this.emitEvent('status', p.x, p.y - 20, 'DIVINE JUDGMENT!', '#FDE047');
+    const dmg = 65 + this.floor * 8;
+    this.damagePlayer(p, dmg, 'divine');
+  }
+
+  private updatePlayerStatuses(p: PlayerState, dtMs: number, pulseDotNow: boolean): void {
+    if (!p.statuses) p.statuses = [];
+    if (p.downed) {
+      if (p.statuses.length > 0) p.statuses = [];
+      return;
+    }
+    for (let i = p.statuses.length - 1; i >= 0; i--) {
+      const s = p.statuses[i];
+      s.durationMs -= dtMs;
+
+      // Floor 3: Scorched - Periodic Fire Damage
+      if (s.type === 'scorched' && pulseDotNow) {
+        this.damagePlayer(p, 6 + this.floor * 1.5, 'fire');
+      }
+
+      // Detonation logic
+      if (s.detonationTimerMs !== undefined) {
+        s.detonationTimerMs -= dtMs;
+        if (s.detonationTimerMs <= 0) {
+          if (s.type === 'voidmarked') this.detonateVoidmark(p, s);
+          if (s.type === 'condemned') this.detonateCondemned(p, s);
+          s.detonationTimerMs = undefined;
+        }
+      }
+
+      if (s.durationMs <= 0) {
+        p.statuses.splice(i, 1);
+        if (s.type === 'silenced') {
+          this.emitEvent('status', p.x, p.y - 20, 'SKILLS READY', '#34D399');
+        }
+      }
+    }
+  }
+
+  public applyStatusEffect(
+    target: EnemyState | PlayerState,
+    kind: 'slow' | 'stun' | 'burn' | 'freeze' | 'shock' | 'poison' | 'bleed' | 'silence',
+    durationMs: number
+  ): void {
+    // If it's a player, use the new system for relevant types if possible, or fall back to simple timers
+    if ('heroClass' in target) {
+      if (kind === 'slow') this.applyPlayerStatus(target, 'frostbite', durationMs);
+      else if (kind === 'burn') this.applyPlayerStatus(target, 'scorched', durationMs);
+      else if (kind === 'silence') this.applyPlayerStatus(target, 'silenced', durationMs);
+      else target.stunnedMs = Math.max(target.stunnedMs, durationMs); // Keep stun simple for now
+      return;
+    }
+
+    const tenacity = (target as EnemyState).resistances?.tenacity || 0;
+    const effectiveDuration = kind === 'stun' || kind === 'freeze' ? durationMs * (1 - tenacity) : durationMs;
+    
+    switch (kind) {
+      case 'slow': target.slowedMs = Math.max(target.slowedMs, effectiveDuration); break;
+      case 'stun': target.stunnedMs = Math.max(target.stunnedMs, effectiveDuration); break;
+      case 'burn': target.burnedMs = Math.max(target.burnedMs, effectiveDuration); break;
+      case 'freeze': target.frozenMs = Math.max(target.frozenMs, effectiveDuration); break;
+      case 'shock': target.shockedMs = Math.max(target.shockedMs, effectiveDuration); break;
+      case 'poison': target.poisonedMs = Math.max(target.poisonedMs, effectiveDuration); break;
+      case 'bleed': target.bleedingMs = Math.max(target.bleedingMs, effectiveDuration); break;
+      case 'silence': target.silencedMs = Math.max(target.silencedMs, effectiveDuration); break;
     }
   }
 
@@ -348,6 +494,7 @@ export class GameRoom {
       pr.state.potions = 2;
       pr.state.relics = [];
       pr.state.pendingRelicChoices = [];
+      pr.state.statuses = [];
       pr.state.downed = false;
       pr.state.downedTimerMs = 0;
       pr.state.reviveProgress = 0;
@@ -439,6 +586,14 @@ export class GameRoom {
       maxUltCooldownMs: def.ultCooldownMs,
       attackAnimMs: 0,
       hasteMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
       kills: 0,
       damageDealt: 0,
       revives: 0,
@@ -454,6 +609,7 @@ export class GameRoom {
       intelligence: savedStats?.intelligence || 0,
       faith: savedStats?.faith || 0,
       attributePoints: savedStats?.attributePoints || 0,
+      statuses: [],
     };
 
     if (state.level >= MAX_LEVEL) {
@@ -771,6 +927,8 @@ export class GameRoom {
     const def = HERO_CLASSES[p.heroClass];
     const cdrMult = p.relics.includes('hourglass_shard') ? 0.75 : 1.0;
 
+    const isSilenced = p.statuses && p.statuses.some(s => s.type === 'silenced');
+
     if (action === 'potion') {
       if (p.potions > 0 && p.hp < p.maxHp) {
         p.potions -= 1;
@@ -978,7 +1136,7 @@ export class GameRoom {
     }
 
     if (action === 'tactical') {
-      if (p.skillCooldownMs > 0) return {};
+      if (p.skillCooldownMs > 0 || isSilenced) return {};
       p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
@@ -1083,7 +1241,7 @@ export class GameRoom {
     }
 
     if (action === 'ult') {
-      if (p.ultCooldownMs > 0) return {};
+      if (p.ultCooldownMs > 0 || isSilenced) return {};
       p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
 
@@ -1170,6 +1328,10 @@ export class GameRoom {
     const pulseZonesNow = this.zoneTickAccumMs >= 500;
     if (pulseZonesNow) this.zoneTickAccumMs = 0;
 
+    this.statusDotAccumMs += dtMs;
+    const pulseDotNow = this.statusDotAccumMs >= 650;
+    if (pulseDotNow) this.statusDotAccumMs = 0;
+
     for (const npc of this.npcs) {
       if (npc.speakingMs && npc.speakingMs > 0) {
         npc.speakingMs = Math.max(0, npc.speakingMs - dtMs);
@@ -1222,7 +1384,7 @@ export class GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 28 + this.floor * 4, 'divine');
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' LAMENT ECHO!', '#FEF08A');
+            this.applyPlayerStatus(pr.state, 'charmed', 3000);
           }
         }
         this.zones.splice(i, 1);
@@ -1233,9 +1395,9 @@ export class GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             pr.state.hasteMs = Math.min(pr.state.hasteMs, 0);
+            this.applyPlayerStatus(pr.state, 'ashen_curse', 1500);
             if (pulseZonesNow) {
               this.damagePlayer(pr.state, 12 + this.floor * 2, 'elemental');
-              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' ASHEN FOG!', '#D9AA52');
             }
           }
         }
@@ -1293,8 +1455,7 @@ export class GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 28 + this.floor * 4, 'arcane');
-            pr.state.skillCooldownMs = Math.max(pr.state.skillCooldownMs, 2500);
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' SILENCED!', '#A855F7');
+            this.applyPlayerStatus(pr.state, 'silenced', 4500);
           }
         }
         this.zones.splice(i, 1);
@@ -1315,7 +1476,7 @@ export class GameRoom {
             const localY = dx * sinA + dy * cosA;
             if (localX >= 0 && localX <= w && Math.abs(localY) <= h / 2) {
               this.damagePlayer(pr.state, 36 + this.floor * 4, 'divine');
-              this.emitEvent('status', pr.state.x, pr.state.y - 14, " HEAVEN'S PIERCE!", '#FDE047');
+              this.applyPlayerStatus(pr.state, 'impaled', 4000);
             }
           }
         }
@@ -1327,7 +1488,7 @@ export class GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 32 + this.floor * 4, 'divine');
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' LANCEFALL IMPALED!', '#FBBF24');
+            this.applyPlayerStatus(pr.state, 'impaled', 4000);
           }
         }
         this.zones.splice(i, 1);
@@ -1347,7 +1508,7 @@ export class GameRoom {
               const pQuad = Math.floor(pAng / (Math.PI / 2)) % 4;
               if (pQuad === q) {
                 this.damagePlayer(pr.state, 40 + this.floor * 5, 'physical');
-                this.emitEvent('status', pr.state.x, pr.state.y - 14, " WARDEN'S EDICT!", '#EF4444');
+                this.applyPlayerStatus(pr.state, 'condemned', 5000);
               }
             }
           }
@@ -1367,9 +1528,10 @@ export class GameRoom {
         const stage = z.stage || 1;
         const dmg = 30 + stage * 6 + this.floor * 4;
         for (const pr of this.players.values()) {
-          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+          if (pr.state.downed) continue;
+          if (Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, dmg, 'physical');
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ` VERDICT STAGE ${stage}!`, '#F59E0B');
+            this.applyPlayerStatus(pr.state, 'condemned', 4500);
           }
         }
         this.zones.splice(i, 1);
@@ -1383,7 +1545,7 @@ export class GameRoom {
             Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
           ) {
             this.damagePlayer(pr.state, 24 + this.floor * 4, 'elemental');
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' FROST NOVA!', '#38BDF8');
+            this.applyPlayerStatus(pr.state, 'frostbite', 4500);
           }
         }
         this.zones.splice(i, 1);
@@ -1397,7 +1559,7 @@ export class GameRoom {
             Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
           ) {
             this.damagePlayer(pr.state, 28 + this.floor * 4, 'elemental');
-            this.emitEvent('status', pr.state.x, pr.state.y - 14, ' BURNING!', '#EF4444');
+            this.applyPlayerStatus(pr.state, 'scorched', 5000);
           }
         }
         this.zones.splice(i, 1);
@@ -1424,7 +1586,7 @@ export class GameRoom {
               Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
             ) {
               this.damagePlayer(pr.state, 32 + this.floor * 4, 'elemental');
-              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' VOID BURST!', '#A855F7');
+              this.applyPlayerStatus(pr.state, 'voidmarked', 4000);
             }
           }
           this.zones.splice(i, 1);
@@ -1440,7 +1602,7 @@ export class GameRoom {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (Math.abs(dist - currentRadius) <= 18) {
               this.damagePlayer(pr.state, 26 + this.floor * 4, 'elemental');
-              this.emitEvent('status', pr.state.x, pr.state.y - 14, ' SUPERNOVA!', '#F472B6');
+              this.applyPlayerStatus(pr.state, 'disoriented', 3000);
             }
           }
         }
@@ -1485,6 +1647,11 @@ export class GameRoom {
             Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius
           ) {
             this.damagePlayer(pr.state, 30 + this.floor * 6, 'physical');
+            if (this.floor === 1) {
+              this.applyPlayerStatus(pr.state, 'guard_broken', 4000);
+            } else {
+              this.applyStatusEffect(pr.state, 'stun', 1200);
+            }
           }
         }
         // Spawn 4 outward shockwave debris orbs
@@ -1577,6 +1744,11 @@ export class GameRoom {
       }
     }
 
+    // Process Player Status Effects
+    for (const pr of this.players.values()) {
+      this.updatePlayerStatuses(pr.state, dtMs, pulseDotNow);
+    }
+
     // Cleric Passive: Radiant Aura (2.0s Periodic Golden Healing Warmth Pulse)
     this.clericAuraAccumMs += dtMs;
     if (this.clericAuraAccumMs >= 2000) {
@@ -1598,6 +1770,7 @@ export class GameRoom {
         }
       }
     }
+
 
     for (const pr of this.players.values()) {
       const p = pr.state;
@@ -1642,6 +1815,11 @@ export class GameRoom {
       if (p.hasteMs > 0) moveSpeed *= 1.22;
       if (p.speedBoost) moveSpeed *= 1.8;
 
+      // Floor 2: Frostbite - Reduces movement speed
+      if (p.statuses.some(s => s.type === 'frostbite')) {
+        moveSpeed *= 0.55;
+      }
+
       let mx = 0;
       let my = 0;
 
@@ -1665,9 +1843,35 @@ export class GameRoom {
         }
       }
 
+      // Floor 5: Disoriented - Mild directional drift (aim jitter)
+      if (p.statuses.some(s => s.type === 'disoriented')) {
+        const drift = Date.now() * 0.003;
+        mx += Math.cos(drift) * 0.25;
+        my += Math.sin(drift * 0.8) * 0.25;
+      }
+
       if (mx !== 0 || my !== 0) {
+        const inputLen = Math.hypot(mx, my);
+        if (inputLen > 1) { mx /= inputLen; my /= inputLen; }
+
         p.vx = mx * moveSpeed;
         p.vy = my * moveSpeed;
+
+        // Floor 6: Charmed - Gentle movement pull toward the boss
+        const charmed = p.statuses.find(s => s.type === 'charmed');
+        if (charmed) {
+          const boss = this.enemies.find(e => e.kind === 'boss');
+          if (boss) {
+            const dx = boss.x - p.x;
+            const dy = boss.y - p.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 20) {
+              p.vx += (dx / dist) * moveSpeed * 0.7;
+              p.vy += (dy / dist) * moveSpeed * 0.7;
+            }
+          }
+        }
+
         this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
       } else {
         p.vx = 0;
@@ -1720,9 +1924,6 @@ export class GameRoom {
       }
     }
  
-    this.statusDotAccumMs += dtMs;
-    const pulseDotNow = this.statusDotAccumMs >= 650;
-    if (pulseDotNow) this.statusDotAccumMs = 0;
 
     for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
       const enemy = this.enemies[eIdx];
@@ -2219,7 +2420,7 @@ export class GameRoom {
           for (const pr of this.players.values()) {
             if (!pr.state.downed && Math.hypot(pr.state.x - enemy.x, pr.state.y - enemy.y) <= enemy.radius + 18) {
               this.damagePlayer(pr.state, 24 + this.floor * 4, 'physical');
-              this.emitEvent('damage', pr.state.x, pr.state.y - 14, 'TRAMPLED!', '#EF4444');
+              this.applyPlayerStatus(pr.state, 'guard_broken', 4500);
             }
           }
           if ((enemy.chargeTimerMs || 0) <= 0) {
@@ -2360,7 +2561,8 @@ export class GameRoom {
                   damage: 22,
                   pierce: 1,
                   ttlMs: 2200,
-                  slowOnHit: true,
+                  statusOnHit: 'frostbite',
+                  statusDurationMs: 4000,
                 });
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' SOUL HAIL!', '#A855F7');
@@ -2427,6 +2629,8 @@ export class GameRoom {
                   damage: 24,
                   pierce: 1,
                   ttlMs: 1800,
+                  statusOnHit: 'scorched',
+                  statusDurationMs: 4500,
                 });
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' FISSURE WAVE!', '#F97316');
@@ -2609,6 +2813,8 @@ export class GameRoom {
                   damage: 28,
                   pierce: 1,
                   ttlMs: 2000,
+                  statusOnHit: 'disoriented',
+                  statusDurationMs: 3500,
                 });
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' COSMIC VOLLEY!', '#818CF8');
@@ -2794,6 +3000,8 @@ export class GameRoom {
                   damage: 34,
                   pierce: 2,
                   ttlMs: 1800,
+                  statusOnHit: 'ashen_curse',
+                  statusDurationMs: 5000,
                 });
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' JUDGMENT OF THE DEPARTED!', '#FEF08A');
@@ -2879,6 +3087,8 @@ export class GameRoom {
                   damage: 32,
                   pierce: 1,
                   ttlMs: 2200,
+                  statusOnHit: 'silenced',
+                  statusDurationMs: 3500,
                 });
               }
               this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, ' HERETICAL VOLLEY!', '#F43F5E');
@@ -3102,6 +3312,9 @@ export class GameRoom {
           if (pr.state.downed || !pr.state.connected) continue;
           if (Math.hypot(pr.state.x - proj.x, pr.state.y - proj.y) <= 14 + proj.radius) {
             this.damagePlayer(pr.state, proj.damage);
+            if (proj.statusOnHit) {
+              this.applyPlayerStatus(pr.state, proj.statusOnHit, proj.statusDurationMs || 3000);
+            }
             hitPlayer = true;
             break;
           }
@@ -3360,8 +3573,8 @@ export class GameRoom {
           : isCatacombs
             ? 'cultist'
             : 'skeleton';
-    this.emitEvent('status', boss.x, boss.y - boss.radius - 20, '️ REINFORCEMENTS!', '#F59E0B');
-    this.pushSystemChat(`️ ${boss.name} calls forth dungeon reinforcements!`);
+    this.emitEvent('status', boss.x, boss.y - boss.radius - 20, ' REINFORCEMENTS!', '#F59E0B');
+    this.pushSystemChat(`${boss.name} calls forth dungeon reinforcements!`);
 
     for (let i = 0; i < 2; i++) {
       let addX = boss.x + (i === 0 ? -50 : 50);
@@ -3474,7 +3687,7 @@ export class GameRoom {
         if (enemy.stunnedMs > 0 || enemy.burnedMs > 0 || enemy.frozenMs > 0) {
           if (attacker.shield < 60) {
             attacker.shield = Math.min(60, attacker.shield + 3);
-            this.emitEvent('status', attacker.x, attacker.y - 20, '️ Iron Will (+3 Shield)', '#93C5FD');
+            this.emitEvent('status', attacker.x, attacker.y - 20, ' Iron Will (+3 Shield)', '#93C5FD');
           }
         }
       }
@@ -3610,7 +3823,7 @@ export class GameRoom {
       if (attacker.heroClass === 'vanguard') {
         if (attacker.shield < 60) {
           attacker.shield = Math.min(60, attacker.shield + 3);
-          this.emitEvent('status', attacker.x, attacker.y - 20, '️ Iron Will (+3 Shield)', '#93C5FD');
+          this.emitEvent('status', attacker.x, attacker.y - 20, ' Iron Will (+3 Shield)', '#93C5FD');
         }
       }
     }
@@ -3631,7 +3844,7 @@ export class GameRoom {
         this.emitEvent('status', dummy.x, dummy.y - 42, ' IGNITED!', '#F97316');
       }
       if (attacker.relics.includes('rimefrost_shard') && Math.random() < 0.25) {
-        this.emitEvent('status', dummy.x, dummy.y - 42, '️ CHILLED!', '#38BDF8');
+        this.emitEvent('status', dummy.x, dummy.y - 42, ' CHILLED!', '#38BDF8');
       }
       if (attacker.relics.includes('stormcaller_lodestone')) {
         const pr = this.players.get(attacker.id);
@@ -3653,7 +3866,7 @@ export class GameRoom {
         this.emitEvent('status', dummy.x, dummy.y - 42, ' POISONED!', '#22C55E');
       }
       if (attacker.relics.includes('bloodletter_talisman')) {
-        this.emitEvent('status', dummy.x, dummy.y - 42, '🩸 LACERATED!', '#DC2626');
+        this.emitEvent('status', dummy.x, dummy.y - 42, ' LACERATED!', '#DC2626');
       }
     }
   }
@@ -3773,9 +3986,20 @@ export class GameRoom {
 
     let dmg = Math.max(1, Math.round(rawDamage * (1 - resist)));
 
+    // Floor 1: Guard Broken - Increases incoming damage by 30%
+    if (p.statuses.some(s => s.type === 'guard_broken')) {
+      dmg = Math.round(dmg * 1.30);
+    }
+
+    // Floor 9: Impaled - Bonus damage from subsequent divine spear hits
+    if (damageType === 'divine' && p.statuses.some(s => s.type === 'impaled')) {
+      dmg = Math.round(dmg * 1.45);
+      this.emitEvent('status', p.x, p.y - 14, 'IMPALED CRITICAL!', '#FBBF24');
+    }
+
     if (p.heroClass === 'vanguard') {
       dmg = Math.max(1, Math.round(dmg * 0.85));
-      this.emitEvent('status', p.x, p.y - 28, '️ Iron Will (-15%)', '#CBD5E1');
+      this.emitEvent('status', p.x, p.y - 28, ' Iron Will (-15%)', '#CBD5E1');
     }
 
     const inAegis = this.zones.some(

@@ -1000,46 +1000,131 @@ export function drawElyndorBoss(
     ctx.stroke();
   }
 
-  // 3. Seraphic Holy Angel Wings (Pure Ivory & Golden Quills)
-  const wingFlap = Math.sin(now * 0.004) * 3.2;
-  // Left Angel Wing
-  ctx.fillStyle = 'rgba(255, 253, 245, 0.96)'; // Consecrated pearl-white ivory
-  ctx.beginPath();
-  ctx.moveTo(x - 6, cy - 12);
-  ctx.lineTo(x - 36, cy - 28 + wingFlap);
-  ctx.lineTo(x - 30, cy - 6 + wingFlap * 0.5);
-  ctx.lineTo(x - 6, cy - 2);
-  ctx.closePath();
-  ctx.fill();
+  // 3. Multi-Layered Seraphic Holy Angel Wings (Intricately Feathered Ivory & Golden Quills)
+  const wingFlap = Math.sin(now * 0.0038) * 4.2;
+  const wingFold = Math.cos(now * 0.0038) * 1.8;
 
-  // Right Angel Wing
-  ctx.beginPath();
-  ctx.moveTo(x + 6, cy - 12);
-  ctx.lineTo(x + 36, cy - 28 - wingFlap);
-  ctx.lineTo(x + 30, cy - 6 - wingFlap * 0.5);
-  ctx.lineTo(x + 6, cy - 2);
-  ctx.closePath();
-  ctx.fill();
+  // Layer A: Under-wing holy amber glow aura
+  ctx.save();
+  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.55)' : 'rgba(251, 191, 36, 0.45)';
+  ctx.shadowBlur = 10;
+  for (const side of [-1, 1]) {
+    const flap = side === -1 ? wingFlap : -wingFlap;
+    const fold = side === -1 ? wingFold : -wingFold;
+    const rootX = x + side * 7;
+    const rootY = cy - 10;
 
-  // Golden Quill Wing Inlays
-  ctx.strokeStyle = '#FBBF24';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(x - 8, cy - 12);
-  ctx.lineTo(x - 34, cy - 26 + wingFlap);
-  ctx.moveTo(x + 8, cy - 12);
-  ctx.lineTo(x + 34, cy - 26 - wingFlap);
-  ctx.stroke();
+    // --- Wing Bone / Brachium Core Spine ---
+    const tipX = rootX + side * (44 + fold * 0.8);
+    const tipY = rootY - (22 - flap);
+    const jointX = rootX + side * 22;
+    const jointY = rootY - (18 - flap * 0.6);
 
-  // Secondary radiant feathers
-  ctx.strokeStyle = '#FEF08A';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x - 12, cy - 8);
-  ctx.lineTo(x - 28, cy - 14 + wingFlap * 0.7);
-  ctx.moveTo(x + 12, cy - 8);
-  ctx.lineTo(x + 28, cy - 14 - wingFlap * 0.7);
-  ctx.stroke();
+    // Primary Under-Feather Silhouette (Soft warm ivory shadow)
+    ctx.fillStyle = isEnraged ? 'rgba(185, 28, 28, 0.85)' : 'rgba(245, 230, 205, 0.9)';
+    ctx.beginPath();
+    ctx.moveTo(rootX, rootY);
+    ctx.quadraticCurveTo(jointX, jointY - 6, tipX, tipY);
+    ctx.quadraticCurveTo(tipX - side * 8, tipY + 18, rootX + side * 26, rootY + 12 + flap * 0.3);
+    ctx.quadraticCurveTo(rootX + side * 14, rootY + 14, rootX, rootY + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Tier 1: Remiges (Long Primary Flight Feathers - 7 distinct sculpted blades) ---
+    const primaryFeatherCount = 7;
+    for (let f = 0; f < primaryFeatherCount; f++) {
+      const fProg = f / (primaryFeatherCount - 1);
+      const fAngle = 0.22 + fProg * 0.55;
+      const fLen = 30 + (1 - Math.abs(fProg - 0.35) * 1.4) * 22;
+      const fBaseX = jointX + (tipX - jointX) * (1 - fProg * 0.85);
+      const fBaseY = jointY + (tipY - jointY) * (1 - fProg * 0.85);
+
+      const fTipX = fBaseX + Math.cos(fAngle) * side * fLen;
+      const fTipY = fBaseY + Math.sin(fAngle) * (fLen * 0.85) + flap * (0.6 + fProg * 0.5);
+
+      // Feather blade fill
+      ctx.fillStyle = f % 2 === 0 ? '#FFFFFF' : '#FFFDF7';
+      ctx.beginPath();
+      ctx.moveTo(fBaseX - side * 2, fBaseY - 2);
+      ctx.quadraticCurveTo(fBaseX + side * 4, fBaseY + 6, fTipX, fTipY);
+      ctx.quadraticCurveTo(fBaseX - side * 6, fBaseY + 10, fBaseX - side * 3, fBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Golden spine rachis through each primary feather
+      ctx.strokeStyle = isEnraged ? '#F87171' : '#FBBF24';
+      ctx.lineWidth = f === 0 ? 1.5 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.lineTo(fTipX - side * 1.5, fTipY - 1);
+      ctx.stroke();
+
+      // Gilded barb fringe tip
+      ctx.fillStyle = isEnraged ? '#DC2626' : '#F59E0B';
+      ctx.fillRect(Math.round(fTipX - 1), Math.round(fTipY - 1), 2, 2);
+    }
+
+    // --- Tier 2: Secondary Feathers (Mid-wing coverts with golden scallop borders) ---
+    const secondaryCount = 5;
+    for (let s = 0; s < secondaryCount; s++) {
+      const sProg = s / (secondaryCount - 1);
+      const sLen = 18 + (1 - sProg * 0.5) * 12;
+      const sAngle = 0.45 + sProg * 0.55;
+      const sBaseX = rootX + side * (10 + sProg * 16);
+      const sBaseY = rootY - (6 - flap * 0.4);
+      const sTipX = sBaseX + Math.cos(sAngle) * side * sLen;
+      const sTipY = sBaseY + Math.sin(sAngle) * (sLen * 0.75) + flap * 0.4;
+
+      ctx.fillStyle = '#FAF5EB';
+      ctx.beginPath();
+      ctx.moveTo(sBaseX, sBaseY);
+      ctx.quadraticCurveTo(sBaseX + side * 3, sBaseY + 4, sTipX, sTipY);
+      ctx.quadraticCurveTo(sBaseX - side * 3, sBaseY + 8, sBaseX, sBaseY + 6);
+      ctx.closePath();
+      ctx.fill();
+
+      // Scalloped gold filigree crest
+      ctx.strokeStyle = '#FEF08A';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // --- Tier 3: Wing Marginal Coverts & Alabaster Bone Ridge ---
+    ctx.strokeStyle = isEnraged ? '#EF4444' : '#D97706';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(rootX, rootY);
+    ctx.quadraticCurveTo(jointX, jointY - 6, tipX, tipY);
+    ctx.stroke();
+
+    // Luminous celestial gold bone inlay line
+    ctx.strokeStyle = '#FEF08A';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(rootX + side * 2, rootY - 1);
+    ctx.quadraticCurveTo(jointX, jointY - 7, tipX - side * 2, tipY);
+    ctx.stroke();
+
+    // Radiant Wing Joint Crest Jewel
+    ctx.fillStyle = isEnraged ? '#EF4444' : '#F59E0B';
+    ctx.beginPath();
+    ctx.arc(jointX, jointY - 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(Math.round(jointX - 0.5), Math.round(jointY - 5.5), 1.5, 1.5);
+  }
+  ctx.restore();
+
+  // Floating Seraphic Feather Quills drifting in air around Elyndor
+  for (let q = 0; q < 3; q++) {
+    const qPhase = (now * 0.0016 + q * 0.33) % 1;
+    const qx = x - 28 + ((q * 27) % 56) + Math.sin(now * 0.004 + q * 2) * 6;
+    const qy = cy - 24 + qPhase * 38;
+    ctx.fillStyle = q % 2 === 0 ? 'rgba(254, 240, 138, 0.75)' : 'rgba(255, 255, 255, 0.8)';
+    ctx.beginPath();
+    ctx.ellipse(qx, qy, 1.5, 3.5, 0.4 + Math.sin(now * 0.003 + q), 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // 4. Flowing Celestial Platinum-Gold Hair (Behind Head & Shoulders)
   ctx.fillStyle = '#B45309'; // Warm golden shadow
@@ -1306,35 +1391,126 @@ export function drawZadkielBoss(
     ctx.fillRect(Math.round(ex1), Math.round(ey1), 1.5, 1.5);
   }
 
-  // 2. Ashen Reliquary Angel Wings
-  const wingFlap = Math.sin(now * 0.0035) * 2.8;
-  ctx.fillStyle = 'rgba(203, 213, 225, 0.95)'; // Silver-steel feathers
-  // Left Wing
-  ctx.beginPath();
-  ctx.moveTo(x - 8, cy - 10);
-  ctx.lineTo(x - 36, cy - 22 + wingFlap);
-  ctx.lineTo(x - 28, cy + 2 + wingFlap * 0.4);
-  ctx.lineTo(x - 8, cy);
-  ctx.closePath();
-  ctx.fill();
-  // Right Wing
-  ctx.beginPath();
-  ctx.moveTo(x + 8, cy - 10);
-  ctx.lineTo(x + 36, cy - 22 - wingFlap);
-  ctx.lineTo(x + 28, cy + 2 - wingFlap * 0.4);
-  ctx.lineTo(x + 8, cy);
-  ctx.closePath();
-  ctx.fill();
+  // 2. Ashen Reliquary Segmented Steel & Gilded Angel Wings
+  const wingFlap = Math.sin(now * 0.0032) * 3.6;
+  const wingSway = Math.cos(now * 0.0032) * 1.5;
 
-  // Antique Gold Relic Quill Accents
-  ctx.strokeStyle = '#D97706';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(x - 10, cy - 10);
-  ctx.lineTo(x - 34, cy - 20 + wingFlap);
-  ctx.moveTo(x + 10, cy - 10);
-  ctx.lineTo(x + 34, cy - 20 - wingFlap);
-  ctx.stroke();
+  ctx.save();
+  for (const side of [-1, 1]) {
+    const flap = side === -1 ? wingFlap : -wingFlap;
+    const sway = side === -1 ? wingSway : -wingSway;
+    const rootX = x + side * 9;
+    const rootY = cy - 8;
+
+    // Wing Spine Trajectory
+    const tipX = rootX + side * (46 + sway);
+    const tipY = rootY - (24 - flap);
+    const elbowX = rootX + side * 24;
+    const elbowY = rootY - (20 - flap * 0.6);
+
+    // --- Layer A: Dark Under-Plumage (Charred Slate Feathers) ---
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.9)'; // Deep slate-charcoal under-feathers
+    ctx.beginPath();
+    ctx.moveTo(rootX, rootY);
+    ctx.quadraticCurveTo(elbowX, elbowY - 4, tipX, tipY);
+    ctx.quadraticCurveTo(tipX - side * 8, tipY + 22, rootX + side * 28, rootY + 12 + flap * 0.3);
+    ctx.quadraticCurveTo(rootX + side * 14, rootY + 14, rootX, rootY + 5);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Layer B: Tiered Relic Blades (6 Sculpted Silver-Steel Primary Feathers) ---
+    const featherCount = 6;
+    for (let f = 0; f < featherCount; f++) {
+      const fProg = f / (featherCount - 1);
+      const fAngle = 0.28 + fProg * 0.52;
+      const fLen = 28 + (1 - Math.abs(fProg - 0.3) * 1.3) * 20;
+      const fBaseX = elbowX + (tipX - elbowX) * (1 - fProg * 0.85);
+      const fBaseY = elbowY + (tipY - elbowY) * (1 - fProg * 0.85);
+
+      const fTipX = fBaseX + Math.cos(fAngle) * side * fLen;
+      const fTipY = fBaseY + Math.sin(fAngle) * (fLen * 0.85) + flap * (0.6 + fProg * 0.4);
+
+      // Steel Blade Feather Body
+      ctx.fillStyle = f % 2 === 0 ? '#CBD5E1' : '#94A3B8';
+      ctx.beginPath();
+      ctx.moveTo(fBaseX - side * 3, fBaseY - 2);
+      ctx.quadraticCurveTo(fBaseX + side * 3, fBaseY + 5, fTipX, fTipY);
+      ctx.quadraticCurveTo(fBaseX - side * 5, fBaseY + 9, fBaseX - side * 2, fBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Tarnished Steel Shade Edge
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Relic Brass Central Quill Spine
+      ctx.strokeStyle = isEnraged ? '#EF4444' : '#D97706';
+      ctx.lineWidth = f === 0 ? 1.5 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.lineTo(fTipX - side * 2, fTipY - 1);
+      ctx.stroke();
+
+      // Ashen ember burned barb tip
+      ctx.fillStyle = isEnraged ? '#B91C1C' : '#78350F';
+      ctx.fillRect(Math.round(fTipX - 1), Math.round(fTipY - 1), 2, 2);
+    }
+
+    // --- Layer C: Segmented Knight Armor Covert Scales (Over upper wing bone) ---
+    const armorScales = 4;
+    for (let a = 0; a < armorScales; a++) {
+      const aProg = a / (armorScales - 1);
+      const scX = rootX + side * (8 + aProg * 18);
+      const scY = rootY - (8 + aProg * 10 - flap * (0.3 + aProg * 0.3));
+
+      // Overlapping Knight Pauldron Steel Scale
+      ctx.fillStyle = '#64748B';
+      ctx.beginPath();
+      ctx.moveTo(scX - side * 4, scY - 3);
+      ctx.lineTo(scX + side * 5, scY - 1);
+      ctx.lineTo(scX + side * 3, scY + 6);
+      ctx.lineTo(scX - side * 3, scY + 7);
+      ctx.closePath();
+      ctx.fill();
+
+      // Gold Reliquary filigree border on armor plates
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Armor plate rivet
+      ctx.fillStyle = '#FEF08A';
+      ctx.fillRect(Math.round(scX - 0.5), Math.round(scY), 1.5, 1.5);
+    }
+
+    // --- Layer D: Antique Brass Scythe Bone Rim ---
+    ctx.strokeStyle = isEnraged ? '#EF4444' : '#B45309';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(rootX, rootY);
+    ctx.quadraticCurveTo(elbowX, elbowY - 5, tipX, tipY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#FDE68A';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(rootX + side * 2, rootY - 1);
+    ctx.quadraticCurveTo(elbowX, elbowY - 6, tipX - side * 2, tipY);
+    ctx.stroke();
+
+    // Steel Reliquary Hinge Joint with Embossed Eye
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    ctx.arc(elbowX, elbowY - 4, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#D97706';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = isShielding ? '#FEF08A' : '#F59E0B';
+    ctx.fillRect(Math.round(elbowX - 1), Math.round(elbowY - 5), 2, 2);
+  }
+  ctx.restore();
 
   // 3. Heavy Armored Greaves & Sabatons
   ctx.fillStyle = '#1E293B'; // Dark boots base
@@ -1489,51 +1665,140 @@ export function drawSarielBoss(
     ctx.fillRect(Math.round(sx), Math.round(sy), 1.5, 1.5);
   }
 
-  // 2. Four Celestial-Void Angel Wings
-  const wingFlap = Math.sin(now * 0.004) * 3.5;
-  // Upper Major Wings (Midnight-violet feathers dusted with star-points)
-  ctx.fillStyle = 'rgba(147, 51, 234, 0.9)'; // Astral violet
-  // Left Wing
-  ctx.beginPath();
-  ctx.moveTo(x - 8, cy - 12);
-  ctx.lineTo(x - 36, cy - 26 + wingFlap);
-  ctx.lineTo(x - 30, cy - 4 + wingFlap * 0.5);
-  ctx.lineTo(x - 8, cy - 2);
-  ctx.closePath();
-  ctx.fill();
-  // Right Wing
-  ctx.beginPath();
-  ctx.moveTo(x + 8, cy - 12);
-  ctx.lineTo(x + 36, cy - 26 - wingFlap);
-  ctx.lineTo(x + 30, cy - 4 - wingFlap * 0.5);
-  ctx.lineTo(x + 8, cy - 2);
-  ctx.closePath();
-  ctx.fill();
+  // 2. Four Celestial Astral-Void Angel Wings (Intricate Dual-Tiered Constellation Plumage)
+  const wingFlap = Math.sin(now * 0.0036) * 4.0;
+  const lowerFlap = Math.sin(now * 0.0036 + 0.8) * 3.2;
 
-  // Celestial Star Quill Edges
-  ctx.strokeStyle = '#E0F2FE';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(x - 10, cy - 12);
-  ctx.lineTo(x - 34, cy - 24 + wingFlap);
-  ctx.moveTo(x + 10, cy - 12);
-  ctx.lineTo(x + 34, cy - 24 - wingFlap);
-  ctx.stroke();
+  ctx.save();
+  ctx.shadowColor = isEnraged ? 'rgba(244, 63, 94, 0.6)' : 'rgba(192, 132, 252, 0.5)';
+  ctx.shadowBlur = 10;
 
-  // Lower Minor Wings
-  ctx.fillStyle = 'rgba(88, 28, 135, 0.82)';
-  ctx.beginPath();
-  ctx.moveTo(x - 6, cy + 2);
-  ctx.lineTo(x - 24, cy + 14 + wingFlap * 0.4);
-  ctx.lineTo(x - 6, cy + 10);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x + 6, cy + 2);
-  ctx.lineTo(x + 24, cy + 14 - wingFlap * 0.4);
-  ctx.lineTo(x + 6, cy + 10);
-  ctx.closePath();
-  ctx.fill();
+  for (const side of [-1, 1]) {
+    const flap = side === -1 ? wingFlap : -wingFlap;
+    const lFlap = side === -1 ? lowerFlap : -lowerFlap;
+
+    // =========================================================================
+    // UPPER MAJOR ASTRAL WINGS (Deep midnight-violet with bright starlight quills)
+    // =========================================================================
+    const uRootX = x + side * 7;
+    const uRootY = cy - 11;
+    const uTipX = uRootX + side * 46;
+    const uTipY = uRootY - (25 - flap);
+    const uElbowX = uRootX + side * 23;
+    const uElbowY = uRootY - (19 - flap * 0.6);
+
+    // Deep Cosmic Shadow Plumage
+    ctx.fillStyle = 'rgba(24, 9, 44, 0.95)';
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 5, uTipX, uTipY);
+    ctx.quadraticCurveTo(uTipX - side * 8, uTipY + 20, uRootX + side * 26, uRootY + 11 + flap * 0.3);
+    ctx.quadraticCurveTo(uRootX + side * 14, uRootY + 13, uRootX, uRootY + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // 6 Long Astral Primary Feathers
+    const uFeatherCount = 6;
+    for (let f = 0; f < uFeatherCount; f++) {
+      const fProg = f / (uFeatherCount - 1);
+      const fAngle = 0.24 + fProg * 0.54;
+      const fLen = 30 + (1 - Math.abs(fProg - 0.32) * 1.35) * 22;
+      const fBaseX = uElbowX + (uTipX - uElbowX) * (1 - fProg * 0.85);
+      const fBaseY = uElbowY + (uTipY - uElbowY) * (1 - fProg * 0.85);
+      const fTipX = fBaseX + Math.cos(fAngle) * side * fLen;
+      const fTipY = fBaseY + Math.sin(fAngle) * (fLen * 0.85) + flap * (0.6 + fProg * 0.4);
+
+      // Gradient tone: Astral violet to deep void amethyst
+      ctx.fillStyle = f % 2 === 0 ? '#9333EA' : '#7E22CE';
+      ctx.beginPath();
+      ctx.moveTo(fBaseX - side * 2.5, fBaseY - 2);
+      ctx.quadraticCurveTo(fBaseX + side * 3.5, fBaseY + 5, fTipX, fTipY);
+      ctx.quadraticCurveTo(fBaseX - side * 5, fBaseY + 9, fBaseX - side * 2, fBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Glowing Cyan-Starlight Quill Spine
+      ctx.strokeStyle = isEnraged ? '#FB7185' : '#67E8F9';
+      ctx.lineWidth = f === 0 ? 1.4 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.lineTo(fTipX - side * 1.5, fTipY - 1);
+      ctx.stroke();
+
+      // Star-point diamond on feather tip
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(Math.round(fTipX - 1), Math.round(fTipY - 1), 2, 2);
+
+      // Embedded constellations on mid-feathers
+      if (f === 1 || f === 3) {
+        ctx.fillStyle = '#E0F2FE';
+        ctx.fillRect(Math.round(fBaseX + side * 8), Math.round(fBaseY + 6), 1.5, 1.5);
+      }
+    }
+
+    // Upper Wing Gilded Astronomical Spine Rim
+    ctx.strokeStyle = isEnraged ? '#E11D48' : '#C084FC';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 5, uTipX, uTipY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#FDF4FF';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(uRootX + side * 2, uRootY - 1);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 6, uTipX - side * 2, uTipY);
+    ctx.stroke();
+
+    // =========================================================================
+    // LOWER MINOR WINGS (Deep void-dusk secondary wings, angled downward)
+    // =========================================================================
+    const lRootX = x + side * 6;
+    const lRootY = cy + 2;
+    const lTipX = lRootX + side * 32;
+    const lTipY = lRootY + 18 + lFlap;
+    const lElbowX = lRootX + side * 16;
+    const lElbowY = lRootY + 6 + lFlap * 0.5;
+
+    // Lower Under-Feathers
+    ctx.fillStyle = 'rgba(59, 7, 100, 0.88)';
+    ctx.beginPath();
+    ctx.moveTo(lRootX, lRootY);
+    ctx.quadraticCurveTo(lElbowX, lElbowY, lTipX, lTipY);
+    ctx.quadraticCurveTo(lTipX - side * 6, lTipY - 4, lRootX + side * 16, lRootY + 12);
+    ctx.lineTo(lRootX, lRootY + 8);
+    ctx.closePath();
+    ctx.fill();
+
+    // 4 Lower Feathers with Silver Filament Edge
+    for (let lf = 0; lf < 4; lf++) {
+      const lfProg = lf / 3;
+      const lfLen = 16 + (1 - lfProg * 0.4) * 12;
+      const lfBaseX = lRootX + side * (6 + lfProg * 12);
+      const lfBaseY = lRootY + 2 + lFlap * 0.3;
+      const lfAngle = 0.55 + lfProg * 0.4;
+      const lfTipX = lfBaseX + Math.cos(lfAngle) * side * lfLen;
+      const lfTipY = lfBaseY + Math.sin(lfAngle) * lfLen;
+
+      ctx.fillStyle = '#6B21A8';
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.quadraticCurveTo(lfBaseX + side * 2, lfBaseY + 3, lfTipX, lfTipY);
+      ctx.quadraticCurveTo(lfBaseX - side * 3, lfBaseY + 6, lfBaseX, lfBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Lower quill
+      ctx.strokeStyle = '#D8B4FE';
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.lineTo(lfTipX, lfTipY);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 
   // 3. Billowing Celestial Outer Veil (Behind Head & Body)
   ctx.fillStyle = '#311042'; // Dark shadow
@@ -1643,7 +1908,6 @@ export function drawSeraphelBoss(
 ): void {
   const breathe = Math.sin(now * 0.0035) * 1.5;
   const cy = y - 4 + breathe;
-  const wingFlap = Math.sin(now * 0.0045) * 3.5;
   const isWindup = (en?.windupMs ?? 0) > 0;
   const isEnraged = en?.enraged ?? false;
 
@@ -1662,50 +1926,156 @@ export function drawSeraphelBoss(
   ctx.ellipse(x, y + 15, auraR, auraR * 0.35, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // 2. Four Celestial Starlight Wings
-  // Upper Major Wings
-  ctx.fillStyle = 'rgba(248, 250, 252, 0.95)'; // Pure ivory white
-  // Left Wing
-  ctx.beginPath();
-  ctx.moveTo(x - 8, cy - 14);
-  ctx.lineTo(x - 36, cy - 28 + wingFlap);
-  ctx.lineTo(x - 30, cy - 6 + wingFlap * 0.5);
-  ctx.lineTo(x - 8, cy - 4);
-  ctx.closePath();
-  ctx.fill();
-  // Right Wing
-  ctx.beginPath();
-  ctx.moveTo(x + 8, cy - 14);
-  ctx.lineTo(x + 36, cy - 28 - wingFlap);
-  ctx.lineTo(x + 30, cy - 6 - wingFlap * 0.5);
-  ctx.lineTo(x + 8, cy - 4);
-  ctx.closePath();
-  ctx.fill();
+  // 2. Four Monumental Starlight & Solar-Gold Archangel Wings (Intricate Feathered Plumage)
+  const wingFlap = Math.sin(now * 0.0042) * 4.4;
+  const lowerFlap = Math.sin(now * 0.0042 + 0.9) * 3.4;
 
-  // Golden Wing Quill Accents
-  ctx.strokeStyle = '#FDE047';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(x - 12, cy - 14);
-  ctx.lineTo(x - 34, cy - 26 + wingFlap);
-  ctx.moveTo(x + 12, cy - 14);
-  ctx.lineTo(x + 34, cy - 26 - wingFlap);
-  ctx.stroke();
+  ctx.save();
+  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.65)' : 'rgba(253, 224, 71, 0.55)';
+  ctx.shadowBlur = 12;
 
-  // Lower Minor Wings
-  ctx.fillStyle = 'rgba(226, 232, 240, 0.85)';
-  ctx.beginPath();
-  ctx.moveTo(x - 6, cy);
-  ctx.lineTo(x - 26, cy + 12 + wingFlap * 0.4);
-  ctx.lineTo(x - 6, cy + 8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x + 6, cy);
-  ctx.lineTo(x + 26, cy + 12 - wingFlap * 0.4);
-  ctx.lineTo(x + 6, cy + 8);
-  ctx.closePath();
-  ctx.fill();
+  for (const side of [-1, 1]) {
+    const flap = side === -1 ? wingFlap : -wingFlap;
+    const lFlap = side === -1 ? lowerFlap : -lowerFlap;
+
+    // =========================================================================
+    // UPPER MAJOR PALADIN WINGS (Pristine Alabaster Ivory, Solar Filigree & Golden Quills)
+    // =========================================================================
+    const uRootX = x + side * 8;
+    const uRootY = cy - 13;
+    const uTipX = uRootX + side * 50;
+    const uTipY = uRootY - (28 - flap);
+    const uElbowX = uRootX + side * 25;
+    const uElbowY = uRootY - (21 - flap * 0.6);
+
+    // Warm Solar Under-Wing Shade
+    ctx.fillStyle = isEnraged ? 'rgba(153, 27, 27, 0.92)' : 'rgba(254, 243, 199, 0.94)';
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 6, uTipX, uTipY);
+    ctx.quadraticCurveTo(uTipX - side * 9, uTipY + 22, uRootX + side * 28, uRootY + 12 + flap * 0.3);
+    ctx.quadraticCurveTo(uRootX + side * 15, uRootY + 14, uRootX, uRootY + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // 7 Radiant Sculpted Primary Feathers
+    const uFeatherCount = 7;
+    for (let f = 0; f < uFeatherCount; f++) {
+      const fProg = f / (uFeatherCount - 1);
+      const fAngle = 0.22 + fProg * 0.54;
+      const fLen = 32 + (1 - Math.abs(fProg - 0.3) * 1.4) * 24;
+      const fBaseX = uElbowX + (uTipX - uElbowX) * (1 - fProg * 0.85);
+      const fBaseY = uElbowY + (uTipY - uElbowY) * (1 - fProg * 0.85);
+      const fTipX = fBaseX + Math.cos(fAngle) * side * fLen;
+      const fTipY = fBaseY + Math.sin(fAngle) * (fLen * 0.85) + flap * (0.65 + fProg * 0.45);
+
+      // Feather Blade Fill (Pure Alabaster Pearl)
+      ctx.fillStyle = f % 2 === 0 ? '#FFFFFF' : '#FFFBEB';
+      ctx.beginPath();
+      ctx.moveTo(fBaseX - side * 2.5, fBaseY - 2);
+      ctx.quadraticCurveTo(fBaseX + side * 4, fBaseY + 6, fTipX, fTipY);
+      ctx.quadraticCurveTo(fBaseX - side * 5.5, fBaseY + 10, fBaseX - side * 2.5, fBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Gleaming Solar Gold Rachis Quill
+      ctx.strokeStyle = isEnraged ? '#F87171' : '#FACC15';
+      ctx.lineWidth = f === 0 ? 1.6 : 1.1;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.lineTo(fTipX - side * 1.5, fTipY - 1);
+      ctx.stroke();
+
+      // Sharp golden barb tip
+      ctx.fillStyle = isEnraged ? '#DC2626' : '#EAB308';
+      ctx.fillRect(Math.round(fTipX - 1), Math.round(fTipY - 1), 2, 2);
+    }
+
+    // Mid-Wing Secondary Coverts (5 Layered Gold-Scalloped Feathers)
+    for (let sc = 0; sc < 5; sc++) {
+      const scProg = sc / 4;
+      const scLen = 19 + (1 - scProg * 0.5) * 11;
+      const scAngle = 0.42 + scProg * 0.52;
+      const scBaseX = uRootX + side * (10 + scProg * 17);
+      const scBaseY = uRootY - (7 - flap * 0.4);
+      const scTipX = scBaseX + Math.cos(scAngle) * side * scLen;
+      const scTipY = scBaseY + Math.sin(scAngle) * (scLen * 0.8) + flap * 0.35;
+
+      ctx.fillStyle = '#FEF9C3';
+      ctx.beginPath();
+      ctx.moveTo(scBaseX, scBaseY);
+      ctx.quadraticCurveTo(scBaseX + side * 3, scBaseY + 4, scTipX, scTipY);
+      ctx.quadraticCurveTo(scBaseX - side * 3, scBaseY + 7, scBaseX, scBaseY + 5);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Armored Archangel Bone Spire (Gold & Ivory Crest)
+    ctx.strokeStyle = isEnraged ? '#EF4444' : '#F59E0B';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 6, uTipX, uTipY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(uRootX + side * 2, uRootY - 1);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 7, uTipX - side * 2, uTipY);
+    ctx.stroke();
+
+    // =========================================================================
+    // LOWER MINOR WINGS (Radiant Amber-Gold Under-Wings)
+    // =========================================================================
+    const lRootX = x + side * 7;
+    const lRootY = cy + 1;
+    const lTipX = lRootX + side * 34;
+    const lTipY = lRootY + 20 + lFlap;
+    const lElbowX = lRootX + side * 18;
+    const lElbowY = lRootY + 8 + lFlap * 0.5;
+
+    // Lower Under-Feathers
+    ctx.fillStyle = isEnraged ? 'rgba(185, 28, 28, 0.85)' : 'rgba(254, 240, 138, 0.88)';
+    ctx.beginPath();
+    ctx.moveTo(lRootX, lRootY);
+    ctx.quadraticCurveTo(lElbowX, lElbowY, lTipX, lTipY);
+    ctx.quadraticCurveTo(lTipX - side * 6, lTipY - 4, lRootX + side * 18, lRootY + 13);
+    ctx.lineTo(lRootX, lRootY + 9);
+    ctx.closePath();
+    ctx.fill();
+
+    // 4 Lower Minor Feathers
+    for (let lf = 0; lf < 4; lf++) {
+      const lfProg = lf / 3;
+      const lfLen = 18 + (1 - lfProg * 0.35) * 12;
+      const lfBaseX = lRootX + side * (7 + lfProg * 13);
+      const lfBaseY = lRootY + 3 + lFlap * 0.3;
+      const lfAngle = 0.52 + lfProg * 0.42;
+      const lfTipX = lfBaseX + Math.cos(lfAngle) * side * lfLen;
+      const lfTipY = lfBaseY + Math.sin(lfAngle) * lfLen;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.quadraticCurveTo(lfBaseX + side * 2.5, lfBaseY + 3, lfTipX, lfTipY);
+      ctx.quadraticCurveTo(lfBaseX - side * 3, lfBaseY + 6, lfBaseX, lfBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.lineTo(lfTipX, lfTipY);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 
   // 3. Rotating Solar Geometric Halo (Behind Head)
   const haloRot = now * 0.0018;
@@ -1852,51 +2222,209 @@ export function drawOriphielBoss(
     ctx.fillRect(Math.round(cx1 - 2), Math.round(cy1 - 2), 4, 4);
   }
 
-  // 2. Four Monumental Archangel Warden Wings of Pure Light
-  const wingFlap = Math.sin(now * 0.0035) * 3.8;
-  // Upper Grand Archangel Wings (Consecrated Ivory & Solar Gold)
-  ctx.fillStyle = 'rgba(255, 253, 245, 0.96)'; // Pure alabaster-ivory plumage
-  // Left Upper Wing
-  ctx.beginPath();
-  ctx.moveTo(x - 10, cy - 16);
-  ctx.lineTo(x - 48, cy - 34 + wingFlap);
-  ctx.lineTo(x - 36, cy - 4 + wingFlap * 0.5);
-  ctx.lineTo(x - 10, cy - 4);
-  ctx.closePath();
-  ctx.fill();
-  // Right Upper Wing
-  ctx.beginPath();
-  ctx.moveTo(x + 10, cy - 16);
-  ctx.lineTo(x + 48, cy - 34 - wingFlap);
-  ctx.lineTo(x + 36, cy - 4 - wingFlap * 0.5);
-  ctx.lineTo(x + 10, cy - 4);
-  ctx.closePath();
-  ctx.fill();
+  // 2. Four Monumental Archangel Warden Wings of Pure Light (Extraordinarily Detailed Plumage)
+  const wingFlap = Math.sin(now * 0.0032) * 5.2;
+  const lowerFlap = Math.sin(now * 0.0032 + 0.8) * 4.0;
+  const wingBreathe = Math.cos(now * 0.0032) * 2.2;
 
-  // Luminous Solar-Gold Quill Edges
-  ctx.strokeStyle = isEnraged ? '#EF4444' : '#F59E0B';
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(x - 12, cy - 16);
-  ctx.lineTo(x - 46, cy - 32 + wingFlap);
-  ctx.moveTo(x + 12, cy - 16);
-  ctx.lineTo(x + 46, cy - 32 - wingFlap);
-  ctx.stroke();
+  ctx.save();
+  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.7)' : 'rgba(245, 158, 11, 0.65)';
+  ctx.shadowBlur = 14;
 
-  // Lower Minor Archangel Wings
-  ctx.fillStyle = 'rgba(254, 243, 199, 0.92)';
-  ctx.beginPath();
-  ctx.moveTo(x - 8, cy - 2);
-  ctx.lineTo(x - 34, cy + 14 + wingFlap * 0.4);
-  ctx.lineTo(x - 8, cy + 8);
-  ctx.closePath();
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(x + 8, cy - 2);
-  ctx.lineTo(x + 34, cy + 14 - wingFlap * 0.4);
-  ctx.lineTo(x + 8, cy + 8);
-  ctx.closePath();
-  ctx.fill();
+  for (const side of [-1, 1]) {
+    const flap = side === -1 ? wingFlap : -wingFlap;
+    const lFlap = side === -1 ? lowerFlap : -lowerFlap;
+    const br = side === -1 ? wingBreathe : -wingBreathe;
+
+    // =========================================================================
+    // UPPER COLOSSAL ARCHANGEL WINGS (1.3x Massive Titan Span)
+    // =========================================================================
+    const uRootX = x + side * 10;
+    const uRootY = cy - 16;
+    const uTipX = uRootX + side * (62 + br * 1.2);
+    const uTipY = uRootY - (36 - flap);
+    const uElbowX = uRootX + side * 30;
+    const uElbowY = uRootY - (26 - flap * 0.6);
+
+    // Deep Alabaster Shade Silhouette
+    ctx.fillStyle = isEnraged ? 'rgba(153, 27, 27, 0.95)' : 'rgba(241, 232, 214, 0.96)';
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 7, uTipX, uTipY);
+    ctx.quadraticCurveTo(uTipX - side * 10, uTipY + 28, uRootX + side * 36, uRootY + 16 + flap * 0.35);
+    ctx.quadraticCurveTo(uRootX + side * 18, uRootY + 18, uRootX, uRootY + 5);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Tier 1: 8 Long Colossal Primary Remiges (Tiered Flight Blades) ---
+    const primaryFeatherCount = 8;
+    for (let f = 0; f < primaryFeatherCount; f++) {
+      const fProg = f / (primaryFeatherCount - 1);
+      const fAngle = 0.20 + fProg * 0.54;
+      const fLen = 38 + (1 - Math.abs(fProg - 0.28) * 1.35) * 30;
+      const fBaseX = uElbowX + (uTipX - uElbowX) * (1 - fProg * 0.88);
+      const fBaseY = uElbowY + (uTipY - uElbowY) * (1 - fProg * 0.88);
+      const fTipX = fBaseX + Math.cos(fAngle) * side * fLen;
+      const fTipY = fBaseY + Math.sin(fAngle) * (fLen * 0.88) + flap * (0.7 + fProg * 0.45);
+
+      // Feather Blade (Pristine Diamond Ivory)
+      ctx.fillStyle = f % 2 === 0 ? '#FFFFFF' : '#FFFDF7';
+      ctx.beginPath();
+      ctx.moveTo(fBaseX - side * 3, fBaseY - 2.5);
+      ctx.quadraticCurveTo(fBaseX + side * 4.5, fBaseY + 7, fTipX, fTipY);
+      ctx.quadraticCurveTo(fBaseX - side * 6.5, fBaseY + 11, fBaseX - side * 3, fBaseY + 4.5);
+      ctx.closePath();
+      ctx.fill();
+
+      // Gleaming Solar Gold Rachis Quill Spine
+      ctx.strokeStyle = isEnraged ? '#EF4444' : '#F59E0B';
+      ctx.lineWidth = f === 0 ? 1.8 : 1.2;
+      ctx.beginPath();
+      ctx.moveTo(fBaseX, fBaseY);
+      ctx.lineTo(fTipX - side * 1.5, fTipY - 1);
+      ctx.stroke();
+
+      // Sacred Barb Tip (Gilded Sun-Spear Point)
+      ctx.fillStyle = isEnraged ? '#B91C1C' : '#D97706';
+      ctx.fillRect(Math.round(fTipX - 1.5), Math.round(fTipY - 1.5), 3, 3);
+      ctx.fillStyle = '#FEF08A';
+      ctx.fillRect(Math.round(fTipX - 0.5), Math.round(fTipY - 0.5), 1.5, 1.5);
+    }
+
+    // --- Tier 2: 6 Secondary Covert Feathers (Golden Scalloped Edge) ---
+    for (let sc = 0; sc < 6; sc++) {
+      const scProg = sc / 5;
+      const scLen = 24 + (1 - scProg * 0.45) * 14;
+      const scAngle = 0.38 + scProg * 0.5;
+      const scBaseX = uRootX + side * (12 + scProg * 22);
+      const scBaseY = uRootY - (9 - flap * 0.4);
+      const scTipX = scBaseX + Math.cos(scAngle) * side * scLen;
+      const scTipY = scBaseY + Math.sin(scAngle) * (scLen * 0.82) + flap * 0.38;
+
+      ctx.fillStyle = '#FEF9C3';
+      ctx.beginPath();
+      ctx.moveTo(scBaseX, scBaseY);
+      ctx.quadraticCurveTo(scBaseX + side * 3.5, scBaseY + 5, scTipX, scTipY);
+      ctx.quadraticCurveTo(scBaseX - side * 4, scBaseY + 8, scBaseX, scBaseY + 6);
+      ctx.closePath();
+      ctx.fill();
+
+      // Scalloped gold border
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    // --- Tier 3: 4 Minor Scapular Feathers (Closest to Back) ---
+    for (let mc = 0; mc < 4; mc++) {
+      const mcProg = mc / 3;
+      const mcBaseX = uRootX + side * (8 + mcProg * 12);
+      const mcBaseY = uRootY - (3 - flap * 0.25);
+      const mcLen = 14 + mcProg * 6;
+      const mcAngle = 0.58 + mcProg * 0.35;
+      const mcTipX = mcBaseX + Math.cos(mcAngle) * side * mcLen;
+      const mcTipY = mcBaseY + Math.sin(mcAngle) * mcLen;
+
+      ctx.fillStyle = '#FAF5EB';
+      ctx.beginPath();
+      ctx.moveTo(mcBaseX, mcBaseY);
+      ctx.quadraticCurveTo(mcBaseX + side * 2.5, mcBaseY + 3, mcTipX, mcTipY);
+      ctx.quadraticCurveTo(mcBaseX - side * 2.5, mcBaseY + 5, mcBaseX, mcBaseY + 4);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#FEF08A';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+    }
+
+    // --- Colossal Wing Spire Bone Crest (Pure Gold & Alabaster) ---
+    ctx.strokeStyle = isEnraged ? '#EF4444' : '#D97706';
+    ctx.lineWidth = 3.0;
+    ctx.beginPath();
+    ctx.moveTo(uRootX, uRootY);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 7, uTipX, uTipY);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(uRootX + side * 2, uRootY - 1);
+    ctx.quadraticCurveTo(uElbowX, uElbowY - 8, uTipX - side * 2, uTipY);
+    ctx.stroke();
+
+    // Sacred Solar Wing Elbow Jewel
+    ctx.fillStyle = isEnraged ? '#EF4444' : '#F59E0B';
+    ctx.beginPath();
+    ctx.arc(uElbowX, uElbowY - 6, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FEF08A';
+    ctx.beginPath();
+    ctx.arc(uElbowX, uElbowY - 6, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // =========================================================================
+    // LOWER MINOR ARCHANGEL WINGS (Grand Divine Secondary Flight)
+    // =========================================================================
+    const lRootX = x + side * 9;
+    const lRootY = cy - 1;
+    const lTipX = lRootX + side * 44;
+    const lTipY = lRootY + 24 + lFlap;
+    const lElbowX = lRootX + side * 22;
+    const lElbowY = lRootY + 10 + lFlap * 0.5;
+
+    // Lower Plumage Silhouette
+    ctx.fillStyle = isEnraged ? 'rgba(185, 28, 28, 0.88)' : 'rgba(254, 240, 138, 0.92)';
+    ctx.beginPath();
+    ctx.moveTo(lRootX, lRootY);
+    ctx.quadraticCurveTo(lElbowX, lElbowY, lTipX, lTipY);
+    ctx.quadraticCurveTo(lTipX - side * 7, lTipY - 5, lRootX + side * 22, lRootY + 16);
+    ctx.lineTo(lRootX, lRootY + 10);
+    ctx.closePath();
+    ctx.fill();
+
+    // 5 Lower Primary Blades
+    for (let lf = 0; lf < 5; lf++) {
+      const lfProg = lf / 4;
+      const lfLen = 22 + (1 - lfProg * 0.35) * 14;
+      const lfBaseX = lRootX + side * (8 + lfProg * 16);
+      const lfBaseY = lRootY + 4 + lFlap * 0.3;
+      const lfAngle = 0.48 + lfProg * 0.42;
+      const lfTipX = lfBaseX + Math.cos(lfAngle) * side * lfLen;
+      const lfTipY = lfBaseY + Math.sin(lfAngle) * lfLen;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.quadraticCurveTo(lfBaseX + side * 3, lfBaseY + 3.5, lfTipX, lfTipY);
+      ctx.quadraticCurveTo(lfBaseX - side * 3.5, lfBaseY + 7, lfBaseX, lfBaseY + 4.5);
+      ctx.closePath();
+      ctx.fill();
+
+      // Quill line
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(lfBaseX, lfBaseY);
+      ctx.lineTo(lfTipX, lfTipY);
+      ctx.stroke();
+
+      ctx.fillStyle = '#D97706';
+      ctx.fillRect(Math.round(lfTipX - 1), Math.round(lfTipY - 1), 2, 2);
+    }
+  }
+  ctx.restore();
+
+  // Floating Divine Solar Light Shards drifting around Oriphiel
+  for (let p = 0; p < 4; p++) {
+    const pPhase = (now * 0.0018 + p * 0.25) % 1;
+    const px = x - 34 + ((p * 23) % 68) + Math.sin(now * 0.005 + p * 2) * 8;
+    const py = cy - 28 + pPhase * 48;
+    ctx.fillStyle = p % 2 === 0 ? 'rgba(254, 240, 138, 0.85)' : 'rgba(255, 255, 255, 0.9)';
+    ctx.beginPath();
+    ctx.ellipse(px, py, 1.8, 4.2, 0.3 + Math.sin(now * 0.004 + p), 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // 3. Billowing Pure White & Gold Sanctuary Aegis Cape
   ctx.fillStyle = '#D97706'; // Gold shadow underlay

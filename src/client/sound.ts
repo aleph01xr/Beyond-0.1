@@ -7,15 +7,13 @@
  * - Rewards (gold coins, relic acquisition fanfare)
  */
 
+import { soundManager } from './soundManager.ts';
+
 export type UiSoundType = 'default' | 'confirm' | 'cancel' | 'toggle' | 'hover';
 export type AttackHeroStyle = 'vanguard' | 'ranger' | 'arcanist' | 'cleric' | string;
 
 class RetroAudioEngine {
-  private ctx: AudioContext | null = null;
-  private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
-  private muted = false;
-  private masterVolume = 0.85;
 
   private ambientGain: GainNode | null = null;
   private ambientSource: AudioBufferSourceNode | null = null;
@@ -25,9 +23,12 @@ class RetroAudioEngine {
   private musicInterval: number | null = null;
 
   constructor() {
+    // Synchronize initial mute state if legacy storage was present
     try {
       const saved = localStorage.getItem('beyond_sfx_muted');
-      if (saved === 'true') this.muted = true;
+      if (saved === 'true') {
+        soundManager.setMasterMuted(true);
+      }
     } catch {
       // ignore
     }
@@ -37,70 +38,32 @@ class RetroAudioEngine {
    * Initialize or resume the Web Audio Context lazily on user interaction.
    */
   public ensureContext(): AudioContext | null {
-    if (this.muted) return null;
-    if (typeof window === 'undefined') return null;
-
-    if (!this.ctx) {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext })
-          .webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
-        this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
-        this.masterGain.connect(this.ctx.destination);
-      }
-    }
-
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
-
-    return this.ctx;
+    if (soundManager.isMasterMuted() || soundManager.isSfxMuted()) return null;
+    return soundManager.ensureContext();
   }
 
   /**
    * Unlock AudioContext from early user gesture.
    */
   public unlockAudio(): void {
-    const ctx = this.ensureContext();
-    if (ctx && ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
+    soundManager.unlockAudio();
   }
 
   public isMuted(): boolean {
-    return this.muted;
+    return soundManager.isMasterMuted() || soundManager.isSfxMuted();
   }
 
   public toggleMute(): boolean {
-    this.muted = !this.muted;
-    try {
-      localStorage.setItem('beyond_sfx_muted', String(this.muted));
-    } catch {
-      // ignore
-    }
-    if (this.masterGain && this.ctx) {
-      this.masterGain.gain.setValueAtTime(
-        this.muted ? 0 : this.masterVolume,
-        this.ctx.currentTime
-      );
-    }
-    return this.muted;
+    return soundManager.toggleMasterMute();
   }
 
   public setVolume(vol: number): void {
-    this.masterVolume = Math.max(0, Math.min(1, vol));
-    if (this.masterGain && this.ctx && !this.muted) {
-      this.masterGain.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
-    }
+    soundManager.setMasterVolume(vol);
+    soundManager.setSfxVolume(vol);
   }
 
   private getDestination(): AudioNode | null {
-    const ctx = this.ensureContext();
-    if (!ctx) return null;
-    return this.masterGain || ctx.destination;
+    return soundManager.getSfxDestination() || soundManager.getMasterDestination();
   }
 
   /**
@@ -598,16 +561,12 @@ class RetroAudioEngine {
    */
   public startTavernAmbience(forceUnmute = false): void {
     if (forceUnmute) {
-      this.muted = false;
-      try {
-        localStorage.setItem('beyond_sfx_muted', 'false');
-      } catch {
-        // ignore
-      }
+      soundManager.setMasterMuted(false);
+      soundManager.setMusicMuted(false);
     }
-    if (this.muted) return;
+    if (soundManager.isMasterMuted() || soundManager.isMusicMuted()) return;
 
-    const ctx = this.ensureContext();
+    const ctx = soundManager.ensureContext();
     if (!ctx) return;
     if (ctx.state === 'suspended') {
       ctx.resume().catch(() => {});
@@ -731,8 +690,8 @@ class RetroAudioEngine {
 
     let phraseIdx = 0;
     const playTavernBar = () => {
-      if (!this.ambientActive || this.muted) return;
-      const ctx = this.ensureContext();
+      if (!this.ambientActive || soundManager.isMasterMuted() || soundManager.isMusicMuted()) return;
+      const ctx = soundManager.ensureContext();
       if (!ctx || ctx.state === 'suspended') return;
       const now = ctx.currentTime;
 
@@ -744,7 +703,7 @@ class RetroAudioEngine {
       const busGain = ctx.createGain();
       busGain.gain.setValueAtTime(0.065, now);
 
-      const dest = this.getDestination() || ctx.destination;
+      const dest = soundManager.getMusicDestination() || this.getDestination() || ctx.destination;
       busFilter.connect(busGain);
       busGain.connect(dest);
 
@@ -814,8 +773,9 @@ class RetroAudioEngine {
 
     if (!this.ambientActive) return;
     this.ambientActive = false;
-    if (this.ambientGain && this.ctx) {
-      const now = this.ctx.currentTime;
+    const ctx = soundManager.getAudioContext();
+    if (this.ambientGain && ctx) {
+      const now = ctx.currentTime;
       this.ambientGain.gain.setValueAtTime(this.ambientGain.gain.value, now);
       this.ambientGain.gain.linearRampToValueAtTime(0.001, now + 0.8);
       setTimeout(() => {
@@ -842,11 +802,13 @@ class RetroAudioEngine {
 }
 
 export const sfx = new RetroAudioEngine();
+export { soundManager };
 
 // Auto-unlock audio on the first user interaction anywhere in the window
 if (typeof window !== 'undefined') {
   const handleFirstInteraction = () => {
     sfx.unlockAudio();
+    soundManager.unlockAudio();
     window.removeEventListener('pointerdown', handleFirstInteraction);
     window.removeEventListener('touchstart', handleFirstInteraction);
     window.removeEventListener('keydown', handleFirstInteraction);

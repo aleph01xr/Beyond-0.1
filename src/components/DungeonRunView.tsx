@@ -755,21 +755,60 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </div>
           </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              sfx.playHeal();
-              onTriggerAction('potion', me.aimAngle);
-            }}
-            className="stone-button stone-button-red flex-col items-start h-auto py-1.5 min-w-[100px]"
-          >
-            <div className="text-[10px] font-mono tabular-nums opacity-80">
-              [H] Flasks: {me.potions}
+          <div className="flex flex-col items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playHeal();
+                onTriggerAction('potion', me.aimAngle);
+              }}
+              className="stone-button stone-button-red flex-col items-start h-auto py-1.5 min-w-[100px]"
+            >
+              <div className="text-[10px] font-mono tabular-nums opacity-80">
+                [H] Flasks: {me.potions}
+              </div>
+              <div className="font-display text-sm whitespace-nowrap">
+                Heal
+              </div>
+            </button>
+            {/* Status Indicators Bar */}
+            <div className="flex gap-1 h-6 items-center justify-center">
+              {me.statuses && me.statuses.map(s => {
+                const colors: Record<string, string> = {
+                  guard_broken: 'bg-blue-500',
+                  frostbite: 'bg-cyan-400',
+                  scorched: 'bg-orange-600',
+                  voidmarked: 'bg-purple-600',
+                  disoriented: 'bg-indigo-400',
+                  charmed: 'bg-amber-300',
+                  ashen_curse: 'bg-gray-500',
+                  silenced: 'bg-fuchsia-600',
+                  impaled: 'bg-yellow-500',
+                  condemned: 'bg-red-500',
+                };
+                const labels: Record<string, string> = {
+                  guard_broken: 'BRK',
+                  frostbite: 'FRZ',
+                  scorched: 'BRN',
+                  voidmarked: 'VOID',
+                  disoriented: 'DIS',
+                  charmed: 'CHM',
+                  ashen_curse: 'CRS',
+                  silenced: 'SIL',
+                  impaled: 'IMP',
+                  condemned: 'CON',
+                };
+                return (
+                  <div key={s.id} className={`px-1.5 py-0.5 rounded-sm border border-white/20 shadow-sm flex items-center gap-1 ${colors[s.type] || 'bg-slate-500'}`}>
+                    <span className="text-[9px] font-bold text-white leading-none">{labels[s.type] || 'ST'}</span>
+                    <div className="w-6 h-1 bg-black/40 rounded-full overflow-hidden">
+                      <div className="h-full bg-white/80" style={{ width: `${(s.durationMs / s.maxDurationMs) * 100}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="font-display text-sm whitespace-nowrap">
-              Heal
-            </div>
-          </button>
+          </div>
 
           <button
             type="button"

@@ -415,6 +415,16 @@ export interface PlayerState {
   maxUltCooldownMs: number;
   attackAnimMs: number;
   hasteMs: number;
+  // Status Effects
+  slowedMs: number;
+  stunnedMs: number;
+  burnedMs: number;
+  frozenMs: number;
+  shockedMs: number;
+  poisonedMs: number;
+  bleedingMs: number;
+  silencedMs: number;
+
   kills: number;
   damageDealt: number;
   revives: number;
@@ -430,6 +440,30 @@ export interface PlayerState {
   intelligence: number;
   faith: number;
   attributePoints: number;
+  statuses: PlayerStatusEffect[];
+}
+
+export type PlayerStatusType =
+  | 'guard_broken' // Floor 1: Warden Malakor
+  | 'frostbite'    // Floor 2: Archlich Vaelor
+  | 'scorched'     // Floor 3: Ignis
+  | 'voidmarked'   // Floor 4: Void-Eater Malice
+  | 'disoriented'  // Floor 5: Archon of Nothingness
+  | 'charmed'      // Floor 6: Elyndor
+  | 'ashen_curse'  // Floor 7: Zadkiel
+  | 'silenced'     // Floor 8: Sariel
+  | 'impaled'      // Floor 9: Seraphel
+  | 'condemned';   // Floor 10: Oriphiel
+
+export interface PlayerStatusEffect {
+  id: string;
+  type: PlayerStatusType;
+  durationMs: number;
+  maxDurationMs: number;
+  stacks?: number;
+  value?: number;
+  sourceId?: string;
+  detonationTimerMs?: number;
 }
 
 export type EnemyKind =
@@ -464,6 +498,7 @@ export interface EnemyState {
   targetX: number;
   targetY: number;
   markedMs: number;
+  // Status Effects
   slowedMs: number;
   stunnedMs: number;
   burnedMs: number;
@@ -471,6 +506,8 @@ export interface EnemyState {
   shockedMs: number;
   poisonedMs: number;
   bleedingMs: number;
+  silencedMs: number;
+  
   elite: boolean;
   resistances: EnemyResistances;
   enraged?: boolean;
@@ -496,6 +533,8 @@ export interface ProjectileState {
   damage: number;
   pierce: number;
   slowOnHit?: boolean;
+  statusOnHit?: PlayerStatusType;
+  statusDurationMs?: number;
   crit?: boolean;
   ttlMs: number;
   targetEnemyId?: string;

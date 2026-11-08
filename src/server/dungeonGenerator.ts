@@ -889,6 +889,7 @@ export function makeEnemy(
     shockedMs: 0,
     poisonedMs: 0,
     bleedingMs: 0,
+    silencedMs: 0,
     elite,
     resistances: getEnemyResistances(kind, elite, floor, biome),
     enraged: false,

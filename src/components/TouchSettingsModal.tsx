@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { sfx } from '../client/sound.ts';
+import { sfx, soundManager } from '../client/sound.ts';
 import { useFullscreenState } from '../client/fullscreen.ts';
 import type {
   ButtonSizeOption,
@@ -26,10 +26,16 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<MenuSettingsTab>('sfx');
-  const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
-  const [volume, setVolumeState] = useState<number>(0.85);
+  const [isMasterMuted, setIsMasterMuted] = useState(() => soundManager.isMasterMuted());
+  const [isSfxMuted, setIsSfxMuted] = useState(() => soundManager.isSfxMuted());
+  const [isMusicMuted, setIsMusicMuted] = useState(() => soundManager.isMusicMuted());
+
+  const [masterVolume, setMasterVolState] = useState<number>(() => soundManager.getMasterVolume());
+  const [sfxVolume, setSfxVolState] = useState<number>(() => soundManager.getSfxVolume());
+  const [musicVolume, setMusicVolState] = useState<number>(() => soundManager.getMusicVolume());
   const [isFullscreen, toggleFullscreenState] = useFullscreenState();
 
+  // Touch controls settings
   const setJoystickSize = (size: JoystickSizeOption) => {
     sfx.playUiClick();
     if (settings.haptics && typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -71,17 +77,44 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
     onUpdateSettings({ ...settings, haptics: newHaptics });
   };
 
-  const handleToggleMute = () => {
+  // Audio handlers
+  const handleToggleMasterMute = () => {
     sfx.unlockAudio();
-    const muted = sfx.toggleMute();
-    setIsMuted(muted);
+    const muted = soundManager.toggleMasterMute();
+    setIsMasterMuted(muted);
     if (!muted) sfx.playUiClick('confirm');
   };
 
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleToggleSfxMute = () => {
+    sfx.unlockAudio();
+    const muted = soundManager.toggleSfxMute();
+    setIsSfxMuted(muted);
+    if (!muted) sfx.playUiClick('confirm');
+  };
+
+  const handleToggleMusicMute = () => {
+    sfx.unlockAudio();
+    const muted = soundManager.toggleMusicMute();
+    setIsMusicMuted(muted);
+    if (!muted) sfx.playUiClick('confirm');
+  };
+
+  const handleMasterVolChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = parseFloat(e.target.value);
-    setVolumeState(val);
-    sfx.setVolume(val);
+    setMasterVolState(val);
+    soundManager.setMasterVolume(val);
+  };
+
+  const handleSfxVolChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setSfxVolState(val);
+    soundManager.setSfxVolume(val);
+  };
+
+  const handleMusicVolChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseFloat(e.target.value);
+    setMusicVolState(val);
+    soundManager.setMusicVolume(val);
   };
 
   return (
@@ -161,29 +194,31 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
         {/* TAB 1: AUDIO & SFX */}
         {activeTab === 'sfx' && (
           <div className="space-y-4 text-xs font-mono">
-            {/* SFX MUTE & MASTER VOLUME */}
-            <div className="p-3 bg-[#242330] border border-[#3E3C4E] space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-white">Audio Engine</span>
-                <button
-                  type="button"
-                  onClick={handleToggleMute}
-                  className={`px-3 py-1 text-xs font-bold border cursor-pointer min-h-[32px] flex items-center gap-1 transition-colors ${
-                    isMuted
-                      ? 'bg-[#EF4444]/20 border-[#EF4444] text-[#FCA5A5]'
-                      : 'bg-[#22C55E]/20 border-[#22C55E] text-[#86EFAC]'
-                  }`}
-                >
-                  {isMuted ? 'MUTED' : 'ACTIVE'}
-                </button>
-              </div>
-
-              {/* Master Volume Slider */}
-              <div className="space-y-1 pt-1">
-                <div className="flex items-center justify-between text-[#C9C7D6]">
-                  <span>Master SFX Volume</span>
+            {/* THREE-CHANNEL VOLUME CONTROLS */}
+            <div className="p-3 bg-[#242330] border border-[#3E3C4E] space-y-4">
+              {/* Channel 1: Master Audio */}
+              <div className="space-y-1.5 pb-2 border-b border-[#363546]">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#F4D378]" />
+                    Master Channel
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleToggleMasterMute}
+                    className={`px-2.5 py-0.5 text-xs font-bold border cursor-pointer min-h-[28px] flex items-center gap-1 transition-colors ${
+                      isMasterMuted
+                        ? 'bg-[#EF4444]/20 border-[#EF4444] text-[#FCA5A5]'
+                        : 'bg-[#22C55E]/20 border-[#22C55E] text-[#86EFAC]'
+                    }`}
+                  >
+                    {isMasterMuted ? 'MUTED' : 'ACTIVE'}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[#C9C7D6] text-[11px]">
+                  <span>Master Volume</span>
                   <span className="text-[#F4D378] font-bold">
-                    {Math.round(volume * 100)}%
+                    {Math.round(masterVolume * 100)}%
                   </span>
                 </div>
                 <input
@@ -191,9 +226,81 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
                   min="0"
                   max="1"
                   step="0.05"
-                  value={volume}
-                  onChange={handleVolumeChange}
+                  value={masterVolume}
+                  onChange={handleMasterVolChange}
                   className="w-full accent-[#F4D378] cursor-pointer h-2 bg-[#1A1924] rounded"
+                />
+              </div>
+
+              {/* Channel 2: Sound Effects (SFX) */}
+              <div className="space-y-1.5 pb-2 border-b border-[#363546]">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#60A5FA]" />
+                    Sound Effects (SFX)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleToggleSfxMute}
+                    className={`px-2.5 py-0.5 text-xs font-bold border cursor-pointer min-h-[28px] flex items-center gap-1 transition-colors ${
+                      isSfxMuted
+                        ? 'bg-[#EF4444]/20 border-[#EF4444] text-[#FCA5A5]'
+                        : 'bg-[#3B82F6]/20 border-[#3B82F6] text-[#93C5FD]'
+                    }`}
+                  >
+                    {isSfxMuted ? 'MUTED' : 'ACTIVE'}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[#C9C7D6] text-[11px]">
+                  <span>SFX Volume</span>
+                  <span className="text-[#60A5FA] font-bold">
+                    {Math.round(sfxVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={sfxVolume}
+                  onChange={handleSfxVolChange}
+                  className="w-full accent-[#60A5FA] cursor-pointer h-2 bg-[#1A1924] rounded"
+                />
+              </div>
+
+              {/* Channel 3: Music & Ambience */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#A78BFA]" />
+                    Music &amp; Ambience
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleToggleMusicMute}
+                    className={`px-2.5 py-0.5 text-xs font-bold border cursor-pointer min-h-[28px] flex items-center gap-1 transition-colors ${
+                      isMusicMuted
+                        ? 'bg-[#EF4444]/20 border-[#EF4444] text-[#FCA5A5]'
+                        : 'bg-[#8B5CF6]/20 border-[#8B5CF6] text-[#C4B5FD]'
+                    }`}
+                  >
+                    {isMusicMuted ? 'MUTED' : 'ACTIVE'}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between text-[#C9C7D6] text-[11px]">
+                  <span>Music Volume</span>
+                  <span className="text-[#A78BFA] font-bold">
+                    {Math.round(musicVolume * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={musicVolume}
+                  onChange={handleMusicVolChange}
+                  className="w-full accent-[#A78BFA] cursor-pointer h-2 bg-[#1A1924] rounded"
                 />
               </div>
             </div>

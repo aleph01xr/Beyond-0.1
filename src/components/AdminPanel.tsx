@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { sfx } from '../client/sound.ts';
+import { soundManager } from '../client/soundManager.ts';
+import { SoundManagerDiagnostic, type DiagnosticReport } from '../client/soundManagerDiagnostic.ts';
 import {
   HERO_CLASSES,
   MAX_ATTRIBUTE,
@@ -17,7 +19,7 @@ interface AdminPanelProps {
   onSendAdminCommand: (msg: ClientMessage) => void;
 }
 
-type AdminTab = 'classes' | 'cheats' | 'relics' | 'spawner' | 'teleport' | 'management' | 'world';
+type AdminTab = 'classes' | 'cheats' | 'relics' | 'spawner' | 'teleport' | 'management' | 'world' | 'audio';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   me,
@@ -26,6 +28,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onSendAdminCommand,
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('cheats');
+  const [diagnosticReport, setDiagnosticReport] = useState<DiagnosticReport | null>(null);
+  const [isRunningDiag, setIsRunningDiag] = useState(false);
+  const [spatialTest, setSpatialTest] = useState({
+    soundX: 400,
+    soundY: 0,
+    panSpread: 600,
+    minDist: 120,
+    maxDist: 1200,
+  });
 
   if (!isOpen) return null;
 
@@ -88,6 +99,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             ['teleport', 'Teleport'],
             ['management', 'Management'],
             ['world', 'World Tools'],
+            ['audio', 'Audio Engine'],
           ].map(([tabKey, label]) => {
             const isActive = activeTab === tabKey;
             return (
@@ -501,6 +513,198 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <button type="button" onClick={() => handleCommand({ type: 'admin:reset_boss' })} className="stone-button stone-button-red">Reset Boss</button>
                 <button type="button" onClick={() => handleCommand({ type: 'admin:reset_room' })} className="stone-button stone-button-red">Reset Room</button>
                 <button type="button" onClick={() => handleCommand({ type: 'admin:toggle_ai', enabled: false })} className="stone-button stone-button-dark">Toggle AI Off</button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 8: AUDIO ENGINE & DIAGNOSTICS */}
+          {activeTab === 'audio' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <span>SoundManager Architecture &amp; Metrics</span>
+                  <button
+                    type="button"
+                    disabled={isRunningDiag}
+                    onClick={async () => {
+                      sfx.playUiClick('confirm');
+                      setIsRunningDiag(true);
+                      try {
+                        const report = await SoundManagerDiagnostic.runSuite();
+                        setDiagnosticReport(report);
+                      } finally {
+                        setIsRunningDiag(false);
+                      }
+                    }}
+                    className="stone-button stone-button-gold px-3 py-1 text-[11px] font-mono cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>{isRunningDiag ? 'Running Tests...' : 'Run 9-Point Diagnostic Suite'}</span>
+                  </button>
+                </h3>
+
+                {/* Metrics Grid */}
+                {(() => {
+                  const m = soundManager.getMetrics();
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                      <div className="p-2.5 bg-[#252332] border border-[#383548] rounded">
+                        <span className="text-[#8E8C9F] block text-[10px] uppercase font-mono">Active Voices</span>
+                        <span className="font-mono text-sm font-bold text-white">
+                          {m.activeVoices} <span className="text-xs text-[#8E8C9F]">/ {m.maxVoices}</span>
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-[#252332] border border-[#383548] rounded">
+                        <span className="text-[#8E8C9F] block text-[10px] uppercase font-mono">Pooled Nodes</span>
+                        <span className="font-mono text-sm font-bold text-[#60A5FA]">
+                          {m.pooledNodes}
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-[#252332] border border-[#383548] rounded">
+                        <span className="text-[#8E8C9F] block text-[10px] uppercase font-mono">Cached Buffers</span>
+                        <span className="font-mono text-sm font-bold text-[#A78BFA]">
+                          {m.cachedBuffers}
+                        </span>
+                      </div>
+                      <div className="p-2.5 bg-[#252332] border border-[#383548] rounded">
+                        <span className="text-[#8E8C9F] block text-[10px] uppercase font-mono">Channels (M / S / M)</span>
+                        <span className="font-mono text-xs font-bold text-[#FCD34D]">
+                          {Math.round(m.masterVolume * 100)}% / {Math.round(m.sfxVolume * 100)}% / {Math.round(m.musicVolume * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Diagnostic Test Results */}
+              {diagnosticReport && (
+                <div className="p-3 bg-[#1C1B24] border border-[#454256] rounded space-y-2">
+                  <div className="flex items-center justify-between border-b border-[#363546] pb-2">
+                    <span className="font-display font-bold text-xs text-white flex items-center gap-2">
+                      <span>Test Results:</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                        diagnosticReport.allPassed
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                          : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                      }`}>
+                        {diagnosticReport.passedTests} / {diagnosticReport.totalTests} PASSED
+                      </span>
+                    </span>
+                    <span className="text-[10px] font-mono text-[#8E8C9F]">
+                      {diagnosticReport.timestamp.split('T')[1].slice(0, 8)}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 custom-scrollbar text-[11px] font-mono">
+                    {diagnosticReport.results.map((res) => (
+                      <div
+                        key={res.id}
+                        className={`p-2 rounded border flex flex-col gap-0.5 ${
+                          res.passed
+                            ? 'bg-[#18231E]/60 border-[#1B4D3E] text-[#D1FAE5]'
+                            : 'bg-[#291818]/60 border-[#7F1D1D] text-[#FEE2E2]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between font-bold">
+                          <span>
+                            {res.id}. {res.name}
+                          </span>
+                          <span className={res.passed ? 'text-emerald-400' : 'text-rose-400'}>
+                            {res.passed ? 'PASSED' : 'FAILED'} ({res.durationMs.toFixed(1)}ms)
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-[#9CA3AF]">
+                          {res.details}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 2D Spatial Audio Calculator & Simulator */}
+              <div className="p-3 bg-[#242330] border border-[#3E3C4E] rounded space-y-2">
+                <h4 className="font-display text-xs font-bold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#38BDF8]" />
+                  2D Spatial Audio Coordinate Simulator
+                </h4>
+                <p className="text-[11px] font-mono text-[#9CA3AF]">
+                  Simulates listener coordinates against sound emitter positions using distance attenuation and horizontal stereo panning.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-[#D4D2E3]">
+                      <span>Horizontal Offset (dx)</span>
+                      <span className="text-[#38BDF8] font-bold">{spatialTest.soundX} px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-1200"
+                      max="1200"
+                      step="20"
+                      value={spatialTest.soundX}
+                      onChange={(e) =>
+                        setSpatialTest({ ...spatialTest, soundX: parseInt(e.target.value) })
+                      }
+                      className="w-full accent-[#38BDF8] cursor-pointer h-1.5 bg-[#171620] rounded"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-[#D4D2E3]">
+                      <span>Vertical Offset (dy)</span>
+                      <span className="text-[#38BDF8] font-bold">{spatialTest.soundY} px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-1200"
+                      max="1200"
+                      step="20"
+                      value={spatialTest.soundY}
+                      onChange={(e) =>
+                        setSpatialTest({ ...spatialTest, soundY: parseInt(e.target.value) })
+                      }
+                      className="w-full accent-[#38BDF8] cursor-pointer h-1.5 bg-[#171620] rounded"
+                    />
+                  </div>
+                </div>
+
+                {(() => {
+                  const params = soundManager.calculateSpatialParameters(
+                    { x: spatialTest.soundX, y: spatialTest.soundY },
+                    {
+                      minDistance: spatialTest.minDist,
+                      maxDistance: spatialTest.maxDist,
+                      panSpread: spatialTest.panSpread,
+                    }
+                  );
+                  const dist = Math.round(Math.hypot(spatialTest.soundX, spatialTest.soundY));
+                  return (
+                    <div className="mt-2 p-2 bg-[#1A1924] border border-[#343242] rounded grid grid-cols-3 text-center text-xs font-mono">
+                      <div>
+                        <span className="text-[#8E8C9F] text-[10px] block uppercase">Distance</span>
+                        <span className="font-bold text-white">{dist} px</span>
+                      </div>
+                      <div>
+                        <span className="text-[#8E8C9F] text-[10px] block uppercase">Attenuation</span>
+                        <span className={`font-bold ${params.inAudible ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {params.inAudible ? 'Inaudible (0%)' : `${Math.round(params.volume * 100)}%`}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[#8E8C9F] text-[10px] block uppercase">Stereo Pan</span>
+                        <span className="font-bold text-[#38BDF8]">
+                          {params.pan < -0.05
+                            ? `${Math.abs(Math.round(params.pan * 100))}% Left`
+                            : params.pan > 0.05
+                            ? `${Math.round(params.pan * 100)}% Right`
+                            : 'Center (0.0)'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

@@ -1889,6 +1889,7 @@ async function runRegressionTests() {
       shockedMs: 0,
       poisonedMs: 0,
       bleedingMs: 0,
+      silencedMs: 0,
       elite: true,
       resistances: { physical: 0.2, fire: 0, frost: 0, lightning: 0, poison: 0, bleed: 0, divine: 0, arcane: 0, tenacity: 0.8 },
     };
