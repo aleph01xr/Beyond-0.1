@@ -1,0 +1,452 @@
+/**
+ * BEYOND — Premium Boss Ability SFX v2 (Floors 1–5)
+ *
+ * A more expressive procedural sound-design pass for all 20 boss abilities.
+ * The module is intentionally self-contained and uses the caller's existing
+ * AudioContext + SFX destination. It does NOT create an audio context, alter
+ * SoundManager routing, or change gameplay timing.
+ *
+ * Integration:
+ *   import { playBossAbilitySfx } from './bossSfxRedesign.ts';
+ *
+ *   const ctx = this.ensureContext();
+ *   const dest = this.getDestination();
+ *   if (ctx && dest && playBossAbilitySfx(ctx, dest, boss, ability)) return;
+ *
+ * Keep the existing Floor 6–10 dispatcher as fallback. Disable old Floor 1–5
+ * playback paths after integration to prevent doubled sounds.
+ *
+ * NOTE: This is procedural synthesis, not recorded Foley. Final quality still
+ * depends on in-game mix levels, speaker/headphone playback, and playtesting.
+ */
+
+type BossId = 'malakor' | 'vaelor' | 'ignis' | 'malice' | 'archon';
+
+const noiseCache = new WeakMap<AudioContext, AudioBuffer>();
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+function noise(ctx: AudioContext): AudioBuffer {
+  const cached = noiseCache.get(ctx);
+  if (cached) return cached;
+  const length = Math.max(1, Math.floor(ctx.sampleRate * 1.2));
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  let brown = 0;
+  for (let i = 0; i < length; i++) {
+    const white = Math.random() * 2 - 1;
+    brown = (brown + 0.018 * white) / 1.018;
+    data[i] = clamp(brown * 3.5, -1, 1);
+  }
+  noiseCache.set(ctx, buffer);
+  return buffer;
+}
+
+function saturation(ctx: AudioContext): WaveShaperNode {
+  // Each voice gets its own nonlinear stage; sharing one would intermodulate
+  // simultaneous sounds and make dense boss attacks harsh.
+  const shaper = ctx.createWaveShaper();
+  const curve = new Float32Array(2048);
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i * 2) / (curve.length - 1) - 1;
+    curve[i] = Math.tanh(x * 1.65) / Math.tanh(1.65);
+  }
+  shaper.curve = curve;
+  shaper.oversample = '4x';
+  return shaper;
+}
+
+function gainEnvelope(g: GainNode, t: number, peak: number, attack: number,
+                      hold: number, release: number): void {
+  const a = Math.max(0.002, attack);
+  const h = Math.max(a + 0.002, hold);
+  const end = h + Math.max(0.008, release);
+  g.gain.cancelScheduledValues(t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + a);
+  if (h > a + 0.003) g.gain.setValueAtTime(Math.max(0.0002, peak), t + h);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + end);
+}
+
+function voice(ctx: AudioContext, dest: AudioNode, t: number, opts: {
+  from: number; to?: number; duration: number; peak: number;
+  type?: OscillatorType; attack?: number; hold?: number; release?: number;
+  detune?: number; pan?: number; drive?: boolean;
+}): void {
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  const panner = ctx.createStereoPanner();
+  osc.type = opts.type ?? 'sine';
+  osc.frequency.setValueAtTime(Math.max(1, opts.from), t);
+  if (opts.to !== undefined) {
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.to), t + Math.max(0.006, opts.duration));
+  }
+  if (opts.detune) osc.detune.setValueAtTime(opts.detune, t);
+  panner.pan.setValueAtTime(clamp(opts.pan ?? 0, -1, 1), t);
+  gainEnvelope(amp, t, opts.peak, opts.attack ?? 0.004,
+    opts.hold ?? Math.max(0.008, opts.duration * 0.72),
+    opts.release ?? Math.max(0.02, opts.duration * 0.28));
+  osc.connect(amp);
+  if (opts.drive) {
+    const shaper = saturation(ctx);
+    amp.connect(shaper);
+    shaper.connect(panner);
+  } else {
+    amp.connect(panner);
+  }
+  panner.connect(dest);
+  const stopAt = t + (opts.hold ?? opts.duration) + (opts.release ?? 0.08) + 0.03;
+  osc.start(t);
+  osc.stop(stopAt);
+}
+
+function texture(ctx: AudioContext, dest: AudioNode, t: number, opts: {
+  duration: number; peak: number; filter: BiquadFilterType;
+  from: number; to: number; q?: number; attack?: number;
+  release?: number; pan?: number; drive?: boolean;
+}): void {
+  const src = ctx.createBufferSource();
+  const filter = ctx.createBiquadFilter();
+  const amp = ctx.createGain();
+  const panner = ctx.createStereoPanner();
+  src.buffer = noise(ctx);
+  filter.type = opts.filter;
+  filter.Q.setValueAtTime(opts.q ?? 0.8, t);
+  filter.frequency.setValueAtTime(Math.max(25, opts.from), t);
+  filter.frequency.exponentialRampToValueAtTime(Math.max(25, opts.to), t + opts.duration);
+  panner.pan.setValueAtTime(clamp(opts.pan ?? 0, -1, 1), t);
+  gainEnvelope(amp, t, opts.peak, opts.attack ?? 0.003,
+    Math.max(0.006, opts.duration * 0.72), opts.release ?? Math.max(0.025, opts.duration * 0.28));
+  src.connect(filter);
+  filter.connect(amp);
+  if (opts.drive) {
+    const shaper = saturation(ctx);
+    amp.connect(shaper);
+    shaper.connect(panner);
+  } else {
+    amp.connect(panner);
+  }
+  panner.connect(dest);
+  src.start(t);
+  src.stop(t + opts.duration + (opts.release ?? 0.05) + 0.025);
+}
+
+function subImpact(ctx: AudioContext, dest: AudioNode, t: number, weight = 1): void {
+  voice(ctx, dest, t, { from: 118, to: 34, duration: 0.22, peak: 0.19 * weight,
+    type: 'sine', attack: 0.002, hold: 0.055, release: 0.30 });
+  voice(ctx, dest, t + 0.006, { from: 62, to: 30, duration: 0.17,
+    peak: 0.07 * weight, type: 'triangle', attack: 0.003, hold: 0.035, release: 0.23, drive: true });
+  texture(ctx, dest, t, { duration: 0.18, peak: 0.105 * weight,
+    filter: 'lowpass', from: 1050, to: 72, q: 0.7, attack: 0.002, release: 0.20, drive: true });
+  // A short upper crack makes the low-frequency hit read clearly on small speakers.
+  texture(ctx, dest, t + 0.003, { duration: 0.045, peak: 0.035 * weight,
+    filter: 'highpass', from: 6200, to: 1900, q: 0.7, attack: 0.001, release: 0.055, pan: -0.08 });
+}
+function metalClang(ctx: AudioContext, dest: AudioNode, t: number, weight = 1, pan = 0): void {
+  // Slightly inharmonic partials + a bright contact transient + a short plate-like tail.
+  voice(ctx, dest, t, { from: 740, to: 505, duration: 0.11, peak: 0.052 * weight,
+    type: 'triangle', hold: 0.025, release: 0.27, pan });
+  voice(ctx, dest, t + 0.002, { from: 1193, to: 876, duration: 0.09, peak: 0.031 * weight,
+    type: 'sine', hold: 0.018, release: 0.21, pan: pan + 0.08 });
+  voice(ctx, dest, t + 0.004, { from: 1877, to: 1420, duration: 0.07, peak: 0.015 * weight,
+    type: 'sine', hold: 0.012, release: 0.16, pan: pan - 0.08 });
+  texture(ctx, dest, t, { duration: 0.055, peak: 0.042 * weight,
+    filter: 'highpass', from: 7600, to: 2100, q: 0.75, attack: 0.001, release: 0.075, pan });
+}
+
+function crystal(ctx: AudioContext, dest: AudioNode, t: number, root: number, weight = 1, pan = 0): void {
+  voice(ctx, dest, t, { from: root * 2.73, to: root * 2.68, duration: 0.16,
+    peak: 0.027 * weight, type: 'sine', hold: 0.035, release: 0.42, pan });
+  voice(ctx, dest, t + 0.003, { from: root * 4.11, to: root * 3.96, duration: 0.12,
+    peak: 0.013 * weight, type: 'sine', hold: 0.018, release: 0.30, pan: pan + 0.1 });
+  texture(ctx, dest, t, { duration: 0.045, peak: 0.014 * weight,
+    filter: 'highpass', from: 9200, to: 3800, q: 0.6, release: 0.09, pan });
+}
+
+function whoosh(ctx: AudioContext, dest: AudioNode, t: number, duration: number,
+                peak: number, rising = false, pan = 0): void {
+  texture(ctx, dest, t, { duration, peak, filter: 'bandpass',
+    from: rising ? 420 : 5200, to: rising ? 5200 : 430,
+    q: 0.85, attack: 0.012, release: 0.045, pan });
+}
+
+function pulseTrain(ctx: AudioContext, dest: AudioNode, t: number, count: number,
+                    interval: number, fn: (at: number, i: number) => void): void {
+  for (let i = 0; i < count; i++) fn(t + i * interval, i);
+}
+
+// FLOOR 1 — WARDEN MALAKOR: forged iron, plate resonance, brutal mass.
+function malakor(ctx: AudioContext, d: AudioNode, a: string, t: number): boolean {
+  switch (a) {
+    case 'iron_bulwark':
+      // Shield locks into place, a forceful clang, then a resonant defensive hum.
+      texture(ctx, d, t, { duration: 0.10, peak: 0.045, filter: 'bandpass', from: 2400, to: 620, q: 2.8 });
+      metalClang(ctx, d, t + 0.075, 1.2, -0.12);
+      voice(ctx, d, t + 0.09, { from: 164, to: 118, duration: 0.24, peak: 0.09, type: 'triangle', release: 0.48, drive: true });
+      [0, 1, 2].forEach(i => voice(ctx, d, t + 0.13 + i * 0.012, {
+        from: [392, 587, 784][i], to: [386, 574, 765][i], duration: 0.22,
+        peak: [0.025, 0.017, 0.012][i], release: 0.62, pan: (i - 1) * 0.18
+      }));
+      return true;
+    case 'triple_cleave':
+      pulseTrain(ctx, d, t, 3, 0.17, (at, i) => {
+        whoosh(ctx, d, at, 0.12 + i * 0.012, 0.073 - i * 0.012, true, (i - 1) * 0.24);
+        voice(ctx, d, at + 0.025, { from: 680 - i * 95, to: 145 - i * 12,
+          duration: 0.10, peak: 0.043 - i * 0.006, type: 'sawtooth',
+          attack: 0.002, release: 0.075, drive: true, pan: (i - 1) * 0.2 });
+        texture(ctx, d, at + 0.018, { duration: 0.07, peak: 0.026,
+          filter: 'highpass', from: 5400, to: 1700, q: 0.8, pan: (i - 1) * 0.2 });
+        if (i === 2) metalClang(ctx, d, at + 0.045, 0.8, 0.12);
+      });
+      return true;
+    case 'bastion_ground_slam':
+      whoosh(ctx, d, t, 0.22, 0.045, false);
+      voice(ctx, d, t + 0.14, { from: 96, to: 48, duration: 0.12, peak: 0.055, type: 'sine', release: 0.12 });
+      subImpact(ctx, d, t + 0.23, 1.35);
+      metalClang(ctx, d, t + 0.245, 0.75);
+      texture(ctx, d, t + 0.25, { duration: 0.34, peak: 0.075, filter: 'lowpass',
+        from: 1500, to: 95, q: 0.65, attack: 0.004, release: 0.22, drive: true });
+      return true;
+    case 'war_charge':
+      whoosh(ctx, d, t, 0.44, 0.095, true);
+      voice(ctx, d, t + 0.015, { from: 68, to: 152, duration: 0.39, peak: 0.075,
+        type: 'sawtooth', release: 0.11, drive: true });
+      pulseTrain(ctx, d, t + 0.10, 4, 0.09, (at, i) => metalClang(ctx, d, at, 0.25 + i * 0.035, (i % 2 ? 1 : -1) * 0.18));
+      subImpact(ctx, d, t + 0.47, 0.78);
+      return true;
+  }
+  return false;
+}
+
+// FLOOR 2 — ARCHLICH VAELOR: frozen glass, spectral breath, soul-drain.
+function vaelor(ctx: AudioContext, d: AudioNode, a: string, t: number): boolean {
+  switch (a) {
+    case 'glacial_frost_nova':
+      voice(ctx, d, t, { from: 76, to: 39, duration: 0.48, peak: 0.095, type: 'sine', release: 0.38 });
+      whoosh(ctx, d, t + 0.045, 0.52, 0.065, false);
+      [784, 988, 1175, 1568, 2093].forEach((f, i) =>
+        crystal(ctx, d, t + 0.09 + i * 0.028, f, 0.95, Math.sin(i) * 0.35));
+      texture(ctx, d, t + 0.11, { duration: 0.42, peak: 0.045, filter: 'highpass',
+        from: 9800, to: 2600, q: 0.65, attack: 0.025, release: 0.22 });
+      return true;
+    case 'soul_siphon_tether':
+      voice(ctx, d, t, { from: 620, to: 172, duration: 0.72, peak: 0.046, type: 'triangle', release: 0.16 });
+      voice(ctx, d, t + 0.025, { from: 310, to: 76, duration: 0.68, peak: 0.068, type: 'sine', release: 0.20 });
+      texture(ctx, d, t + 0.035, { duration: 0.64, peak: 0.034, filter: 'bandpass',
+        from: 2400, to: 420, q: 4.2, attack: 0.035, release: 0.22 });
+      pulseTrain(ctx, d, t + 0.14, 4, 0.16, (at, i) => {
+        voice(ctx, d, at, { from: 880 - i * 72, to: 610 - i * 55, duration: 0.10,
+          peak: 0.014, type: 'sine', release: 0.13, pan: (i % 2 ? 1 : -1) * 0.22 });
+      });
+      return true;
+    case 'seeking_soul_hail':
+      pulseTrain(ctx, d, t, 6, 0.092, (at, i) => {
+        const pan = (i - 2.5) * 0.22;
+        voice(ctx, d, at, { from: 1380 - i * 110, to: 300 - i * 19,
+          duration: 0.145, peak: 0.032, type: 'triangle', release: 0.085, pan });
+        texture(ctx, d, at, { duration: 0.085, peak: 0.015, filter: 'highpass',
+          from: 6400, to: 1800, q: 1.1, pan });
+        crystal(ctx, d, at + 0.055, 430 + i * 28, 0.42, pan);
+      });
+      return true;
+    case 'necrotic_death_ring':
+      voice(ctx, d, t, { from: 52, to: 28, duration: 0.58, peak: 0.11, type: 'sine', release: 0.42 });
+      voice(ctx, d, t + 0.035, { from: 196, to: 184, duration: 0.40, peak: 0.025, type: 'triangle', release: 0.55 });
+      [147, 220, 294, 392, 587].forEach((f, i) =>
+        voice(ctx, d, t + 0.055, { from: f, to: f * 0.97, duration: 0.36,
+          peak: 0.018 / (1 + i * 0.35), type: 'sine', release: 0.60, pan: (i - 2) * 0.16 }));
+      texture(ctx, d, t + 0.06, { duration: 0.58, peak: 0.055, filter: 'bandpass',
+        from: 650, to: 95, q: 2.2, attack: 0.04, release: 0.30 });
+      return true;
+  }
+  return false;
+}
+
+// FLOOR 3 — IGNIS: volcanic pressure, molten tearing, combustion and ember.
+function ignis(ctx: AudioContext, d: AudioNode, a: string, t: number): boolean {
+  switch (a) {
+    case 'magma_eruptions':
+      pulseTrain(ctx, d, t, 3, 0.205, (at, i) => {
+        subImpact(ctx, d, at, 0.62 + i * 0.12);
+        texture(ctx, d, at + 0.012, { duration: 0.23, peak: 0.075 + i * 0.008,
+          filter: 'lowpass', from: 1900 + i * 300, to: 150, q: 0.8, drive: true });
+        voice(ctx, d, at + 0.008, { from: 142 + i * 22, to: 54, duration: 0.21,
+          peak: 0.047, type: 'sawtooth', release: 0.10, drive: true });
+        texture(ctx, d, at + 0.035, { duration: 0.14, peak: 0.025,
+          filter: 'highpass', from: 4700, to: 1200, q: 0.7 });
+      });
+      return true;
+    case 'molten_fissure_wave':
+      whoosh(ctx, d, t, 0.43, 0.09, true);
+      voice(ctx, d, t + 0.01, { from: 168, to: 34, duration: 0.50,
+        peak: 0.12, type: 'sawtooth', release: 0.17, drive: true });
+      texture(ctx, d, t + 0.035, { duration: 0.52, peak: 0.105,
+        filter: 'lowpass', from: 2600, to: 110, q: 0.7, attack: 0.01, release: 0.19, drive: true });
+      pulseTrain(ctx, d, t + 0.12, 4, 0.105, (at, i) => {
+        voice(ctx, d, at, { from: 110 - i * 12, to: 42, duration: 0.15,
+          peak: 0.034, type: 'triangle', release: 0.10, pan: (i % 2 ? 1 : -1) * 0.22 });
+      });
+      return true;
+    case 'cinder_ember_spiral':
+      pulseTrain(ctx, d, t, 8, 0.052, (at, i) => {
+        const pan = Math.sin(i * 0.9) * 0.55;
+        voice(ctx, d, at, { from: 390 + i * 105, to: 920 + i * 45,
+          duration: 0.082, peak: 0.023, type: 'triangle', release: 0.06, pan });
+        texture(ctx, d, at, { duration: 0.062, peak: 0.017,
+          filter: 'highpass', from: 7600, to: 2600, q: 0.8, pan });
+      });
+      voice(ctx, d, t + 0.32, { from: 820, to: 145, duration: 0.30,
+        peak: 0.052, type: 'sawtooth', release: 0.16, drive: true });
+      return true;
+    case 'volcanic_core_detonation':
+      // Brief pressure pre-hit, violent transient, dirty mid-body, long hot tail.
+      voice(ctx, d, t, { from: 54, to: 118, duration: 0.12, peak: 0.075, type: 'sine', release: 0.04 });
+      texture(ctx, d, t + 0.105, { duration: 0.39, peak: 0.18,
+        filter: 'lowpass', from: 4200, to: 78, q: 0.65, attack: 0.001, release: 0.27, drive: true });
+      subImpact(ctx, d, t + 0.11, 1.5);
+      texture(ctx, d, t + 0.115, { duration: 0.32, peak: 0.075,
+        filter: 'highpass', from: 7200, to: 850, q: 0.7, attack: 0.001, release: 0.18 });
+      voice(ctx, d, t + 0.12, { from: 205, to: 27, duration: 0.62,
+        peak: 0.10, type: 'sawtooth', release: 0.28, drive: true });
+      return true;
+  }
+  return false;
+}
+
+// FLOOR 4 — VOID-EATER MALICE: suction, elastic void lashes, spatial collapse.
+function malice(ctx: AudioContext, d: AudioNode, a: string, t: number): boolean {
+  switch (a) {
+    case 'gravitational_singularity':
+      texture(ctx, d, t, { duration: 0.78, peak: 0.085, filter: 'lowpass',
+        from: 2400, to: 58, q: 1.15, attack: 0.09, release: 0.22, drive: true });
+      voice(ctx, d, t, { from: 96, to: 18, duration: 0.82, peak: 0.14,
+        type: 'sine', attack: 0.08, release: 0.28 });
+      voice(ctx, d, t + 0.04, { from: 410, to: 42, duration: 0.70,
+        peak: 0.043, type: 'triangle', attack: 0.05, release: 0.20 });
+      // Uneven, stereo-panned partials create a disorienting rotating pull.
+      [0, 1, 2, 3].forEach(i => voice(ctx, d, t + 0.12 + i * 0.11, {
+        from: 760 - i * 105, to: 210 - i * 30, duration: 0.20,
+        peak: 0.012, type: 'sine', release: 0.20, pan: i % 2 ? 0.72 : -0.72
+      }));
+      return true;
+    case 'void_tendril_flurry':
+      pulseTrain(ctx, d, t, 6, 0.071, (at, i) => {
+        const up = i % 2 === 0;
+        const pan = (i - 2.5) * 0.25;
+        voice(ctx, d, at, { from: up ? 92 : 480, to: up ? 520 : 66,
+          duration: 0.15, peak: 0.043, type: 'triangle', release: 0.08, pan, drive: true });
+        texture(ctx, d, at, { duration: 0.13, peak: 0.035,
+          filter: 'bandpass', from: up ? 480 : 3600, to: up ? 3100 : 420,
+          q: 1.9, pan });
+      });
+      return true;
+    case 'void_step':
+      // The sound ducks inward, leaves a momentary hole, then snaps back.
+      texture(ctx, d, t, { duration: 0.17, peak: 0.065, filter: 'bandpass',
+        from: 3200, to: 190, q: 3.2, attack: 0.025, release: 0.03 });
+      voice(ctx, d, t + 0.015, { from: 285, to: 44, duration: 0.16,
+        peak: 0.06, type: 'sine', release: 0.08 });
+      texture(ctx, d, t + 0.205, { duration: 0.10, peak: 0.085,
+        filter: 'highpass', from: 5200, to: 1250, q: 0.8, attack: 0.001, release: 0.05, pan: 0.12 });
+      subImpact(ctx, d, t + 0.21, 0.48);
+      return true;
+    case 'abyssal_nova_spread':
+      subImpact(ctx, d, t, 0.98);
+      voice(ctx, d, t + 0.015, { from: 245, to: 36, duration: 0.48,
+        peak: 0.073, type: 'triangle', release: 0.20, drive: true });
+      texture(ctx, d, t + 0.055, { duration: 0.60, peak: 0.092,
+        filter: 'bandpass', from: 180, to: 4300, q: 0.7, attack: 0.06, release: 0.22 });
+      [0, 1, 2, 3, 4].forEach(i => voice(ctx, d, t + 0.10 + i * 0.075, {
+        from: 840 - i * 105, to: 170 - i * 16, duration: 0.20,
+        peak: 0.017, type: 'sine', release: 0.20, pan: (i - 2) * 0.28
+      }));
+      return true;
+  }
+  return false;
+}
+
+// FLOOR 5 — ARCHON OF NOTHINGNESS: celestial brilliance, stellar mass, cosmic scale.
+function archon(ctx: AudioContext, d: AudioNode, a: string, t: number): boolean {
+  switch (a) {
+    case 'celestial_supernova_ring':
+      // Luminous ignition before the stellar detonation and a wide harmonic halo.
+      [523.25, 659.25, 783.99, 1046.5, 1318.51].forEach((f, i) =>
+        voice(ctx, d, t + i * 0.025, { from: f, to: f * 1.025, duration: 0.32,
+          peak: 0.022, type: 'sine', release: 0.72, pan: (i - 2) * 0.15 }));
+      texture(ctx, d, t + 0.11, { duration: 0.48, peak: 0.065,
+        filter: 'highpass', from: 9400, to: 1900, q: 0.65, attack: 0.015, release: 0.24 });
+      subImpact(ctx, d, t + 0.13, 1.12);
+      [392, 587, 880].forEach((f, i) => voice(ctx, d, t + 0.17, {
+        from: f, to: f * 0.99, duration: 0.30, peak: 0.018,
+        type: 'triangle', release: 0.82, pan: (i - 1) * 0.38
+      }));
+      return true;
+    case 'orbital_starlight_beams':
+      pulseTrain(ctx, d, t, 4, 0.145, (at, i) => {
+        const pan = (i - 1.5) * 0.42;
+        voice(ctx, d, at, { from: 1480 + i * 125, to: 690 + i * 80,
+          duration: 0.18, peak: 0.031, type: 'sine', release: 0.13, pan });
+        voice(ctx, d, at + 0.012, { from: 710 + i * 65, to: 1120 + i * 95,
+          duration: 0.14, peak: 0.016, type: 'triangle', release: 0.12, pan: -pan * 0.7 });
+        texture(ctx, d, at, { duration: 0.14, peak: 0.018,
+          filter: 'highpass', from: 9800, to: 3500, q: 0.7, pan });
+        crystal(ctx, d, at + 0.035, 520 + i * 42, 0.42, -pan);
+      });
+      return true;
+    case 'cosmic_shard_volley':
+      pulseTrain(ctx, d, t, 6, 0.092, (at, i) => {
+        const pan = (i - 2.5) * 0.22;
+        crystal(ctx, d, at, 620 + i * 55, 1.05, pan);
+        voice(ctx, d, at + 0.008, { from: 1940 - i * 110, to: 390 - i * 20,
+          duration: 0.14, peak: 0.028, type: 'sine', release: 0.10, pan });
+        voice(ctx, d, at, { from: 205, to: 78, duration: 0.09,
+          peak: 0.014, type: 'triangle', release: 0.08, pan });
+      });
+      return true;
+    case 'astral_constellation_spiral': {
+      const notes = [392, 493.88, 587.33, 659.25, 783.99, 987.77, 1174.66, 1318.51];
+      notes.forEach((f, i) => {
+        const pan = Math.sin(i * 0.82) * 0.62;
+        voice(ctx, d, t + i * 0.078, { from: f, to: f * 1.045,
+          duration: 0.19, peak: 0.024, type: 'sine', release: 0.35, pan });
+        if (i % 2 === 0) crystal(ctx, d, t + i * 0.078 + 0.018, f * 0.72, 0.42, -pan);
+      });
+      // Final chord resolves the spiral rather than simply stopping the arpeggio.
+      [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
+        voice(ctx, d, t + 0.67, { from: f, to: f * 0.998, duration: 0.25,
+          peak: 0.018, type: 'sine', release: 0.78, pan: (i - 1.5) * 0.2 }));
+      texture(ctx, d, t + 0.10, { duration: 0.70, peak: 0.022,
+        filter: 'highpass', from: 10200, to: 4900, q: 0.65, attack: 0.08, release: 0.30 });
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Returns true only when a recognized Floor 1–5 boss ability was scheduled. */
+export function playBossAbilitySfx(
+  ctx: AudioContext,
+  dest: AudioNode,
+  boss: string,
+  ability: string
+): boolean {
+  if (!ctx || !dest || ctx.state === 'closed') return false;
+  const b = boss.toLowerCase().replace(/[^a-z]/g, '');
+  const a = ability.toLowerCase().replace(/['’]/g, '').trim()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const t = ctx.currentTime + 0.008;
+  const id: BossId | null =
+    b.includes('malakor') || b === 'warden' ? 'malakor' :
+    b.includes('vaelor') || b === 'archlich' ? 'vaelor' :
+    b.includes('ignis') ? 'ignis' :
+    b.includes('malice') ? 'malice' :
+    b.includes('archon') ? 'archon' : null;
+  if (!id) return false;
+  switch (id) {
+    case 'malakor': return malakor(ctx, dest, a, t);
+    case 'vaelor': return vaelor(ctx, dest, a, t);
+    case 'ignis': return ignis(ctx, dest, a, t);
+    case 'malice': return malice(ctx, dest, a, t);
+    case 'archon': return archon(ctx, dest, a, t);
+  }
+}

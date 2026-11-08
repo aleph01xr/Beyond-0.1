@@ -8,6 +8,7 @@
  */
 
 import { soundManager } from './soundManager.ts';
+import { playBossAbilitySfx } from './bossSfxRedesign_v2.ts';
 
 export type UiSoundType = 'default' | 'confirm' | 'cancel' | 'toggle' | 'hover';
 export type AttackHeroStyle = 'vanguard' | 'ranger' | 'arcanist' | 'cleric' | string;
@@ -561,75 +562,13 @@ class RetroAudioEngine {
   // ==========================================
 
   public playBossAbility(boss: string, ability: string): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (ctx && dest && playBossAbilitySfx(ctx, dest, boss, ability)) return;
+
     const key = `${boss.toLowerCase()}_${ability.toLowerCase().replace(/['’]/g, '').replace(/\s+/g, '_')}`;
 
     switch (key) {
-      // ——— FLOOR 1: Warden Malakor ———
-      case 'malakor_iron_bulwark':
-      case 'warden_malakor_iron_bulwark':
-        this.playMalakorIronBulwark(); break;
-      case 'malakor_triple_cleave':
-      case 'warden_malakor_triple_cleave':
-        this.playMalakorTripleCleave(); break;
-      case 'malakor_bastion_ground_slam':
-      case 'warden_malakor_bastion_ground_slam':
-        this.playMalakorBastionGroundSlam(); break;
-      case 'malakor_war_charge':
-      case 'warden_malakor_war_charge':
-        this.playMalakorWarCharge(); break;
-
-      // ——— FLOOR 2: Archlich Vaelor ———
-      case 'vaelor_glacial_frost_nova':
-      case 'archlich_vaelor_glacial_frost_nova':
-        this.playVaelorGlacialFrostNova(); break;
-      case 'vaelor_soul_siphon_tether':
-      case 'archlich_vaelor_soul_siphon_tether':
-        this.playVaelorSoulSiphonTether(); break;
-      case 'vaelor_seeking_soul_hail':
-      case 'archlich_vaelor_seeking_soul_hail':
-        this.playVaelorSeekingSoulHail(); break;
-      case 'vaelor_necrotic_death_ring':
-      case 'archlich_vaelor_necrotic_death_ring':
-        this.playVaelorNecroticDeathRing(); break;
-
-      // ——— FLOOR 3: Ignis, Cinder Sovereign ———
-      case 'ignis_magma_eruptions':
-        this.playIgnisMagmaEruptions(); break;
-      case 'ignis_molten_fissure_wave':
-        this.playIgnisMoltenFissureWave(); break;
-      case 'ignis_cinder_ember_spiral':
-        this.playIgnisCinderEmberSpiral(); break;
-      case 'ignis_volcanic_core_detonation':
-        this.playIgnisVolcanicCoreDetonation(); break;
-
-      // ——— FLOOR 4: Void-Eater Malice ———
-      case 'malice_gravitational_singularity':
-      case 'void-eater_malice_gravitational_singularity':
-        this.playMaliceGravitationalSingularity(); break;
-      case 'malice_void_tendril_flurry':
-      case 'void-eater_malice_void_tendril_flurry':
-        this.playMaliceVoidTendrilFlurry(); break;
-      case 'malice_void_step':
-      case 'void-eater_malice_void_step':
-        this.playMaliceVoidStep(); break;
-      case 'malice_abyssal_nova_spread':
-      case 'void-eater_malice_abyssal_nova_spread':
-        this.playMaliceAbyssalNovaSpread(); break;
-
-      // ——— FLOOR 5: Archon of Nothingness ———
-      case 'archon_celestial_supernova_ring':
-      case 'archon_of_nothingness_celestial_supernova_ring':
-        this.playArchonCelestialSupernovaRing(); break;
-      case 'archon_orbital_starlight_beams':
-      case 'archon_of_nothingness_orbital_starlight_beams':
-        this.playArchonOrbitalStarlightBeams(); break;
-      case 'archon_cosmic_shard_volley':
-      case 'archon_of_nothingness_cosmic_shard_volley':
-        this.playArchonCosmicShardVolley(); break;
-      case 'archon_astral_constellation_spiral':
-      case 'archon_of_nothingness_astral_constellation_spiral':
-        this.playArchonAstralConstellationSpiral(); break;
-
       // ——— FLOOR 6: Elyndor, Keeper of the Last Hymn ———
       case 'elyndor_resonant_crescendo':
         this.playElyndorResonantCrescendo(); break;
