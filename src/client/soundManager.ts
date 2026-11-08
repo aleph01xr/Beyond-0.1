@@ -137,13 +137,22 @@ export class SoundManager {
     if (typeof localStorage === 'undefined') return;
     try {
       const savedMasterVol = localStorage.getItem('beyond_audio_master_vol');
-      if (savedMasterVol !== null) this.masterVolume = Math.max(0, Math.min(1, parseFloat(savedMasterVol) || 0.85));
+      if (savedMasterVol !== null) {
+        const parsed = parseFloat(savedMasterVol);
+        if (!isNaN(parsed)) this.masterVolume = Math.max(0, Math.min(1, parsed));
+      }
 
       const savedSfxVol = localStorage.getItem('beyond_audio_sfx_vol');
-      if (savedSfxVol !== null) this.sfxVolume = Math.max(0, Math.min(1, parseFloat(savedSfxVol) || 0.85));
+      if (savedSfxVol !== null) {
+        const parsed = parseFloat(savedSfxVol);
+        if (!isNaN(parsed)) this.sfxVolume = Math.max(0, Math.min(1, parsed));
+      }
 
       const savedMusicVol = localStorage.getItem('beyond_audio_music_vol');
-      if (savedMusicVol !== null) this.musicVolume = Math.max(0, Math.min(1, parseFloat(savedMusicVol) || 0.70));
+      if (savedMusicVol !== null) {
+        const parsed = parseFloat(savedMusicVol);
+        if (!isNaN(parsed)) this.musicVolume = Math.max(0, Math.min(1, parsed));
+      }
 
       const savedMasterMute = localStorage.getItem('beyond_audio_master_muted');
       if (savedMasterMute !== null) this.masterMuted = savedMasterMute === 'true';
@@ -573,6 +582,14 @@ export class SoundManager {
     for (const voice of this.voiceNodePool) {
       if (!voice.inUse) {
         voice.inUse = true;
+        try {
+          voice.gainNode.gain.cancelScheduledValues(ctx.currentTime);
+          if (voice.pannerNode) {
+            voice.pannerNode.pan.cancelScheduledValues(ctx.currentTime);
+          }
+        } catch {
+          // ignore
+        }
         // Reconnect to appropriate category bus
         const dest = category === 'music' ? this.musicGain : this.sfxGain;
         if (dest) {
@@ -672,12 +689,17 @@ export class SoundManager {
 
     // Concurrency Limit Check per sound ID
     const soundInstances = this.instancesBySoundId.get(soundId) || new Set<number>();
+    const activeSoundInstances = Array.from(soundInstances).filter((id) => {
+      const inst = this.activeInstances.get(id);
+      return inst && !inst.isStopping;
+    });
+
     const maxInstances = def.maxInstances ?? 4;
-    if (soundInstances.size >= maxInstances) {
+    if (activeSoundInstances.length >= maxInstances) {
       // Find oldest active instance of this sound
       let oldestId: number | null = null;
       let oldestTime = Infinity;
-      for (const id of soundInstances) {
+      for (const id of activeSoundInstances) {
         const inst = this.activeInstances.get(id);
         if (inst && inst.startTime < oldestTime) {
           oldestTime = inst.startTime;
@@ -698,20 +720,24 @@ export class SoundManager {
     }
 
     // Global Voice Pool Capacity Check
-    if (this.activeInstances.size >= this.maxGlobalVoices) {
+    const activeGlobalInstances = Array.from(this.activeInstances.values()).filter(
+      (inst) => !inst.isStopping
+    );
+
+    if (activeGlobalInstances.length >= this.maxGlobalVoices) {
       // Evict lowest priority active sound globally
       let candidateId: number | null = null;
       let lowestPriority = Infinity;
       let oldestTime = Infinity;
 
-      for (const [id, inst] of this.activeInstances.entries()) {
+      for (const inst of activeGlobalInstances) {
         if (
           inst.priority < lowestPriority ||
           (inst.priority === lowestPriority && inst.startTime < oldestTime)
         ) {
           lowestPriority = inst.priority;
           oldestTime = inst.startTime;
-          candidateId = id;
+          candidateId = inst.instanceId;
         }
       }
 
