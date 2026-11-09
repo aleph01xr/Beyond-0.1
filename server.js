@@ -315,8 +315,8 @@ var BIOMES = [
 function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
   const floorSeed = (baseSeed >>> 0) + floor * 7919 >>> 0;
   const rng = mulberry32(floorSeed);
-  const width = 58;
-  const height = 44;
+  const width = 64;
+  const height = 48;
   const tiles = new Array(width * height).fill(0);
   const biomeIndex = Math.max(0, Math.min(BIOMES.length - 1, floor - 1));
   const biomeSpec = BIOMES[biomeIndex];
@@ -347,13 +347,34 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
     cleared: true,
     discovered: true
   });
+  const bossW = 16 + Math.floor(rng() * 3);
+  const bossH = 13 + Math.floor(rng() * 3);
+  const bossX = width - bossW - 4;
+  const bossY = Math.max(
+    4,
+    Math.min(
+      height - bossH - 4,
+      Math.floor(height / 2 - bossH / 2) + Math.floor(rng() * 7) - 3
+    )
+  );
+  rooms2.push({
+    id: 1,
+    x: bossX,
+    y: bossY,
+    w: bossW,
+    h: bossH,
+    cx: Math.floor(bossX + bossW / 2),
+    cy: Math.floor(bossY + bossH / 2),
+    type: "combat",
+    cleared: false,
+    discovered: false
+  });
   let attempts = 0;
-  while (rooms2.length < targetRoomCount && attempts < 260) {
+  while (rooms2.length < targetRoomCount && attempts < 320) {
     attempts++;
-    const isBossCandidate = rooms2.length === targetRoomCount - 1;
-    const rw = isBossCandidate ? 12 : 7 + Math.floor(rng() * 5);
-    const rh = isBossCandidate ? 11 : 7 + Math.floor(rng() * 4);
-    const rx = isBossCandidate ? width - rw - 4 - Math.floor(rng() * 4) : 4 + Math.floor(rng() * (width - rw - 8));
+    const rw = 7 + Math.floor(rng() * 5);
+    const rh = 7 + Math.floor(rng() * 4);
+    const rx = 4 + Math.floor(rng() * (width - rw - 8));
     const ry = 4 + Math.floor(rng() * (height - rh - 8));
     const overlaps = rooms2.some(
       (r) => rx < r.x + r.w + 3 && rx + rw + 3 > r.x && ry < r.y + r.h + 3 && ry + rh + 3 > r.y
@@ -380,6 +401,18 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
   if (sortedByDist.length >= 3) {
     const bossRoom = sortedByDist[sortedByDist.length - 1];
     bossRoom.type = "boss";
+    if (bossRoom.w < 16 || bossRoom.h < 13) {
+      bossRoom.w = Math.max(16, bossRoom.w);
+      bossRoom.h = Math.max(13, bossRoom.h);
+      if (bossRoom.x + bossRoom.w >= width - 2) {
+        bossRoom.x = Math.max(2, width - bossRoom.w - 2);
+      }
+      if (bossRoom.y + bossRoom.h >= height - 2) {
+        bossRoom.y = Math.max(2, height - bossRoom.h - 2);
+      }
+      bossRoom.cx = Math.floor(bossRoom.x + bossRoom.w / 2);
+      bossRoom.cy = Math.floor(bossRoom.y + bossRoom.h / 2);
+    }
     const treasureRoom = sortedByDist[Math.floor(sortedByDist.length / 2)];
     if (treasureRoom.id !== bossRoom.id) {
       treasureRoom.type = "treasure";
@@ -478,11 +511,12 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
   const torches = [];
   const enemies = [];
   const props = [];
+  const npcs = [];
   let propSeq = 1;
   let enemySeq = 1;
-  const diffMult = difficulty === "Abyssal" ? 1.55 : difficulty === "Heroic" ? 1.25 : 1;
-  const partyMult = 1 + Math.max(0, partySize - 1) * 0.55;
-  const floorMult = 1 + (floor - 1) * 0.32;
+  const diffMult = difficulty === "Abyssal" ? 1.45 : difficulty === "Heroic" ? 1.2 : 1;
+  const partyMult = 1 + Math.max(0, partySize - 1) * 0.5;
+  const floorMult = 1 + (floor - 1) * 0.28;
   const hpScale = diffMult * partyMult * floorMult;
   let portalPos = {
     x: (startRoom.cx + 1) * TILE_SIZE + TILE_SIZE / 2,
@@ -635,6 +669,16 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
           biomeSpec.id
         )
       );
+      if (floor === 10 || biomeSpec.id === "wardengate") {
+        props.push({
+          id: `prop_${floor}_gate`,
+          kind: "warden_gate",
+          x: centerWorldX,
+          y: centerWorldY - 90,
+          opened: false,
+          value: 100
+        });
+      }
       portalPos = {
         x: centerWorldX,
         y: centerWorldY
@@ -659,6 +703,7 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
     map,
     enemies,
     props,
+    npcs,
     spawnPoint: {
       x: startRoom.cx * TILE_SIZE + TILE_SIZE / 2,
       y: startRoom.cy * TILE_SIZE + TILE_SIZE / 2
@@ -986,8 +1031,14 @@ function makeEnemy(id, kind, roomId, x, y, hpScale, elite, floor = 1, biome = "c
     boss: { name: "Warden Malakor", hp: 950, radius: 28 }
   };
   const spec = baseStats[kind];
-  const eliteMult = kind === "boss" ? 1 + (floor - 1) * 0.28 : elite ? 1.55 : 1;
-  const maxHp = Math.round(spec.hp * hpScale * eliteMult);
+  let maxHp;
+  if (kind === "boss") {
+    const baseScale = floor > 1 ? hpScale / (1 + (floor - 1) * 0.28) : hpScale;
+    maxHp = Math.round(spec.hp * baseScale * (1 + (floor - 1) * 0.35));
+  } else {
+    const eliteMult = elite ? 1.55 : 1;
+    maxHp = Math.round(spec.hp * hpScale * eliteMult);
+  }
   return {
     id,
     kind,
@@ -1012,6 +1063,7 @@ function makeEnemy(id, kind, roomId, x, y, hpScale, elite, floor = 1, biome = "c
     shockedMs: 0,
     poisonedMs: 0,
     bleedingMs: 0,
+    silencedMs: 0,
     elite,
     resistances: getEnemyResistances(kind, elite, floor, biome),
     enraged: false,
@@ -1226,17 +1278,31 @@ var GameRoom = class _GameRoom {
     const relicBonus = relics.includes("bastion_pauldron") ? 30 : 0;
     return baseHp + levelBonus + vitBonus + relicBonus;
   }
-  static computeHealingAmount(baseHealing, healer) {
+  static computeHealingAmount(baseHealing, healer, target) {
     if (baseHealing <= 0) return 0;
-    if (!healer || healer.heroClass !== "cleric") {
-      return Math.max(1, Math.round(baseHealing));
+    let healing = baseHealing;
+    if (healer && healer.heroClass === "cleric") {
+      const lvl = Math.max(1, healer.level || 1);
+      const fth = Math.max(0, healer.faith || 0);
+      const levelMult = 1 + (lvl - 1) * 0.05;
+      const faithMult = 1 + fth * 0.03;
+      healing = healing * levelMult * faithMult;
     }
-    const lvl = Math.max(1, healer.level || 1);
-    const fth = Math.max(0, healer.faith || 0);
-    const levelMult = 1 + (lvl - 1) * 0.05;
-    const faithMult = 1 + fth * 0.03;
-    const scaled = baseHealing * levelMult * faithMult;
-    return Math.max(1, Math.round(scaled));
+    if (target && target.statuses && target.statuses.some((s) => s.type === "ashen_curse")) {
+      healing *= 0.55;
+    }
+    return Math.max(1, Math.round(healing));
+  }
+  static computeNextXp(level) {
+    if (level >= MAX_LEVEL) return 999999;
+    const lvl = Math.max(1, level);
+    return Math.round(80 + (lvl - 1) * 60 + Math.pow(lvl - 1, 1.75) * 12);
+  }
+  computeEnemyDamage(baseHit) {
+    const diffMult = this.difficulty === "Abyssal" ? 1.4 : this.difficulty === "Heroic" ? 1.18 : 1;
+    const floorBonus = (this.floor - 1) * 2;
+    const partyScale = 1 + Math.max(0, this.players.size - 1) * 0.1;
+    return Math.max(1, Math.round((baseHit + floorBonus) * diffMult * partyScale));
   }
   computeHealingAmount(baseHealing, healer) {
     return _GameRoom.computeHealingAmount(baseHealing, healer);
@@ -1318,6 +1384,7 @@ var GameRoom = class _GameRoom {
       pr.state.x = this.spawnPoint.x + Math.cos(offsetAngle) * 20;
       pr.state.y = this.spawnPoint.y + Math.sin(offsetAngle) * 20;
       pr.state.readyNextFloor = false;
+      pr.state.statuses = [];
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -1329,10 +1396,252 @@ var GameRoom = class _GameRoom {
       idx++;
     }
   }
-  spawnEnemyForTesting(kind, x, y) {
-    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1, false, this.floor, this.map?.biome || "courtyard");
+  applyPlayerStatus(p, statusType, durationMs, value, sourceId) {
+    if (p.downed || p.godMode) return;
+    const classDef = HERO_CLASSES[p.heroClass];
+    const res = classDef?.resistances || {
+      physical: 0,
+      fire: 0,
+      frost: 0,
+      lightning: 0,
+      poison: 0,
+      bleed: 0
+    };
+    let resMult = 1;
+    if (statusType === "frostbite") resMult = 1 - (res.frost || 0);
+    if (statusType === "scorched") resMult = 1 - (res.fire || 0);
+    if (statusType === "ashen_curse") resMult = 1 - (res.poison || 0);
+    const faithTenacity = Math.min(0.4, (p.faith || 0) * 4e-3);
+    const effectiveDuration = Math.round(durationMs * Math.max(0.2, resMult * (1 - faithTenacity)));
+    const existing = p.statuses.find((s) => s.type === statusType);
+    if (existing) {
+      existing.durationMs = Math.max(existing.durationMs, effectiveDuration);
+      existing.maxDurationMs = Math.max(existing.maxDurationMs, effectiveDuration);
+      if (value !== void 0) existing.value = value;
+      return;
+    }
+    const id = this.nextId("status");
+    p.statuses.push({
+      id,
+      type: statusType,
+      durationMs: effectiveDuration,
+      maxDurationMs: effectiveDuration,
+      value,
+      sourceId,
+      detonationTimerMs: statusType === "voidmarked" || statusType === "condemned" ? 3e3 : void 0
+    });
+    let label = statusType.toUpperCase().replace("_", " ");
+    let color = "#CBD5E1";
+    switch (statusType) {
+      case "guard_broken":
+        color = "#60A5FA";
+        break;
+      case "frostbite":
+        color = "#38BDF8";
+        break;
+      case "scorched":
+        color = "#EF4444";
+        break;
+      case "voidmarked":
+        color = "#A855F7";
+        break;
+      case "disoriented":
+        color = "#818CF8";
+        break;
+      case "charmed":
+        color = "#FDE68A";
+        break;
+      case "ashen_curse":
+        color = "#D9AA52";
+        break;
+      case "silenced":
+        color = "#A855F7";
+        break;
+      case "impaled":
+        color = "#FBBF24";
+        break;
+      case "condemned":
+        color = "#FDE047";
+        break;
+    }
+    this.emitEvent("status", p.x, p.y - 32, `[${label}]`, color);
+  }
+  detonateVoidmark(p, s) {
+    this.emitEvent("status", p.x, p.y - 20, "VOID DETONATION!", "#A855F7");
+    const dmg = 35 + this.floor * 5;
+    this.damagePlayer(p, dmg, "arcane");
+    for (const other of this.players.values()) {
+      if (other.state.id !== p.id && !other.state.downed && Math.hypot(other.state.x - p.x, other.state.y - p.y) <= 95) {
+        this.damagePlayer(other.state, Math.round(dmg * 0.75), "arcane");
+        this.emitEvent("status", other.state.x, other.state.y - 14, "VOID BLAST!", "#A855F7");
+      }
+    }
+  }
+  detonateCondemned(p, s) {
+    this.emitEvent("status", p.x, p.y - 20, "DIVINE JUDGMENT!", "#FDE047");
+    const dmg = 65 + this.floor * 8;
+    this.damagePlayer(p, dmg, "divine");
+  }
+  updatePlayerStatuses(p, dtMs, pulseDotNow) {
+    if (!p.statuses) p.statuses = [];
+    if (p.downed) {
+      if (p.statuses.length > 0) p.statuses = [];
+      return;
+    }
+    for (let i = p.statuses.length - 1; i >= 0; i--) {
+      const s = p.statuses[i];
+      s.durationMs -= dtMs;
+      if (s.type === "scorched" && pulseDotNow) {
+        this.damagePlayer(p, 6 + this.floor * 1.5, "fire");
+      }
+      if (s.detonationTimerMs !== void 0) {
+        s.detonationTimerMs -= dtMs;
+        if (s.detonationTimerMs <= 0) {
+          if (s.type === "voidmarked") this.detonateVoidmark(p, s);
+          if (s.type === "condemned") this.detonateCondemned(p, s);
+          s.detonationTimerMs = void 0;
+        }
+      }
+      if (s.durationMs <= 0) {
+        p.statuses.splice(i, 1);
+        if (s.type === "silenced") {
+          this.emitEvent("status", p.x, p.y - 20, "SKILLS READY", "#34D399");
+        }
+      }
+    }
+  }
+  applyStatusEffect(target, kind, durationMs) {
+    if ("heroClass" in target) {
+      if (kind === "slow") this.applyPlayerStatus(target, "frostbite", durationMs);
+      else if (kind === "burn") this.applyPlayerStatus(target, "scorched", durationMs);
+      else if (kind === "silence") this.applyPlayerStatus(target, "silenced", durationMs);
+      else {
+        const faithTenacity = Math.min(0.4, (target.faith || 0) * 4e-3);
+        const reducedDuration = Math.round(durationMs * (1 - faithTenacity));
+        target.stunnedMs = Math.max(target.stunnedMs, reducedDuration);
+      }
+      return;
+    }
+    const tenacity = target.resistances?.tenacity || 0;
+    const effectiveDuration = kind === "stun" || kind === "freeze" ? Math.max(400, Math.round(durationMs * (1 - tenacity))) : durationMs;
+    switch (kind) {
+      case "slow":
+        target.slowedMs = Math.max(target.slowedMs, effectiveDuration);
+        break;
+      case "stun":
+        target.stunnedMs = Math.max(target.stunnedMs, effectiveDuration);
+        break;
+      case "burn":
+        target.burnedMs = Math.max(target.burnedMs, effectiveDuration);
+        break;
+      case "freeze":
+        target.frozenMs = Math.max(target.frozenMs, effectiveDuration);
+        break;
+      case "shock":
+        target.shockedMs = Math.max(target.shockedMs, effectiveDuration);
+        break;
+      case "poison":
+        target.poisonedMs = Math.max(target.poisonedMs, effectiveDuration);
+        break;
+      case "bleed":
+        target.bleedingMs = Math.max(target.bleedingMs, effectiveDuration);
+        break;
+      case "silence":
+        target.silencedMs = Math.max(target.silencedMs, effectiveDuration);
+        break;
+    }
+  }
+  spawnEnemyForTesting(kind, x, y, elite = false) {
+    const biome = this.map?.biome || "courtyard";
+    const en = makeEnemy(`test_${this.entitySeq++}`, kind, 0, x, y, 1, elite, this.floor, biome);
     this.enemies.push(en);
     return en;
+  }
+  teleportPlayerToFloor(playerId, floorNum) {
+    const targetFloor = Math.max(1, Math.min(10, floorNum));
+    this.loadFloor(targetFloor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Teleported party to Floor ${targetFloor} (${this.map.biomeTitle}).`);
+  }
+  spawnEntitiesForAdmin(playerId, kind, count) {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    const clampedCount = Math.max(1, Math.min(25, count));
+    const biome = this.map?.biome || "courtyard";
+    for (let i = 0; i < clampedCount; i++) {
+      const angle = i * Math.PI * 2 / clampedCount;
+      const dist = 55 + i % 3 * 20;
+      const sx = p.x + Math.cos(angle) * dist;
+      const sy = p.y + Math.sin(angle) * dist;
+      const en = makeEnemy(`adm_${this.entitySeq++}`, kind, 0, sx, sy, 1, kind === "boss", this.floor, biome);
+      this.enemies.push(en);
+    }
+    this.pushSystemChat(`[ADMIN] Spawned ${clampedCount}x ${kind} near ${p.username}.`);
+  }
+  despawnEntity(entityId) {
+    const idx = this.enemies.findIndex((e) => e.id === entityId);
+    if (idx >= 0) {
+      const removed = this.enemies.splice(idx, 1)[0];
+      this.pushSystemChat(`[ADMIN] Despawned entity ${removed.name} (${removed.id}).`);
+    }
+  }
+  clearAllEnemies() {
+    const count = this.enemies.length;
+    this.enemies = [];
+    this.pushSystemChat(`[ADMIN] Cleared all ${count} active enemies from the room.`);
+  }
+  clearSummonedEntities() {
+    const before = this.enemies.length;
+    this.enemies = this.enemies.filter((e) => e.kind === "boss");
+    const cleared = before - this.enemies.length;
+    this.pushSystemChat(`[ADMIN] Cleared ${cleared} summoned entities (retained primary bosses).`);
+  }
+  healPlayer(playerId) {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    p.hp = p.maxHp;
+    p.shield = Math.max(p.shield, 50);
+    this.emitEvent("heal", p.x, p.y - 18, "ADMIN HEAL", "#34D399");
+    this.pushSystemChat(`[ADMIN] Fully restored health & shield for ${p.username}.`);
+  }
+  restoreEnergy(playerId) {
+    const p = this.players.get(playerId)?.state;
+    if (!p) return;
+    p.skillCooldownMs = 0;
+    p.ultCooldownMs = 0;
+    this.emitEvent("status", p.x, p.y - 18, "COOLDOWNS RESET", "#38BDF8");
+    this.pushSystemChat(`[ADMIN] Reset skill & ultimate cooldowns for ${p.username}.`);
+  }
+  reviveAllPlayers() {
+    for (const pr of this.players.values()) {
+      pr.state.downed = false;
+      pr.state.hp = pr.state.maxHp;
+      this.emitEvent("heal", pr.state.x, pr.state.y - 18, "ADMIN REVIVE", "#6EE7B7");
+    }
+    this.pushSystemChat(`[ADMIN] Revived and restored all downed party members.`);
+  }
+  summonBossForFloor(floorNum) {
+    const targetFloor = Math.max(1, Math.min(10, floorNum));
+    this.loadFloor(targetFloor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Summoned Floor ${targetFloor} Guardian Boss encounter.`);
+  }
+  resetBossEncounter() {
+    for (const en of this.enemies) {
+      if (en.kind === "boss") {
+        en.hp = en.maxHp;
+        en.enraged = false;
+        en.shieldWallMs = 0;
+        en.stunnedMs = 0;
+      }
+    }
+    this.pushSystemChat(`[ADMIN] Reset active boss encounter (HP restored, enrage cleared).`);
+  }
+  resetCurrentRoom() {
+    this.loadFloor(this.floor, this.players.size);
+    this.pushSystemChat(`[ADMIN] Reset current room state.`);
+  }
+  toggleEnemyAI(enabled) {
+    const state = enabled ?? true;
+    this.pushSystemChat(`[ADMIN] Enemy AI processing ${state ? "RESUMED" : "PAUSED"}.`);
   }
   restartRun() {
     this.status = "playing";
@@ -1343,6 +1652,7 @@ var GameRoom = class _GameRoom {
       pr.state.potions = 2;
       pr.state.relics = [];
       pr.state.pendingRelicChoices = [];
+      pr.state.statuses = [];
       pr.state.downed = false;
       pr.state.downedTimerMs = 0;
       pr.state.reviveProgress = 0;
@@ -1412,6 +1722,14 @@ var GameRoom = class _GameRoom {
       maxUltCooldownMs: def.ultCooldownMs,
       attackAnimMs: 0,
       hasteMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
       kills: 0,
       damageDealt: 0,
       revives: 0,
@@ -1426,7 +1744,8 @@ var GameRoom = class _GameRoom {
       strength: savedStats?.strength || 0,
       intelligence: savedStats?.intelligence || 0,
       faith: savedStats?.faith || 0,
-      attributePoints: savedStats?.attributePoints || 0
+      attributePoints: savedStats?.attributePoints || 0,
+      statuses: []
     };
     if (state.level >= MAX_LEVEL) {
       state.nextXp = 999999;
@@ -1539,6 +1858,11 @@ var GameRoom = class _GameRoom {
     if (!pr.state.pendingRelicChoices.includes(relicId)) return;
     pr.state.pendingRelicChoices = [];
     if (!pr.state.relics.includes(relicId)) {
+      if (pr.state.relics.length >= 5) {
+        this.emitEvent("status", pr.state.x, pr.state.y - 24, "Vault Full (Max 5)", "#EF4444");
+        this.pushSystemChat(`${pr.state.username} could not claim ${relicId}: Inventory full (Max 5 active relics).`);
+        return;
+      }
       pr.state.relics.push(relicId);
     }
     if (relicId === "bastion_pauldron") {
@@ -1550,6 +1874,23 @@ var GameRoom = class _GameRoom {
     if (relic) {
       this.emitEvent("status", pr.state.x, pr.state.y - 24, `+ ${relic.name}`, relic.accent);
       this.pushSystemChat(`${pr.state.username} claimed relic: ${relic.name}.`);
+    }
+  }
+  unequipRelic(playerId, relicId) {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const idx = pr.state.relics.indexOf(relicId);
+    if (idx >= 0) {
+      pr.state.relics.splice(idx, 1);
+      if (relicId === "bastion_pauldron") {
+        const oldMax = pr.state.maxHp;
+        pr.state.maxHp = _GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+        pr.state.hp = Math.min(pr.state.hp, pr.state.maxHp);
+      }
+      const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+      const relicName = relic ? relic.name : relicId;
+      this.emitEvent("status", pr.state.x, pr.state.y - 24, `- ${relicName}`, "#94A3B8");
+      this.pushSystemChat(`${pr.state.username} unequipped relic: ${relicName}.`);
     }
   }
   togglePlayerGodMode(playerId, enabled) {
@@ -1694,7 +2035,10 @@ var GameRoom = class _GameRoom {
     if (p.downed) return {};
     p.aimAngle = Number.isFinite(aimAngle) ? aimAngle : p.aimAngle;
     const def = HERO_CLASSES[p.heroClass];
-    const cdrMult = p.relics.includes("hourglass_shard") ? 0.75 : 1;
+    const intCdr = Math.min(0.2, (p.intelligence || 0) * 2e-3);
+    const relicCdr = p.relics.includes("hourglass_shard") ? 0.25 : 0;
+    const cdrMult = Math.max(0.55, 1 - (intCdr + relicCdr));
+    const isSilenced = p.statuses && p.statuses.some((s) => s.type === "silenced");
     if (action === "potion") {
       if (p.potions > 0 && p.hp < p.maxHp) {
         p.potions -= 1;
@@ -1777,6 +2121,14 @@ var GameRoom = class _GameRoom {
         }
       }
       for (const prop of this.props) {
+        if (prop.kind === "warden_gate") {
+          const dist2 = Math.hypot(prop.x - p.x, prop.y - p.y);
+          if (dist2 <= 65) {
+            this.emitEvent("status", prop.x, prop.y - 45, '"You are not worthy!"', "#EF4444");
+            this.pushSystemChat(`Warden's Gate: "You are not worthy!"`);
+            return {};
+          }
+        }
         if (prop.opened) continue;
         const dist = Math.hypot(prop.x - p.x, prop.y - p.y);
         if (dist <= 62) {
@@ -1865,7 +2217,7 @@ var GameRoom = class _GameRoom {
       return {};
     }
     if (action === "tactical") {
-      if (p.skillCooldownMs > 0) return {};
+      if (p.skillCooldownMs > 0 || isSilenced) return {};
       p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
@@ -1967,7 +2319,7 @@ var GameRoom = class _GameRoom {
       return {};
     }
     if (action === "ult") {
-      if (p.ultCooldownMs > 0) return {};
+      if (p.ultCooldownMs > 0 || isSilenced) return {};
       p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
       if (p.heroClass === "vanguard") {
@@ -2045,6 +2397,9 @@ var GameRoom = class _GameRoom {
     this.zoneTickAccumMs += dtMs;
     const pulseZonesNow = this.zoneTickAccumMs >= 500;
     if (pulseZonesNow) this.zoneTickAccumMs = 0;
+    this.statusDotAccumMs += dtMs;
+    const pulseDotNow = this.statusDotAccumMs >= 650;
+    if (pulseDotNow) this.statusDotAccumMs = 0;
     for (const npc of this.npcs) {
       if (npc.speakingMs && npc.speakingMs > 0) {
         npc.speakingMs = Math.max(0, npc.speakingMs - dtMs);
@@ -2068,11 +2423,179 @@ var GameRoom = class _GameRoom {
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i];
       z.ttlMs -= dtMs;
+      if (z.kind === "sound_lane" && z.ttlMs <= 0) {
+        const w = z.width || 320;
+        const h = z.height || 40;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (Math.abs(localX) <= w / 2 && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 26 + this.floor * 4, "divine");
+              this.emitEvent("status", pr.state.x, pr.state.y - 14, " RESONANT WAVE!", "#F59E0B");
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "lament_mark" && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 28 + this.floor * 4, "divine");
+            this.applyPlayerStatus(pr.state, "charmed", 3e3);
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "ashen_cloud") {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            pr.state.hasteMs = Math.min(pr.state.hasteMs, 0);
+            this.applyPlayerStatus(pr.state, "ashen_curse", 1500);
+            if (pulseZonesNow) {
+              this.damagePlayer(pr.state, 12 + this.floor * 2, "elemental");
+            }
+          }
+        }
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+      if (z.kind === "censer_sweep" && z.ttlMs <= 0) {
+        const ang = z.angle || 0;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
+            if (dist <= z.radius) {
+              const pAng = Math.atan2(pr.state.y - z.y, pr.state.x - z.x);
+              let diff = pAng - ang;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              if (Math.abs(diff) <= Math.PI * 3 / 4) {
+                this.damagePlayer(pr.state, 34 + this.floor * 4, "physical");
+                this.emitEvent("status", pr.state.x, pr.state.y - 14, " CENSER SWEEP!", "#F59E0B");
+              }
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "scripture_line" && z.ttlMs <= 0) {
+        const w = z.width || 400;
+        const h = z.height || 24;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (Math.abs(localX) <= w / 2 && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 30 + this.floor * 4, "arcane");
+              this.emitEvent("status", pr.state.x, pr.state.y - 14, " SCRIPTURE BINDING!", "#E879F9");
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "silence_seal" && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 28 + this.floor * 4, "arcane");
+            this.applyPlayerStatus(pr.state, "silenced", 4500);
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "lance_thrust" && z.ttlMs <= 0) {
+        const w = z.width || 360;
+        const h = z.height || 40;
+        const ang = z.angle || 0;
+        const cosA = Math.cos(-ang);
+        const sinA = Math.sin(-ang);
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const localX = dx * cosA - dy * sinA;
+            const localY = dx * sinA + dy * cosA;
+            if (localX >= 0 && localX <= w && Math.abs(localY) <= h / 2) {
+              this.damagePlayer(pr.state, 36 + this.floor * 4, "divine");
+              this.applyPlayerStatus(pr.state, "impaled", 4e3);
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "lancefall_mark" && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 32 + this.floor * 4, "divine");
+            this.applyPlayerStatus(pr.state, "impaled", 4e3);
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "warden_edict" && z.ttlMs <= 0) {
+        const q = z.quadrant ?? 0;
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed) {
+            const dx = pr.state.x - z.x;
+            const dy = pr.state.y - z.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= z.radius) {
+              let pAng = Math.atan2(dy, dx);
+              if (pAng < 0) pAng += Math.PI * 2;
+              const pQuad = Math.floor(pAng / (Math.PI / 2)) % 4;
+              if (pQuad === q) {
+                this.damagePlayer(pr.state, 40 + this.floor * 5, "physical");
+                this.applyPlayerStatus(pr.state, "condemned", 5e3);
+              }
+            }
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "warden_parry") {
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+          continue;
+        }
+      }
+      if (z.kind === "verdict_combo" && z.ttlMs <= 0) {
+        const stage = z.stage || 1;
+        const dmg = 30 + stage * 6 + this.floor * 4;
+        for (const pr of this.players.values()) {
+          if (pr.state.downed) continue;
+          if (Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, dmg, "physical");
+            this.applyPlayerStatus(pr.state, "condemned", 4500);
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
+      }
       if (z.kind === "frost_nova" && z.ttlMs <= 0) {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 24 + this.floor * 4, "elemental");
-            this.emitEvent("status", pr.state.x, pr.state.y - 14, " FROST NOVA!", "#38BDF8");
+            this.applyPlayerStatus(pr.state, "frostbite", 4500);
           }
         }
         this.zones.splice(i, 1);
@@ -2082,7 +2605,7 @@ var GameRoom = class _GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 28 + this.floor * 4, "elemental");
-            this.emitEvent("status", pr.state.x, pr.state.y - 14, " BURNING!", "#EF4444");
+            this.applyPlayerStatus(pr.state, "scorched", 5e3);
           }
         }
         this.zones.splice(i, 1);
@@ -2105,7 +2628,7 @@ var GameRoom = class _GameRoom {
           for (const pr of this.players.values()) {
             if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
               this.damagePlayer(pr.state, 32 + this.floor * 4, "elemental");
-              this.emitEvent("status", pr.state.x, pr.state.y - 14, " VOID BURST!", "#A855F7");
+              this.applyPlayerStatus(pr.state, "voidmarked", 4e3);
             }
           }
           this.zones.splice(i, 1);
@@ -2120,7 +2643,7 @@ var GameRoom = class _GameRoom {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (Math.abs(dist - currentRadius) <= 18) {
               this.damagePlayer(pr.state, 26 + this.floor * 4, "elemental");
-              this.emitEvent("status", pr.state.x, pr.state.y - 14, " SUPERNOVA!", "#F472B6");
+              this.applyPlayerStatus(pr.state, "disoriented", 3e3);
             }
           }
         }
@@ -2128,6 +2651,16 @@ var GameRoom = class _GameRoom {
           this.zones.splice(i, 1);
           continue;
         }
+      }
+      if (z.kind === "warden_shatter" && z.ttlMs <= 0) {
+        for (const pr of this.players.values()) {
+          if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
+            this.damagePlayer(pr.state, 36 + this.floor * 4, "physical");
+            this.emitEvent("status", pr.state.x, pr.state.y - 14, " BASTION SHATTER!", "#FBBF24");
+          }
+        }
+        this.zones.splice(i, 1);
+        continue;
       }
       if (z.kind === "starlight_beam" && z.ttlMs <= 0) {
         for (const pr of this.players.values()) {
@@ -2143,6 +2676,11 @@ var GameRoom = class _GameRoom {
         for (const pr of this.players.values()) {
           if (!pr.state.downed && Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
             this.damagePlayer(pr.state, 30 + this.floor * 6, "physical");
+            if (this.floor === 1) {
+              this.applyPlayerStatus(pr.state, "guard_broken", 4e3);
+            } else {
+              this.applyStatusEffect(pr.state, "stun", 1200);
+            }
           }
         }
         const isEmber = this.map.biome === "ember" || this.floor === 3;
@@ -2223,6 +2761,9 @@ var GameRoom = class _GameRoom {
         }
       }
     }
+    for (const pr of this.players.values()) {
+      this.updatePlayerStatuses(pr.state, dtMs, pulseDotNow);
+    }
     this.clericAuraAccumMs += dtMs;
     if (this.clericAuraAccumMs >= 2e3) {
       this.clericAuraAccumMs = 0;
@@ -2240,6 +2781,15 @@ var GameRoom = class _GameRoom {
               }
             }
           }
+        }
+      }
+    }
+    if (this.clericAuraAccumMs === 0) {
+      for (const pr of this.players.values()) {
+        const p = pr.state;
+        if (!p.downed && p.connected && (p.vitality || 0) >= 6 && p.hp < p.maxHp) {
+          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.12));
+          p.hp = Math.min(p.maxHp, p.hp + regenAmt);
         }
       }
     }
@@ -2273,10 +2823,13 @@ var GameRoom = class _GameRoom {
         continue;
       }
       const def = HERO_CLASSES[p.heroClass];
-      let moveSpeed = def.speed;
-      if (p.relics.includes("zephyr_greaves")) moveSpeed *= 1.18;
+      let moveSpeed = def.speed * (1 + (p.dexterity || 0) * 35e-4);
+      if (p.relics.includes("zephyr_greaves")) moveSpeed *= 1.15;
       if (p.hasteMs > 0) moveSpeed *= 1.22;
       if (p.speedBoost) moveSpeed *= 1.8;
+      if (p.statuses.some((s) => s.type === "frostbite")) {
+        moveSpeed *= 0.55;
+      }
       let mx = 0;
       let my = 0;
       if (typeof pr.input.stickX === "number" && typeof pr.input.stickY === "number" && (Math.abs(pr.input.stickX) > 0.05 || Math.abs(pr.input.stickY) > 0.05)) {
@@ -2293,9 +2846,32 @@ var GameRoom = class _GameRoom {
           my /= len;
         }
       }
+      if (p.statuses.some((s) => s.type === "disoriented")) {
+        const drift = Date.now() * 3e-3;
+        mx += Math.cos(drift) * 0.25;
+        my += Math.sin(drift * 0.8) * 0.25;
+      }
       if (mx !== 0 || my !== 0) {
+        const inputLen = Math.hypot(mx, my);
+        if (inputLen > 1) {
+          mx /= inputLen;
+          my /= inputLen;
+        }
         p.vx = mx * moveSpeed;
         p.vy = my * moveSpeed;
+        const charmed = p.statuses.find((s) => s.type === "charmed");
+        if (charmed) {
+          const boss = this.enemies.find((e) => e.kind === "boss");
+          if (boss) {
+            const dx = boss.x - p.x;
+            const dy = boss.y - p.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 20) {
+              p.vx += dx / dist * moveSpeed * 0.7;
+              p.vy += dy / dist * moveSpeed * 0.7;
+            }
+          }
+        }
         this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
       } else {
         p.vx = 0;
@@ -2323,7 +2899,7 @@ var GameRoom = class _GameRoom {
         }
       }
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const dexSpeedMult = 1 + (p.dexterity || 0) * 0.012;
+        const dexSpeedMult = 1 + (p.dexterity || 0) * 6e-3;
         const hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
         p.attackAnimMs = 190;
@@ -2343,9 +2919,6 @@ var GameRoom = class _GameRoom {
         return;
       }
     }
-    this.statusDotAccumMs += dtMs;
-    const pulseDotNow = this.statusDotAccumMs >= 650;
-    if (pulseDotNow) this.statusDotAccumMs = 0;
     for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
       const enemy = this.enemies[eIdx];
       enemy.markedMs = Math.max(0, enemy.markedMs - dtMs);
@@ -2393,7 +2966,7 @@ var GameRoom = class _GameRoom {
       let nearestDist = Infinity;
       const enemyRoom = this.findRoomContaining(enemy.x, enemy.y);
       const isBoss = enemy.kind === "boss";
-      const isRanged = enemy.kind === "skeleton" || enemy.kind === "cultist";
+      const isRanged = enemy.kind === "skeleton" || enemy.kind === "cultist" || enemy.kind === "hymn_phantom" || enemy.kind === "veiled_heretic" || enemy.kind === "astral_sentinel";
       const isAlerted = enemy.markedMs > 0 || enemy.hp < enemy.maxHp;
       for (const pr of this.players.values()) {
         if (pr.state.downed || !pr.state.connected) continue;
@@ -2470,7 +3043,7 @@ var GameRoom = class _GameRoom {
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
           let baseHit = enemy.kind === "knight" ? 19 : enemy.kind === "goblin" ? 13 : 11;
           if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2);
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit));
           enemy.windupMs = enemy.kind === "goblin" ? 850 : 1100;
         }
       } else if (enemy.kind === "shadow_stalker") {
@@ -2483,7 +3056,7 @@ var GameRoom = class _GameRoom {
         if (nearestDist <= enemy.radius + 24 && enemy.windupMs <= 0) {
           let baseHit = 22;
           if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2, "physical");
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "physical");
           nearest.hasteMs = Math.min(nearest.hasteMs, 0);
           enemy.windupMs = 800;
         }
@@ -2579,6 +3152,178 @@ var GameRoom = class _GameRoom {
             enemy.windupMs = 2100;
           }
         }
+      } else if (enemy.kind === "hymn_phantom") {
+        const spd = 92 * slowFactor;
+        if (nearestDist < 130) {
+          this.moveWithCollision(
+            enemy,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        } else if (nearestDist > 220) {
+          this.moveWithCollision(
+            enemy,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        }
+        if (enemy.windupMs <= 0) {
+          for (let k = -1; k <= 1; k += 2) {
+            const a = angle + k * 0.18;
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: enemy.id,
+              style: "arcane",
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 220,
+              vy: Math.sin(a) * 220,
+              angle: a,
+              radius: 6,
+              damage: 18 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 2e3
+            });
+          }
+          this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CHORAL WAIL", "#C084FC");
+          enemy.windupMs = 1750;
+        }
+      } else if (enemy.kind === "relic_golem") {
+        const spd = 74 * slowFactor;
+        if (nearestDist > enemy.radius + 14) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+        if (nearestDist <= enemy.radius + 28 && enemy.windupMs <= 0) {
+          let baseHit = 26;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+          this.damagePlayer(nearest, baseHit + this.floor * 2, "physical");
+          this.emitEvent("damage", nearest.x, nearest.y - 14, "SEISMIC SLAM!", "#F59E0B");
+          for (let k = 0; k < 6; k++) {
+            const sa = k * Math.PI * 2 / 6;
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: enemy.id,
+              style: "slash",
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(sa) * 160,
+              vy: Math.sin(sa) * 160,
+              angle: sa,
+              radius: 6,
+              damage: 14 + this.floor,
+              pierce: 1,
+              ttlMs: 800
+            });
+          }
+          enemy.windupMs = 1800;
+        }
+      } else if (enemy.kind === "veiled_heretic") {
+        const spd = 84 * slowFactor;
+        if (nearestDist < 140) {
+          this.moveWithCollision(
+            enemy,
+            -Math.cos(directAngle) * spd * dtSec,
+            -Math.sin(directAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        } else if (nearestDist > 230) {
+          this.moveWithCollision(
+            enemy,
+            Math.cos(moveAngle) * spd * dtSec,
+            Math.sin(moveAngle) * spd * dtSec,
+            enemy.radius - 2
+          );
+        }
+        if (enemy.windupMs <= 0) {
+          for (let k = -1; k <= 1; k++) {
+            const a = angle + k * 0.22;
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: enemy.id,
+              style: "voidorb",
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 215,
+              vy: Math.sin(a) * 215,
+              angle: a,
+              radius: 7,
+              damage: 19 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1900
+            });
+          }
+          this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CORRUPTED SCRIPTURE", "#A855F7");
+          enemy.windupMs = 1950;
+        }
+      } else if (enemy.kind === "celestial_arbiter") {
+        const spd = 112 * slowFactor;
+        if (nearestDist > enemy.radius + 16) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+        if (enemy.windupMs <= 0) {
+          if (nearestDist <= enemy.radius + 24) {
+            let baseHit = 24;
+            if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+            this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "elemental");
+            this.emitEvent("damage", nearest.x, nearest.y - 14, "JUDGEMENT!", "#FDE047");
+            enemy.windupMs = 1100;
+          } else if (nearestDist <= 220) {
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: enemy.id,
+              style: "radiant",
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(angle) * 310,
+              vy: Math.sin(angle) * 310,
+              angle,
+              radius: 8,
+              damage: 22 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1600
+            });
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "SOLAR THRUST", "#FBBF24");
+            enemy.windupMs = 1400;
+          }
+        }
+      } else if (enemy.kind === "warden_enforcer") {
+        const spd = 94 * slowFactor;
+        if (nearestDist > enemy.radius + 14) {
+          enemy.vx = Math.cos(moveAngle) * spd;
+          enemy.vy = Math.sin(moveAngle) * spd;
+          this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        }
+        if (nearestDist <= enemy.radius + 26 && enemy.windupMs <= 0) {
+          let baseHit = 25;
+          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "physical");
+          this.emitEvent("damage", nearest.x, nearest.y - 14, "HALBERD CLEAVE!", "#38BDF8");
+          enemy.shieldWallMs = 1200;
+          for (let off = -0.22; off <= 0.22; off += 0.44) {
+            const a = angle + off;
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: enemy.id,
+              style: "slash",
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(a) * 230,
+              vy: Math.sin(a) * 230,
+              angle: a,
+              radius: 8,
+              damage: 18 + this.floor * 2,
+              pierce: 1,
+              ttlMs: 1200
+            });
+          }
+          enemy.windupMs = 1500;
+        }
       } else if (enemy.kind === "boss") {
         if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
           enemy.enraged = true;
@@ -2614,7 +3359,7 @@ var GameRoom = class _GameRoom {
           for (const pr of this.players.values()) {
             if (!pr.state.downed && Math.hypot(pr.state.x - enemy.x, pr.state.y - enemy.y) <= enemy.radius + 18) {
               this.damagePlayer(pr.state, 24 + this.floor * 4, "physical");
-              this.emitEvent("damage", pr.state.x, pr.state.y - 14, "TRAMPLED!", "#EF4444");
+              this.applyPlayerStatus(pr.state, "guard_broken", 4500);
             }
           }
           if ((enemy.chargeTimerMs || 0) <= 0) {
@@ -2634,7 +3379,7 @@ var GameRoom = class _GameRoom {
         if (enemy.windupMs <= 0) {
           const patternChoice = Math.random();
           if (this.floor === 1) {
-            if (patternChoice < 0.35) {
+            if (patternChoice < 0.25) {
               enemy.shieldWallMs = 3e3;
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SHIELD WALL!", "#60A5FA");
               for (let off = -0.3; off <= 0.3; off += 0.3) {
@@ -2655,7 +3400,7 @@ var GameRoom = class _GameRoom {
                 });
               }
               enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.7) {
+            } else if (patternChoice < 0.5) {
               for (let off = -0.28; off <= 0.28; off += 0.28) {
                 const a = angle + off;
                 this.spawnProjectile({
@@ -2675,15 +3420,28 @@ var GameRoom = class _GameRoom {
               }
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CLEAVE!", "#EF4444");
               enemy.windupMs = isEnraged ? 700 : 1e3;
+            } else if (patternChoice < 0.75) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "boss_slam",
+                x: nearest.x,
+                y: nearest.y,
+                radius: 88,
+                ttlMs: isEnraged ? 600 : 800,
+                maxTtlMs: isEnraged ? 600 : 800,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " GROUND SLAM!", "#F59E0B");
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else {
               enemy.charging = true;
               enemy.chargeAngle = angle;
               enemy.chargeTimerMs = 580;
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, "CHARGING!", "#F59E0B");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, "WAR CHARGE!", "#F59E0B");
               enemy.windupMs = isEnraged ? 700 : 950;
             }
           } else if (this.floor === 2 || isCatacombs) {
-            if (patternChoice < 0.4) {
+            if (patternChoice < 0.25) {
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2702,23 +3460,30 @@ var GameRoom = class _GameRoom {
               }
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " FROST NOVA!", "#38BDF8");
               enemy.windupMs = isEnraged ? 750 : 1100;
+            } else if (patternChoice < 0.5) {
+              this.damagePlayer(nearest, 22 + this.floor * 2, "elemental");
+              enemy.hp = Math.min(enemy.maxHp, enemy.hp + 45);
+              this.emitEvent("damage", nearest.x, nearest.y - 14, "SOUL SIPHONED!", "#A855F7");
+              this.emitEvent("heal", enemy.x, enemy.y - enemy.radius - 16, "+45 HP", "#34D399");
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
-              for (let k = 0; k < 6; k++) {
-                const a = angle + (k - 2.5) * 0.22;
+              for (let k = 0; k < 5; k++) {
+                const a = angle + (k - 2) * 0.24;
                 this.spawnProjectile({
                   ownerType: "enemy",
                   ownerId: enemy.id,
                   style: "voidorb",
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 250,
-                  vy: Math.sin(a) * 250,
+                  vx: Math.cos(a) * 240,
+                  vy: Math.sin(a) * 240,
                   angle: a,
                   radius: 8,
                   damage: 22,
                   pierce: 1,
                   ttlMs: 2200,
-                  slowOnHit: true
+                  statusOnHit: "frostbite",
+                  statusDurationMs: 4e3
                 });
               }
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SOUL HAIL!", "#A855F7");
@@ -2745,7 +3510,7 @@ var GameRoom = class _GameRoom {
               enemy.windupMs = isEnraged ? 800 : 1150;
             }
           } else if (this.floor === 3 || isEmber) {
-            if (patternChoice < 0.4) {
+            if (patternChoice < 0.25) {
               for (let k = 0; k < 3; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2762,6 +3527,28 @@ var GameRoom = class _GameRoom {
               }
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " MAGMA ERUPTION!", "#EF4444");
               enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.5) {
+              for (let off = -0.36; off <= 0.36; off += 0.18) {
+                const a = angle + off;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "fireball",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 260,
+                  vy: Math.sin(a) * 260,
+                  angle: a,
+                  radius: 9,
+                  damage: 24,
+                  pierce: 1,
+                  ttlMs: 1800,
+                  statusOnHit: "scorched",
+                  statusDurationMs: 4500
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FISSURE WAVE!", "#F97316");
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
               const count = isEnraged ? 18 : 14;
               const rot = Math.random() * Math.PI;
@@ -2782,23 +3569,24 @@ var GameRoom = class _GameRoom {
                   ttlMs: 2400
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FIRESTORM!", "#F59E0B");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CINDER SPIRAL!", "#F59E0B");
               enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
               this.zones.push({
                 id: this.nextId("zone"),
-                kind: "boss_slam",
+                kind: "magma_pillar",
                 x: nearest.x,
                 y: nearest.y,
-                radius: 96,
-                ttlMs: isEnraged ? 650 : 800,
-                maxTtlMs: isEnraged ? 650 : 800,
+                radius: 110,
+                ttlMs: isEnraged ? 700 : 900,
+                maxTtlMs: isEnraged ? 700 : 900,
                 ownerId: enemy.id
               });
-              enemy.windupMs = isEnraged ? 650 : 950;
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CORE DETONATION!", "#EF4444");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
             }
           } else if (this.floor === 4 || isVoid) {
-            if (patternChoice < 0.35) {
+            if (patternChoice < 0.25) {
               this.zones.push({
                 id: this.nextId("zone"),
                 kind: "singularity",
@@ -2811,7 +3599,27 @@ var GameRoom = class _GameRoom {
               });
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SINGULARITY!", "#A855F7");
               enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.7) {
+            } else if (patternChoice < 0.5) {
+              for (let k = 0; k < 6; k++) {
+                const a = k * Math.PI * 2 / 6 + angle;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "voidorb",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 310,
+                  vy: Math.sin(a) * 310,
+                  angle: a,
+                  radius: 8,
+                  damage: 26,
+                  pierce: 1,
+                  ttlMs: 1800
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " TENDRIL FLURRY!", "#C084FC");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
               enemy.x = nearest.x + (Math.random() < 0.5 ? -90 : 90);
               enemy.y = nearest.y + (Math.random() < 0.5 ? -90 : 90);
               const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
@@ -2856,7 +3664,7 @@ var GameRoom = class _GameRoom {
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 5 || isAstral) {
-            if (patternChoice < 0.35) {
+            if (patternChoice < 0.25) {
               this.zones.push({
                 id: this.nextId("zone"),
                 kind: "supernova",
@@ -2867,9 +3675,9 @@ var GameRoom = class _GameRoom {
                 maxTtlMs: 1200,
                 ownerId: enemy.id
               });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SUPERNOVA NOVA!", "#F472B6");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SUPERNOVA!", "#F472B6");
               enemy.windupMs = isEnraged ? 850 : 1250;
-            } else if (patternChoice < 0.7) {
+            } else if (patternChoice < 0.5) {
               for (let k = 0; k < 4; k++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
                 const targetState = prList[k % prList.length]?.state || nearest;
@@ -2886,6 +3694,28 @@ var GameRoom = class _GameRoom {
               }
               this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " STARBEAM CASCADE!", "#38BDF8");
               enemy.windupMs = isEnraged ? 750 : 1050;
+            } else if (patternChoice < 0.75) {
+              for (let k = -2; k <= 3; k++) {
+                const a = angle + k * 0.16;
+                this.spawnProjectile({
+                  ownerType: "enemy",
+                  ownerId: enemy.id,
+                  style: "arcane",
+                  x: enemy.x,
+                  y: enemy.y,
+                  vx: Math.cos(a) * 330,
+                  vy: Math.sin(a) * 330,
+                  angle: a,
+                  radius: 7,
+                  damage: 28,
+                  pierce: 1,
+                  ttlMs: 2e3,
+                  statusOnHit: "disoriented",
+                  statusDurationMs: 3500
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " COSMIC VOLLEY!", "#818CF8");
+              enemy.windupMs = isEnraged ? 650 : 950;
             } else {
               const count = isEnraged ? 22 : 18;
               const rot = Math.random() * Math.PI;
@@ -2906,99 +3736,136 @@ var GameRoom = class _GameRoom {
                   ttlMs: 2400
                 });
               }
-              enemy.windupMs = isEnraged ? 700 : 1e3;
+              enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 6 || this.map.biome === "hymns") {
-            if (patternChoice < 0.35) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "supernova",
-                x: enemy.x,
-                y: enemy.y,
-                radius: 150,
-                ttlMs: 1300,
-                maxTtlMs: 1300,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SACRED HYMN ECHO!", "#A855F7");
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.7) {
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+            if (patternChoice < 0.25) {
+              for (let lane = -1; lane <= 1; lane++) {
+                const perpX = Math.cos(angle + Math.PI / 2) * (lane * 50);
+                const perpY = Math.sin(angle + Math.PI / 2) * (lane * 50);
                 this.zones.push({
                   id: this.nextId("zone"),
-                  kind: "starlight_beam",
-                  x: targetState.x + (Math.random() * 50 - 25),
-                  y: targetState.y + (Math.random() * 50 - 25),
-                  radius: 75,
-                  ttlMs: 750,
-                  maxTtlMs: 750,
+                  kind: "sound_lane",
+                  x: enemy.x + perpX,
+                  y: enemy.y + perpY,
+                  width: 340,
+                  height: 38,
+                  angle,
+                  radius: 170,
+                  ttlMs: isEnraged ? 700 : 950,
+                  maxTtlMs: isEnraged ? 700 : 950,
                   ownerId: enemy.id
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " PSALM SEALS!", "#FCD34D");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else {
-              this.summonBossAdds(enemy);
-              const count = isEnraged ? 20 : 16;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "radiant",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 280,
-                  vy: Math.sin(a) * 280,
-                  angle: a,
-                  radius: 8,
-                  damage: 28,
-                  pierce: 1,
-                  ttlMs: 2200
-                });
-              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " RESONANT CRESCENDO!", "#F59E0B");
               enemy.windupMs = isEnraged ? 750 : 1100;
-            }
-          } else if (this.floor === 7 || this.map.biome === "reliquary") {
-            if (patternChoice < 0.35) {
-              enemy.shieldWallMs = 3500;
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " ASHEN BASTION!", "#D9AA52");
-              for (let k = 0; k < 8; k++) {
-                const a = k * Math.PI * 2 / 8;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "slash",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 260,
-                  vy: Math.sin(a) * 260,
-                  angle: a,
-                  radius: 9,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 1600
+            } else if (patternChoice < 0.5) {
+              for (const pr of this.players.values()) {
+                if (!pr.state.downed) {
+                  this.zones.push({
+                    id: this.nextId("zone"),
+                    kind: "lament_mark",
+                    x: pr.state.x,
+                    y: pr.state.y,
+                    radius: 65,
+                    ttlMs: isEnraged ? 650 : 850,
+                    maxTtlMs: isEnraged ? 650 : 850,
+                    ownerId: enemy.id
+                  });
+                }
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " LAMENT OF THE FORGOTTEN!", "#FEF08A");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            } else if (patternChoice < 0.75) {
+              for (let c = -1; c <= 1; c++) {
+                const echoAngle = angle + c * 0.45;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "sound_lane",
+                  x: enemy.x + Math.cos(echoAngle) * 80,
+                  y: enemy.y + Math.sin(echoAngle) * 80,
+                  width: 380,
+                  height: 34,
+                  angle: echoAngle,
+                  radius: 190,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
+                  ownerId: enemy.id
                 });
               }
-              enemy.windupMs = isEnraged ? 750 : 1150;
-            } else if (patternChoice < 0.7) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "boss_slam",
-                x: nearest.x,
-                y: nearest.y,
-                radius: 100,
-                ttlMs: isEnraged ? 600 : 750,
-                maxTtlMs: isEnraged ? 600 : 750,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIQUARY SLAM!", "#EF4444");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " DIVINE CHORUS BEAMS!", "#FBBF24");
               enemy.windupMs = isEnraged ? 650 : 950;
             } else {
-              for (let off = -0.4; off <= 0.4; off += 0.16) {
+              this.summonBossAdds(enemy);
+              for (let lane = -2; lane <= 2; lane++) {
+                const crAngle = lane * Math.PI / 5;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "sound_lane",
+                  x: enemy.x,
+                  y: enemy.y,
+                  width: 400,
+                  height: 32,
+                  angle: crAngle,
+                  radius: 200,
+                  ttlMs: 1e3,
+                  maxTtlMs: 1e3,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CHORUS OF REMEMBRANCE!", "#FEF08A");
+              enemy.windupMs = isEnraged ? 800 : 1150;
+            }
+          } else if (this.floor === 7 || this.map.biome === "reliquary") {
+            if (patternChoice < 0.25) {
+              for (let c = 0; c < 2; c++) {
+                const offX = c === 0 ? -60 : 60;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "ashen_cloud",
+                  x: enemy.x + offX,
+                  y: enemy.y + (c === 0 ? -40 : 40),
+                  radius: 85,
+                  ttlMs: 3200,
+                  maxTtlMs: 3200,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " ASHEN PROCESSION!", "#D9AA52");
+              enemy.windupMs = isEnraged ? 700 : 1050;
+            } else if (patternChoice < 0.5) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "censer_sweep",
+                x: enemy.x,
+                y: enemy.y,
+                angle,
+                radius: 155,
+                ttlMs: isEnraged ? 750 : 950,
+                maxTtlMs: isEnraged ? 750 : 950,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CHAIN OF THE DEPARTED!", "#F59E0B");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            } else if (patternChoice < 0.75) {
+              for (let m = 0; m < 3; m++) {
+                const rAngle = m * Math.PI * 2 / 3 + Date.now() * 1e-3;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "lament_mark",
+                  x: enemy.x + Math.cos(rAngle) * 110,
+                  y: enemy.y + Math.sin(rAngle) * 110,
+                  radius: 70,
+                  ttlMs: 800,
+                  maxTtlMs: 800,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIQUARY AWAKENING!", "#E2E8F0");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else {
+              this.summonBossAdds(enemy);
+              for (let off = -0.3; off <= 0.3; off += 0.3) {
                 const a = angle + off;
                 this.spawnProjectile({
                   ownerType: "enemy",
@@ -3006,59 +3873,75 @@ var GameRoom = class _GameRoom {
                   style: "radiant",
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 320,
-                  vy: Math.sin(a) * 320,
+                  vx: Math.cos(a) * 340,
+                  vy: Math.sin(a) * 340,
                   angle: a,
-                  radius: 9,
-                  damage: 30,
-                  pierce: 1,
-                  ttlMs: 2e3
+                  radius: 10,
+                  damage: 34,
+                  pierce: 2,
+                  ttlMs: 1800,
+                  statusOnHit: "ashen_curse",
+                  statusDurationMs: 5e3
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIC BARRAGE!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " JUDGMENT OF THE DEPARTED!", "#FEF08A");
+              enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 8 || this.map.biome === "scripture") {
-            if (patternChoice < 0.35) {
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+            if (patternChoice < 0.25) {
+              for (let line = -1; line <= 1; line++) {
+                const gridAngle = line === 0 ? angle : angle + Math.PI / 2;
                 this.zones.push({
                   id: this.nextId("zone"),
-                  kind: "magma_pillar",
-                  x: targetState.x + (Math.random() * 60 - 30),
-                  y: targetState.y + (Math.random() * 60 - 30),
-                  radius: 80,
-                  ttlMs: 700,
-                  maxTtlMs: 700,
+                  kind: "scripture_line",
+                  x: enemy.x,
+                  y: enemy.y,
+                  width: 420,
+                  height: 26,
+                  angle: gridAngle,
+                  radius: 210,
+                  ttlMs: isEnraged ? 650 : 850,
+                  maxTtlMs: isEnraged ? 650 : 850,
                   ownerId: enemy.id
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SCRIPTURE SEALS!", "#E879F9");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SCRIPTURE OF BINDING!", "#E879F9");
               enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.7) {
-              enemy.x = nearest.x + (Math.random() < 0.5 ? -100 : 100);
-              enemy.y = nearest.y + (Math.random() < 0.5 ? -100 : 100);
-              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
-              for (let k = -2; k <= 2; k++) {
-                const a = newAngle + k * 0.2;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: k % 2 === 0 ? "radiant" : "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 310,
-                  vy: Math.sin(a) * 310,
-                  angle: a,
-                  radius: 8,
-                  damage: 30,
-                  pierce: 1,
-                  ttlMs: 2e3
+            } else if (patternChoice < 0.5) {
+              for (let v = 1; v <= 4; v++) {
+                const pageAngle = angle + (v - 2.5) * 0.4;
+                const dist = 70 + v * 35;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "lancefall_mark",
+                  x: enemy.x + Math.cos(pageAngle) * dist,
+                  y: enemy.y + Math.sin(pageAngle) * dist,
+                  radius: 60,
+                  seqNumber: v,
+                  ttlMs: 600 + v * 220,
+                  maxTtlMs: 600 + v * 220,
+                  ownerId: enemy.id
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " VEILED STEP!", "#A855F7");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FORBIDDEN VERSES!", "#A855F7");
               enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              for (const pr of this.players.values()) {
+                if (!pr.state.downed) {
+                  this.zones.push({
+                    id: this.nextId("zone"),
+                    kind: "silence_seal",
+                    x: pr.state.x,
+                    y: pr.state.y,
+                    radius: 75,
+                    ttlMs: isEnraged ? 800 : 1100,
+                    maxTtlMs: isEnraged ? 800 : 1100,
+                    ownerId: enemy.id
+                  });
+                }
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SEAL OF SILENCE!", "#C084FC");
+              enemy.windupMs = isEnraged ? 750 : 1100;
             } else {
               const count = isEnraged ? 22 : 18;
               for (let k = 0; k < count; k++) {
@@ -3075,131 +3958,151 @@ var GameRoom = class _GameRoom {
                   radius: 8,
                   damage: 32,
                   pierce: 1,
-                  ttlMs: 2200
+                  ttlMs: 2200,
+                  statusOnHit: "silenced",
+                  statusDurationMs: 3500
                 });
               }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " HERETICAL VOLLEY!", "#F43F5E");
               enemy.windupMs = isEnraged ? 750 : 1100;
             }
           } else if (this.floor === 9 || this.map.biome === "nave") {
-            if (patternChoice < 0.35) {
-              for (let k = 0; k < 4; k++) {
+            if (patternChoice < 0.25) {
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "lance_thrust",
+                x: enemy.x,
+                y: enemy.y,
+                width: 380,
+                height: 42,
+                angle,
+                radius: 190,
+                ttlMs: isEnraged ? 600 : 800,
+                maxTtlMs: isEnraged ? 600 : 800,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " HEAVEN'S PIERCING LINE!", "#FDE047");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.5) {
+              for (let l = 1; l <= 4; l++) {
                 const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
+                const targetState = prList[(l - 1) % prList.length]?.state || nearest;
+                const offsetX = l === 1 ? -40 : l === 2 ? 40 : l === 3 ? -20 : 20;
+                const offsetY = l === 1 ? -20 : l === 2 ? 20 : l === 3 ? 40 : -40;
                 this.zones.push({
                   id: this.nextId("zone"),
-                  kind: "starlight_beam",
-                  x: targetState.x + (Math.random() * 50 - 25),
-                  y: targetState.y + (Math.random() * 50 - 25),
-                  radius: 75,
-                  ttlMs: 700,
-                  maxTtlMs: 700,
+                  kind: "lancefall_mark",
+                  x: targetState.x + offsetX,
+                  y: targetState.y + offsetY,
+                  radius: 65,
+                  seqNumber: l,
+                  ttlMs: 650 + l * 250,
+                  maxTtlMs: 650 + l * 250,
                   ownerId: enemy.id
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " FINAL SEAL JUDGEMENT!", "#F472B6");
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.7) {
-              enemy.charging = true;
-              enemy.chargeAngle = angle;
-              enemy.chargeTimerMs = 600;
-              for (let off = -0.3; off <= 0.3; off += 0.15) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "radiant",
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " LANCEFALL SEQUENCE!", "#FBBF24");
+              enemy.windupMs = isEnraged ? 700 : 1e3;
+            } else if (patternChoice < 0.75) {
+              for (let d = -1; d <= 1; d++) {
+                const diveAngle = angle + d * 0.35;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "lance_thrust",
                   x: enemy.x,
                   y: enemy.y,
-                  vx: Math.cos(a) * 340,
-                  vy: Math.sin(a) * 340,
-                  angle: a,
-                  radius: 9,
-                  damage: 34,
-                  pierce: 1,
-                  ttlMs: 1800
+                  width: 320,
+                  height: 36,
+                  angle: diveAngle,
+                  radius: 160,
+                  ttlMs: 700 + Math.abs(d) * 200,
+                  maxTtlMs: 700 + Math.abs(d) * 200,
+                  ownerId: enemy.id
                 });
               }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SERAPHIC THRUST!", "#FDE047");
-              enemy.windupMs = isEnraged ? 650 : 950;
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " AERIAL JUDGMENT!", "#38BDF8");
+              enemy.windupMs = isEnraged ? 650 : 900;
             } else {
-              const count = isEnraged ? 24 : 20;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "radiant",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 320,
-                  vy: Math.sin(a) * 320,
-                  angle: a,
-                  radius: 9,
-                  damage: 34,
-                  pierce: 1,
-                  ttlMs: 2400
+              for (let l = 1; l <= 6; l++) {
+                const spAngle = l * Math.PI * 2 / 6;
+                const dist = 90;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "lancefall_mark",
+                  x: enemy.x + Math.cos(spAngle) * dist,
+                  y: enemy.y + Math.sin(spAngle) * dist,
+                  radius: 65,
+                  seqNumber: l,
+                  ttlMs: 650 + l * 180,
+                  maxTtlMs: 650 + l * 180,
+                  ownerId: enemy.id
                 });
               }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SENTINEL SPEARFALL CASCADE!", "#FBBF24");
               enemy.windupMs = isEnraged ? 700 : 1e3;
             }
           } else if (this.floor === 10 || this.map.biome === "wardengate") {
-            if (patternChoice < 0.35) {
-              enemy.shieldWallMs = 4e3;
-              this.summonBossAdds(enemy);
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S AEGIS BULWARK!", "#38BDF8");
-              for (let k = 0; k < 10; k++) {
-                const a = k * Math.PI * 2 / 10;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "slash",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 290,
-                  vy: Math.sin(a) * 290,
-                  angle: a,
-                  radius: 10,
-                  damage: 32,
-                  pierce: 1,
-                  ttlMs: 1800
-                });
+            if (patternChoice < 0.25) {
+              const safeQuad = Math.floor(Math.random() * 4);
+              for (let q = 0; q < 4; q++) {
+                if (q !== safeQuad) {
+                  this.zones.push({
+                    id: this.nextId("zone"),
+                    kind: "warden_edict",
+                    x: enemy.x,
+                    y: enemy.y,
+                    radius: 220,
+                    quadrant: q,
+                    ttlMs: isEnraged ? 900 : 1200,
+                    maxTtlMs: isEnraged ? 900 : 1200,
+                    ownerId: enemy.id
+                  });
+                }
               }
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.7) {
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S EDICT! FIND SAFE QUADRANT!", "#EF4444");
+              enemy.windupMs = isEnraged ? 800 : 1150;
+            } else if (patternChoice < 0.5) {
               this.zones.push({
                 id: this.nextId("zone"),
-                kind: "supernova",
+                kind: "warden_parry",
                 x: enemy.x,
                 y: enemy.y,
-                radius: 160,
+                radius: 65,
+                ttlMs: 2200,
+                maxTtlMs: 2200,
+                ownerId: enemy.id
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " UNBROKEN JUDGMENT! (AEGIS PARRY)", "#F59E0B");
+              enemy.windupMs = isEnraged ? 650 : 950;
+            } else if (patternChoice < 0.75) {
+              for (let st = 1; st <= (isEnraged ? 3 : 2); st++) {
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "verdict_combo",
+                  x: enemy.x + Math.cos(angle) * (st * 40),
+                  y: enemy.y + Math.sin(angle) * (st * 40),
+                  radius: 80 + st * 25,
+                  stage: st,
+                  ttlMs: 500 + st * 350,
+                  maxTtlMs: 500 + st * 350,
+                  ownerId: enemy.id
+                });
+              }
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " THE FINAL VERDICT COMBO!", "#FEF08A");
+              enemy.windupMs = isEnraged ? 750 : 1100;
+            } else {
+              this.summonBossAdds(enemy);
+              this.zones.push({
+                id: this.nextId("zone"),
+                kind: "warden_shatter",
+                x: enemy.x,
+                y: enemy.y,
+                radius: 190,
                 ttlMs: 1400,
                 maxTtlMs: 1400,
                 ownerId: enemy.id
               });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SANCTUARY GATE COLLAPSE!", "#EF4444");
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else {
-              const count = isEnraged ? 28 : 22;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: k % 2 === 0 ? "slash" : "radiant",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 330,
-                  vy: Math.sin(a) * 330,
-                  angle: a,
-                  radius: 9,
-                  damage: 36,
-                  pierce: 1,
-                  ttlMs: 2500
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FINAL EXECUTION!", "#F59E0B");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " BASTION GROUND SHATTER!", "#FBBF24");
               enemy.windupMs = isEnraged ? 700 : 1e3;
             }
           }
@@ -3256,6 +4159,9 @@ var GameRoom = class _GameRoom {
           if (pr.state.downed || !pr.state.connected) continue;
           if (Math.hypot(pr.state.x - proj.x, pr.state.y - proj.y) <= 14 + proj.radius) {
             this.damagePlayer(pr.state, proj.damage);
+            if (proj.statusOnHit) {
+              this.applyPlayerStatus(pr.state, proj.statusOnHit, proj.statusDurationMs || 3e3);
+            }
             hitPlayer = true;
             break;
           }
@@ -3347,7 +4253,7 @@ var GameRoom = class _GameRoom {
     const def = HERO_CLASSES[p.heroClass];
     const category = p.heroClass === "arcanist" ? "arcane" : p.heroClass === "cleric" ? "divine" : "physical";
     const mult = this.computeDamageMult(p, category);
-    const critChance = Math.min(0.55, 0.1 + (p.dexterity || 0) * 8e-3 + (p.relics.includes("keen_arrowhead") ? 0.25 : 0));
+    const critChance = Math.min(0.45, 0.1 + (p.dexterity || 0) * 4e-3 + (p.relics.includes("keen_arrowhead") ? 0.2 : 0));
     const hasCrit = Math.random() < critChance;
     const critMult = hasCrit ? 1.75 : 1;
     const dmg = Math.round(def.damage * mult * critMult);
@@ -3475,6 +4381,7 @@ var GameRoom = class _GameRoom {
     const proj = {
       id: this.nextId("proj"),
       ...spec,
+      pierce: spec.pierce ?? 1,
       hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : []
     };
     this.projectiles.push(proj);
@@ -3486,8 +4393,8 @@ var GameRoom = class _GameRoom {
     const isVoid = this.map.biome === "void" || this.floor === 4;
     const isAstral = this.map.biome === "astral" || this.floor === 5;
     const minionKind = isAstral ? "cultist" : isVoid ? "skeleton" : isEmber ? "knight" : isCatacombs ? "cultist" : "skeleton";
-    this.emitEvent("status", boss.x, boss.y - boss.radius - 20, "\uFE0F REINFORCEMENTS!", "#F59E0B");
-    this.pushSystemChat(`\uFE0F ${boss.name} calls forth dungeon reinforcements!`);
+    this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " REINFORCEMENTS!", "#F59E0B");
+    this.pushSystemChat(`${boss.name} calls forth dungeon reinforcements!`);
     for (let i = 0; i < 2; i++) {
       let addX = boss.x + (i === 0 ? -50 : 50);
       let addY = boss.y + (i === 0 ? 35 : -35);
@@ -3520,6 +4427,16 @@ var GameRoom = class _GameRoom {
     if (enemy.shieldWallMs && enemy.shieldWallMs > 0) {
       finalDmg = Math.max(1, Math.round(finalDmg * 0.4));
       this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, " BLOCKED! (-60%)", "#60A5FA");
+    }
+    const isParrying = this.zones.some(
+      (z) => z.kind === "warden_parry" && z.ownerId === enemy.id
+    );
+    if (isParrying && attacker) {
+      const reflectDmg = Math.round(rawAmount * 0.85);
+      this.damagePlayer(attacker, reflectDmg, "divine");
+      this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, "AEGIS PARRY & REFLECTED!", "#F59E0B");
+      this.emitEvent("damage", attacker.x, attacker.y - 14, `${reflectDmg}`, "#EF4444");
+      return 0;
     }
     let effectiveCrit = isCritBool;
     if (attacker && attacker.heroClass === "ranger") {
@@ -3558,7 +4475,7 @@ var GameRoom = class _GameRoom {
         if (enemy.stunnedMs > 0 || enemy.burnedMs > 0 || enemy.frozenMs > 0) {
           if (attacker.shield < 60) {
             attacker.shield = Math.min(60, attacker.shield + 3);
-            this.emitEvent("status", attacker.x, attacker.y - 20, "\uFE0F Iron Will (+3 Shield)", "#93C5FD");
+            this.emitEvent("status", attacker.x, attacker.y - 20, " Iron Will (+3 Shield)", "#93C5FD");
           }
         }
       }
@@ -3668,7 +4585,7 @@ var GameRoom = class _GameRoom {
       if (attacker.heroClass === "vanguard") {
         if (attacker.shield < 60) {
           attacker.shield = Math.min(60, attacker.shield + 3);
-          this.emitEvent("status", attacker.x, attacker.y - 20, "\uFE0F Iron Will (+3 Shield)", "#93C5FD");
+          this.emitEvent("status", attacker.x, attacker.y - 20, " Iron Will (+3 Shield)", "#93C5FD");
         }
       }
     }
@@ -3686,7 +4603,7 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", dummy.x, dummy.y - 42, " IGNITED!", "#F97316");
       }
       if (attacker.relics.includes("rimefrost_shard") && Math.random() < 0.25) {
-        this.emitEvent("status", dummy.x, dummy.y - 42, "\uFE0F CHILLED!", "#38BDF8");
+        this.emitEvent("status", dummy.x, dummy.y - 42, " CHILLED!", "#38BDF8");
       }
       if (attacker.relics.includes("stormcaller_lodestone")) {
         const pr = this.players.get(attacker.id);
@@ -3707,7 +4624,7 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", dummy.x, dummy.y - 42, " POISONED!", "#22C55E");
       }
       if (attacker.relics.includes("bloodletter_talisman")) {
-        this.emitEvent("status", dummy.x, dummy.y - 42, "\u{1FA78} LACERATED!", "#DC2626");
+        this.emitEvent("status", dummy.x, dummy.y - 42, " LACERATED!", "#DC2626");
       }
     }
   }
@@ -3745,7 +4662,10 @@ var GameRoom = class _GameRoom {
         value: 1
       });
     }
-    const xpGain = enemy.kind === "boss" ? 95 : enemy.elite ? 28 : 16;
+    const baseMobXp = enemy.kind === "boss" ? 120 : enemy.elite ? 35 : 18;
+    const floorXpBonus = 1 + (this.floor - 1) * 0.35;
+    const diffXpBonus = this.difficulty === "Abyssal" ? 1.5 : this.difficulty === "Heroic" ? 1.25 : 1;
+    const xpGain = Math.round(baseMobXp * floorXpBonus * diffXpBonus);
     for (const ally of this.players.values()) {
       this.grantXp(ally.state, xpGain);
     }
@@ -3765,7 +4685,7 @@ var GameRoom = class _GameRoom {
       if (p.level <= MAX_LEVEL) {
         p.attributePoints += 2;
       }
-      p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(p.nextXp * 1.35);
+      p.nextXp = _GameRoom.computeNextXp(p.level);
       if (p.level >= MAX_LEVEL) {
         p.level = MAX_LEVEL;
         p.xp = 0;
@@ -3805,11 +4725,24 @@ var GameRoom = class _GameRoom {
     if (p.relics.includes("thorned_aegis") && damageType === "physical") {
       resist += 0.1;
     }
+    if (damageType === "physical" && (p.strength || 0) > 0) {
+      resist += Math.min(0.15, (p.strength || 0) * 15e-4);
+    }
+    if (damageType === "elemental" && (p.intelligence || 0) > 0) {
+      resist += Math.min(0.15, (p.intelligence || 0) * 15e-4);
+    }
     resist = Math.min(0.75, Math.max(0, resist));
     let dmg = Math.max(1, Math.round(rawDamage * (1 - resist)));
+    if (p.statuses.some((s) => s.type === "guard_broken")) {
+      dmg = Math.round(dmg * 1.3);
+    }
+    if (damageType === "divine" && p.statuses.some((s) => s.type === "impaled")) {
+      dmg = Math.round(dmg * 1.45);
+      this.emitEvent("status", p.x, p.y - 14, "IMPALED CRITICAL!", "#FBBF24");
+    }
     if (p.heroClass === "vanguard") {
       dmg = Math.max(1, Math.round(dmg * 0.85));
-      this.emitEvent("status", p.x, p.y - 28, "\uFE0F Iron Will (-15%)", "#CBD5E1");
+      this.emitEvent("status", p.x, p.y - 28, " Iron Will (-15%)", "#CBD5E1");
     }
     const inAegis = this.zones.some(
       (z) => z.kind === "aegis_dome" && Math.hypot(p.x - z.x, p.y - z.y) <= z.radius
@@ -3825,13 +4758,9 @@ var GameRoom = class _GameRoom {
         for (const enemy of this.enemies) {
           if (enemy.hp > 0 && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 125) {
             const tenacity = enemy.resistances ? enemy.resistances.tenacity : 0;
-            const stunDur = Math.round(1800 * (1 - tenacity));
-            if (stunDur >= 500) {
-              enemy.stunnedMs = stunDur;
-              this.emitEvent("status", enemy.x, enemy.y - 16, "STUNNED!", "#A855F7");
-            } else {
-              this.emitEvent("status", enemy.x, enemy.y - 16, "TENACIOUS!", "#FBBF24");
-            }
+            const stunDur = Math.max(400, Math.round(1800 * (1 - tenacity)));
+            enemy.stunnedMs = stunDur;
+            this.emitEvent("status", enemy.x, enemy.y - 16, "STUNNED!", "#A855F7");
           }
         }
       }
@@ -3907,7 +4836,15 @@ var GameRoom = class _GameRoom {
       return true;
     }
     const code = this.map.tiles[ty * this.map.width + tx];
-    return code === 0 || code === 2 || code === 3;
+    if (code === 0 || code === 2 || code === 3) return true;
+    for (const prop of this.props) {
+      if (prop.kind === "warden_gate" && !prop.opened) {
+        if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
   collidesCircle(wx, wy, radius) {
     if (this.isWallAtWorld(wx, wy)) return true;
@@ -3942,7 +4879,7 @@ var GameRoom = class _GameRoom {
     }
     const targetX = entity.x + dx;
     const targetY = entity.y + dy;
-    if (!this.collidesCircle(targetX, targetY, radius)) {
+    if (this.hasLineOfSight(entity.x, entity.y, targetX, targetY) && !this.collidesCircle(targetX, targetY, radius)) {
       entity.x = targetX;
       entity.y = targetY;
       return;
@@ -4540,7 +5477,7 @@ async function startServer() {
       if (hostname === "localhost" || hostname === "127.0.0.1") {
         return true;
       }
-      if (hostname.endsWith(".onrender.com") || hostname.endsWith(".run.app") || hostname.endsWith(".vercel.app")) {
+      if (hostname.endsWith(".onrender.com") || hostname.endsWith(".run.app") || hostname.endsWith(".vercel.app") || hostname.endsWith(".itch.io") || hostname.endsWith(".itch.zone")) {
         return true;
       }
     } catch {
@@ -4941,6 +5878,8 @@ async function startServer() {
         }
       } else if (msg.type === "player:select_relic") {
         room.selectRelic(acc.id, msg.relicId);
+      } else if (msg.type === "player:unequip_relic") {
+        room.unequipRelic(acc.id, msg.relicId);
       } else if (msg.type === "player:change_class") {
         if (acc.isAdmin) {
           const validClass = msg.heroClass === "ranger" || msg.heroClass === "arcanist" || msg.heroClass === "cleric" || msg.heroClass === "vanguard" ? msg.heroClass : "vanguard";
@@ -5011,6 +5950,54 @@ async function startServer() {
         if (acc.isAdmin) {
           room.spawnDummyAtPlayer(acc.id);
         }
+      } else if (msg.type === "admin:teleport_floor") {
+        if (acc.isAdmin && typeof msg.floor === "number") {
+          room.teleportPlayerToFloor(acc.id, msg.floor);
+        }
+      } else if (msg.type === "admin:spawn_entity") {
+        if (acc.isAdmin && msg.kind) {
+          room.spawnEntitiesForAdmin(acc.id, msg.kind, msg.count || 1);
+        }
+      } else if (msg.type === "admin:despawn_entity") {
+        if (acc.isAdmin && msg.entityId) {
+          room.despawnEntity(String(msg.entityId));
+        }
+      } else if (msg.type === "admin:clear_enemies") {
+        if (acc.isAdmin) {
+          room.clearAllEnemies();
+        }
+      } else if (msg.type === "admin:clear_summoned") {
+        if (acc.isAdmin) {
+          room.clearSummonedEntities();
+        }
+      } else if (msg.type === "admin:heal_player") {
+        if (acc.isAdmin) {
+          room.healPlayer(acc.id);
+        }
+      } else if (msg.type === "admin:restore_energy") {
+        if (acc.isAdmin) {
+          room.restoreEnergy(acc.id);
+        }
+      } else if (msg.type === "admin:revive_all") {
+        if (acc.isAdmin) {
+          room.reviveAllPlayers();
+        }
+      } else if (msg.type === "admin:summon_boss") {
+        if (acc.isAdmin && typeof msg.floor === "number") {
+          room.summonBossForFloor(msg.floor);
+        }
+      } else if (msg.type === "admin:reset_boss") {
+        if (acc.isAdmin) {
+          room.resetBossEncounter();
+        }
+      } else if (msg.type === "admin:reset_room") {
+        if (acc.isAdmin) {
+          room.resetCurrentRoom();
+        }
+      } else if (msg.type === "admin:toggle_ai") {
+        if (acc.isAdmin) {
+          room.toggleEnemyAI(msg.enabled);
+        }
       } else if (msg.type === "player:ping") {
         room.addPing(acc.id, msg.label, msg.x, msg.y);
       } else if (msg.type === "chat:send") {
@@ -5071,8 +6058,8 @@ async function startServer() {
           sendJson(ws, { type: "error", message: "Attributes can only be reset in the Sanctuary Tavern." });
           return;
         }
-        if (!room.isPlayerNearNpc(acc.id, "npc_aleph", 85)) {
-          sendJson(ws, { type: "error", message: "You must be speaking with Aleph to reset your attributes." });
+        if (!room.isPlayerNearNpc(acc.id, "npc_aleph", 180)) {
+          sendJson(ws, { type: "error", message: "You must be near Aleph to reset your attributes." });
           return;
         }
         const spent = (acc.strength || 0) + (acc.vitality || 0) + (acc.dexterity || 0) + (acc.intelligence || 0) + (acc.faith || 0);

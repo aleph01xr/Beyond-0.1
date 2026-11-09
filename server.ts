@@ -654,11 +654,13 @@ async function startServer() {
         return true;
       }
 
-      // Deployed platforms (Render, Google Cloud Run / AI Studio preview, Vercel)
+      // Deployed platforms (Render, Google Cloud Run / AI Studio preview, Vercel, Itch.io)
       if (
         hostname.endsWith('.onrender.com') ||
         hostname.endsWith('.run.app') ||
-        hostname.endsWith('.vercel.app')
+        hostname.endsWith('.vercel.app') ||
+        hostname.endsWith('.itch.io') ||
+        hostname.endsWith('.itch.zone')
       ) {
         return true;
       }
