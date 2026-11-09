@@ -3881,57 +3881,189 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       ctx.restore();
 
-      // Corner Minimap
+      // ——— HIGH-DETAIL STONE RADAR MINIMAP ———
       const isMobileScreen = cw < 640;
-      const mmScale = isMobileScreen ? 2 : 3;
+      const mmScale = isMobileScreen ? 2 : 2.5;
       const mmW = map.width * mmScale;
       const mmH = map.height * mmScale;
+      const pad = 6;
       const mmX = cw - mmW - (isMobileScreen ? 12 : 20);
-      const mmY = isMobileScreen ? 58 : 74;
+      const mmY = isMobileScreen ? 56 : 74;
 
-      ctx.fillStyle = 'rgba(20, 20, 28, 0.85)';
-      ctx.fillRect(mmX - 4, mmY - 4, mmW + 8, mmH + 8);
-      ctx.strokeStyle = '#38364A';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(mmX - 4, mmY - 4, mmW + 8, mmH + 8);
+      // 1. Stone Outer Bevel Frame (.stone-panel aesthetic)
+      ctx.save();
+      ctx.fillStyle = '#55535f';
+      ctx.fillRect(mmX - pad, mmY - pad - 16, mmW + pad * 2, mmH + pad * 2 + 16);
+
+      // Stone 3px Bevel borders
+      ctx.fillStyle = '#75737f'; // Top light
+      ctx.fillRect(mmX - pad, mmY - pad - 16, mmW + pad * 2, 3);
+      ctx.fillRect(mmX - pad, mmY - pad - 16, 3, mmH + pad * 2 + 16);
+      ctx.fillStyle = '#353442'; // Dark border
+      ctx.strokeRect(mmX - pad, mmY - pad - 16, mmW + pad * 2, mmH + pad * 2 + 16);
+      ctx.fillStyle = '#41404c'; // Bottom shadow
+      ctx.fillRect(mmX - pad, mmY + mmH + pad - 3, mmW + pad * 2, 3);
+      ctx.fillRect(mmX + mmW + pad - 3, mmY - pad - 16, 3, mmH + pad * 2 + 16);
+
+      // 2. Header Bar
+      ctx.fillStyle = '#353442';
+      ctx.fillRect(mmX - pad + 3, mmY - pad - 13, mmW + pad * 2 - 6, 14);
+      ctx.fillStyle = '#FCD34D';
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const headerTitle = map.floor === 0 ? 'TAVERN HUB' : `F${map.floor}: ${map.biomeTitle.toUpperCase()}`;
+      ctx.fillText(headerTitle.slice(0, 16), mmX - pad + 5, mmY - pad - 6);
+
+      // Compass Indicator "N"
+      ctx.fillStyle = '#38BDF8';
+      ctx.textAlign = 'right';
+      ctx.fillText('N ▲', mmX + mmW + pad - 5, mmY - pad - 6);
+
+      // 3. Inner Map Viewport
+      ctx.fillStyle = '#111018';
+      ctx.fillRect(mmX, mmY, mmW, mmH);
+      ctx.strokeStyle = '#2A2836';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(mmX, mmY, mmW, mmH);
 
       const flagMap = new Map(
         snap.roomClearedFlags.map((f) => [f.id, f])
       );
 
+      // 4. Corridor Pathways & Walkable Tiles
+      const tileW = mmScale;
+      const tileH = mmScale;
+      ctx.fillStyle = '#1E1D2A';
+      for (let ty = 0; ty < map.height; ty++) {
+        for (let tx = 0; tx < map.width; tx++) {
+          const tileCode = map.tiles[ty * map.width + tx];
+          if (tileCode > 0) {
+            ctx.fillRect(mmX + tx * tileW, mmY + ty * tileH, tileW, tileH);
+          }
+        }
+      }
+
+      // 5. Rooms
       for (const room of map.rooms) {
         const flags = flagMap.get(room.id);
         const discovered = flags ? flags.discovered : room.discovered;
         const cleared = flags ? flags.cleared : room.cleared;
+
         if (!discovered && room.type !== 'boss') continue;
 
-        ctx.fillStyle =
+        const rx = mmX + room.x * mmScale;
+        const ry = mmY + room.y * mmScale;
+        const rw = room.w * mmScale;
+        const rh = room.h * mmScale;
+
+        // Fill
+        if (room.type === 'boss') {
+          ctx.fillStyle = '#7F1D1D';
+        } else if (room.type === 'treasure') {
+          ctx.fillStyle = '#78350F';
+        } else if (room.type === 'shrine') {
+          ctx.fillStyle = '#064E3B';
+        } else if (cleared) {
+          ctx.fillStyle = '#1E293B';
+        } else {
+          ctx.fillStyle = '#334155';
+        }
+        ctx.fillRect(rx, ry, rw, rh);
+
+        // Border
+        ctx.strokeStyle =
           room.type === 'boss'
-            ? '#991B1B'
+            ? Math.floor(now / 300) % 2 === 0 ? '#EF4444' : '#DC2626'
             : room.type === 'treasure'
-              ? '#B45309'
+              ? '#F59E0B'
               : room.type === 'shrine'
-                ? '#065F46'
+                ? '#10B981'
                 : cleared
                   ? '#475569'
-                  : '#6366F1';
-        ctx.fillRect(
-          mmX + room.x * mmScale,
-          mmY + room.y * mmScale,
-          room.w * mmScale,
-          room.h * mmScale
-        );
+                  : '#64748B';
+        ctx.lineWidth = room.type === 'boss' ? 1.5 : 1;
+        ctx.strokeRect(rx, ry, rw, rh);
+
+        // Room Badge Text
+        ctx.font = 'bold 8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const cx = rx + rw / 2;
+        const cy = ry + rh / 2;
+        if (room.type === 'boss') {
+          ctx.fillStyle = '#FCA5A5';
+          ctx.fillText('BOSS', cx, cy);
+        } else if (room.type === 'treasure') {
+          ctx.fillStyle = '#FDE047';
+          ctx.fillText('[T]', cx, cy);
+        } else if (room.type === 'shrine') {
+          ctx.fillStyle = '#6EE7B7';
+          ctx.fillText('[S]', cx, cy);
+        } else if (room.type === 'start') {
+          ctx.fillStyle = '#94A3B8';
+          ctx.fillText('[ST]', cx, cy);
+        }
       }
 
-      for (const p of snap.players) {
-        ctx.fillStyle = p.id === playerId ? '#FACC15' : '#38BDF8';
-        ctx.fillRect(
-          mmX + Math.floor(p.x / TILE_SIZE) * mmScale - 1,
-          mmY + Math.floor(p.y / TILE_SIZE) * mmScale - 1,
-          isMobileScreen ? 3 : 4,
-          isMobileScreen ? 3 : 4
-        );
+      // 6. Dungeon Portal Indicator
+      if (map.portalPos) {
+        const px = mmX + Math.floor(map.portalPos.x / TILE_SIZE) * mmScale;
+        const py = mmY + Math.floor(map.portalPos.y / TILE_SIZE) * mmScale;
+        const portalPulse = Math.sin(now / 200) * 1.5 + 3.5;
+        ctx.fillStyle = snap.bossDefeated ? '#34D399' : '#38BDF8';
+        ctx.beginPath();
+        ctx.arc(px, py, Math.max(2, portalPulse), 0, Math.PI * 2);
+        ctx.fill();
       }
+
+      // 7. Enemy Markers
+      if (snap.enemies) {
+        for (const en of snap.enemies) {
+          if (en.hp <= 0) continue;
+          const ex = mmX + Math.floor(en.x / TILE_SIZE) * mmScale;
+          const ey = mmY + Math.floor(en.y / TILE_SIZE) * mmScale;
+          if (en.kind === 'boss') {
+            ctx.fillStyle = '#EF4444';
+            ctx.beginPath();
+            ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = en.elite ? '#F97316' : '#EF4444';
+            ctx.fillRect(ex - 1, ey - 1, en.elite ? 3 : 2, en.elite ? 3 : 2);
+          }
+        }
+      }
+
+      // 8. Player Markers & Local Radar Ring
+      for (const p of snap.players) {
+        const isMe = p.id === playerId;
+        const px = mmX + Math.floor(p.x / TILE_SIZE) * mmScale;
+        const py = mmY + Math.floor(p.y / TILE_SIZE) * mmScale;
+
+        if (isMe) {
+          // Pulse ring around local player
+          const pulseR = Math.sin(now / 150) * 1.2 + 3.5;
+          ctx.strokeStyle = '#FCD34D';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(px, py, Math.max(2, pulseR), 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = '#FACC15';
+          ctx.beginPath();
+          ctx.arc(px, py, 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+        }
+      }
+
+      ctx.restore();
 
       rafId = requestAnimationFrame(render);
     };

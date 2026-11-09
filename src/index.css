@@ -142,3 +142,56 @@
   color: #a19faf;
 }
 
+/* Cinematic Chapter Overlay Animations */
+@keyframes cinematicTracking {
+  0% {
+    letter-spacing: 0.1em;
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    letter-spacing: 0.35em;
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes cinematicFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes emberDrift {
+  0% {
+    transform: translateY(0) translateX(0) scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: translateY(-40px) translateX(15px) scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-80px) translateX(-10px) scale(0.6);
+    opacity: 0;
+  }
+}
+
+.animate-cinematic-tracking {
+  animation: cinematicTracking 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-cinematic-fade {
+  animation: cinematicFadeIn 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-ember {
+  animation: emberDrift 4s ease-in-out infinite;
+}
+
+

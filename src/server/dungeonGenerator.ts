@@ -323,9 +323,9 @@ export function generateDungeonFloor(
   let enemySeq = 1;
 
   const diffMult =
-    difficulty === 'Abyssal' ? 1.55 : difficulty === 'Heroic' ? 1.25 : 1.0;
-  const partyMult = 1 + Math.max(0, partySize - 1) * 0.55;
-  const floorMult = 1 + (floor - 1) * 0.32;
+    difficulty === 'Abyssal' ? 1.45 : difficulty === 'Heroic' ? 1.20 : 1.0;
+  const partyMult = 1 + Math.max(0, partySize - 1) * 0.50;
+  const floorMult = 1 + (floor - 1) * 0.28;
   const hpScale = diffMult * partyMult * floorMult;
 
   let portalPos = {
@@ -863,8 +863,15 @@ export function makeEnemy(
     boss: { name: 'Warden Malakor', hp: 950, radius: 28 },
   };
   const spec = baseStats[kind];
-  const eliteMult = kind === 'boss' ? (1 + (floor - 1) * 0.28) : elite ? 1.55 : 1;
-  const maxHp = Math.round(spec.hp * hpScale * eliteMult);
+  let maxHp: number;
+  if (kind === 'boss') {
+    // Linear boss HP progression scaling smoothly with floor and party size (no quadratic double-dipping)
+    const baseScale = floor > 1 ? hpScale / (1 + (floor - 1) * 0.28) : hpScale;
+    maxHp = Math.round(spec.hp * baseScale * (1 + (floor - 1) * 0.35));
+  } else {
+    const eliteMult = elite ? 1.55 : 1;
+    maxHp = Math.round(spec.hp * hpScale * eliteMult);
+  }
   return {
     id,
     kind,

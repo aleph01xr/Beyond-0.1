@@ -706,6 +706,7 @@ export type ClientMessage =
   | { type: 'player:input'; input: PlayerInputState }
   | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact'; aimAngle: number }
   | { type: 'player:select_relic'; relicId: string }
+  | { type: 'player:unequip_relic'; relicId: string }
   | { type: 'player:change_class'; heroClass: HeroClassId }
   | { type: 'player:ping'; label: string; x: number; y: number }
   | { type: 'chat:send'; text: string }

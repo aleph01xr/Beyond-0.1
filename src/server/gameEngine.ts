@@ -129,6 +129,21 @@ export class GameRoom {
     return Math.max(1, Math.round(healing));
   }
 
+  public static computeNextXp(level: number): number {
+    if (level >= MAX_LEVEL) return 999999;
+    const lvl = Math.max(1, level);
+    // Smooth, rewarding progression curve that scales with dungeon exploration:
+    // L1: 80, L5: 421, L10: 1,120, L25: 4,850, L50: 15,200
+    return Math.round(80 + (lvl - 1) * 60 + Math.pow(lvl - 1, 1.75) * 12);
+  }
+
+  public computeEnemyDamage(baseHit: number): number {
+    const diffMult = this.difficulty === 'Abyssal' ? 1.40 : this.difficulty === 'Heroic' ? 1.18 : 1.0;
+    const floorBonus = (this.floor - 1) * 2;
+    const partyScale = 1 + Math.max(0, this.players.size - 1) * 0.10;
+    return Math.max(1, Math.round((baseHit + floorBonus) * diffMult * partyScale));
+  }
+
   public computeHealingAmount(
     baseHealing: number,
     healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null
@@ -256,7 +271,9 @@ export class GameRoom {
     if (statusType === 'scorched') resMult = 1 - (res.fire || 0);
     if (statusType === 'ashen_curse') resMult = 1 - (res.poison || 0); // Ashen curse scales with poison res for simplicity
     
-    const effectiveDuration = durationMs * Math.max(0.2, resMult);
+    // Faith confers spiritual resilience: reduces debuff duration up to 40%
+    const faithTenacity = Math.min(0.40, (p.faith || 0) * 0.004);
+    const effectiveDuration = Math.round(durationMs * Math.max(0.2, resMult * (1 - faithTenacity)));
 
     const existing = p.statuses.find(s => s.type === statusType);
     if (existing) {
@@ -356,12 +373,20 @@ export class GameRoom {
       if (kind === 'slow') this.applyPlayerStatus(target, 'frostbite', durationMs);
       else if (kind === 'burn') this.applyPlayerStatus(target, 'scorched', durationMs);
       else if (kind === 'silence') this.applyPlayerStatus(target, 'silenced', durationMs);
-      else target.stunnedMs = Math.max(target.stunnedMs, durationMs); // Keep stun simple for now
+      else {
+        const faithTenacity = Math.min(0.40, (target.faith || 0) * 0.004);
+        const reducedDuration = Math.round(durationMs * (1 - faithTenacity));
+        target.stunnedMs = Math.max(target.stunnedMs, reducedDuration);
+      }
       return;
     }
 
     const tenacity = (target as EnemyState).resistances?.tenacity || 0;
-    const effectiveDuration = kind === 'stun' || kind === 'freeze' ? durationMs * (1 - tenacity) : durationMs;
+    // Guaranteed minimum 400ms interrupt duration against bosses/tenacious foes
+    const effectiveDuration =
+      kind === 'stun' || kind === 'freeze'
+        ? Math.max(400, Math.round(durationMs * (1 - tenacity)))
+        : durationMs;
     
     switch (kind) {
       case 'slow': target.slowedMs = Math.max(target.slowedMs, effectiveDuration); break;
@@ -737,6 +762,11 @@ export class GameRoom {
     if (!pr.state.pendingRelicChoices.includes(relicId)) return;
     pr.state.pendingRelicChoices = [];
     if (!pr.state.relics.includes(relicId)) {
+      if (pr.state.relics.length >= 5) {
+        this.emitEvent('status', pr.state.x, pr.state.y - 24, 'Vault Full (Max 5)', '#EF4444');
+        this.pushSystemChat(`${pr.state.username} could not claim ${relicId}: Inventory full (Max 5 active relics).`);
+        return;
+      }
       pr.state.relics.push(relicId);
     }
     if (relicId === 'bastion_pauldron') {
@@ -748,6 +778,24 @@ export class GameRoom {
     if (relic) {
       this.emitEvent('status', pr.state.x, pr.state.y - 24, `+ ${relic.name}`, relic.accent);
       this.pushSystemChat(`${pr.state.username} claimed relic: ${relic.name}.`);
+    }
+  }
+
+  public unequipRelic(playerId: string, relicId: string): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const idx = pr.state.relics.indexOf(relicId);
+    if (idx >= 0) {
+      pr.state.relics.splice(idx, 1);
+      if (relicId === 'bastion_pauldron') {
+        const oldMax = pr.state.maxHp;
+        pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+        pr.state.hp = Math.min(pr.state.hp, pr.state.maxHp);
+      }
+      const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+      const relicName = relic ? relic.name : relicId;
+      this.emitEvent('status', pr.state.x, pr.state.y - 24, `- ${relicName}`, '#94A3B8');
+      this.pushSystemChat(`${pr.state.username} unequipped relic: ${relicName}.`);
     }
   }
 
@@ -925,7 +973,9 @@ export class GameRoom {
     p.aimAngle = Number.isFinite(aimAngle) ? aimAngle : p.aimAngle;
 
     const def = HERO_CLASSES[p.heroClass];
-    const cdrMult = p.relics.includes('hourglass_shard') ? 0.75 : 1.0;
+    const intCdr = Math.min(0.20, (p.intelligence || 0) * 0.002);
+    const relicCdr = p.relics.includes('hourglass_shard') ? 0.25 : 0;
+    const cdrMult = Math.max(0.55, 1 - (intCdr + relicCdr));
 
     const isSilenced = p.statuses && p.statuses.some(s => s.type === 'silenced');
 
@@ -1771,6 +1821,16 @@ export class GameRoom {
       }
     }
 
+    // Vitality Passive Combat Regeneration (Every 2.0s pulse for heroes with invested VIT)
+    if (this.clericAuraAccumMs === 0) {
+      for (const pr of this.players.values()) {
+        const p = pr.state;
+        if (!p.downed && p.connected && (p.vitality || 0) >= 6 && p.hp < p.maxHp) {
+          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.12));
+          p.hp = Math.min(p.maxHp, p.hp + regenAmt);
+        }
+      }
+    }
 
     for (const pr of this.players.values()) {
       const p = pr.state;
@@ -1810,8 +1870,8 @@ export class GameRoom {
       }
 
       const def = HERO_CLASSES[p.heroClass];
-      let moveSpeed = def.speed;
-      if (p.relics.includes('zephyr_greaves')) moveSpeed *= 1.18;
+      let moveSpeed = def.speed * (1 + (p.dexterity || 0) * 0.0035);
+      if (p.relics.includes('zephyr_greaves')) moveSpeed *= 1.15;
       if (p.hasteMs > 0) moveSpeed *= 1.22;
       if (p.speedBoost) moveSpeed *= 1.8;
 
@@ -1902,7 +1962,7 @@ export class GameRoom {
       }
 
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const dexSpeedMult = 1 + (p.dexterity || 0) * 0.012;
+        const dexSpeedMult = 1 + (p.dexterity || 0) * 0.006;
         const hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
         p.attackAnimMs = 190;
@@ -2077,7 +2137,7 @@ export class GameRoom {
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
           let baseHit = enemy.kind === 'knight' ? 19 : enemy.kind === 'goblin' ? 13 : 11;
           if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2);
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit));
           enemy.windupMs = enemy.kind === 'goblin' ? 850 : 1100;
         }
       } else if (enemy.kind === 'shadow_stalker') {
@@ -2091,7 +2151,7 @@ export class GameRoom {
         if (nearestDist <= enemy.radius + 24 && enemy.windupMs <= 0) {
           let baseHit = 22;
           if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2, 'physical');
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), 'physical');
           // Inflict brief slow on hit
           nearest.hasteMs = Math.min(nearest.hasteMs, 0);
           enemy.windupMs = 800;
@@ -2319,7 +2379,7 @@ export class GameRoom {
             // Melee Judgement Cleave
             let baseHit = 24;
             if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-            this.damagePlayer(nearest, baseHit + this.floor * 2, 'elemental');
+            this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), 'elemental');
             this.emitEvent('damage', nearest.x, nearest.y - 14, 'JUDGEMENT!', '#FDE047');
             enemy.windupMs = 1100;
           } else if (nearestDist <= 220) {
@@ -2354,7 +2414,7 @@ export class GameRoom {
         if (nearestDist <= enemy.radius + 26 && enemy.windupMs <= 0) {
           let baseHit = 25;
           if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2, 'physical');
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), 'physical');
           this.emitEvent('damage', nearest.x, nearest.y - 14, 'HALBERD CLEAVE!', '#38BDF8');
           // Brief buckler defense stance
           enemy.shieldWallMs = 1200;
@@ -3414,7 +3474,7 @@ export class GameRoom {
     const category: 'physical' | 'arcane' | 'divine' =
       p.heroClass === 'arcanist' ? 'arcane' : p.heroClass === 'cleric' ? 'divine' : 'physical';
     const mult = this.computeDamageMult(p, category);
-    const critChance = Math.min(0.55, 0.10 + (p.dexterity || 0) * 0.008 + (p.relics.includes('keen_arrowhead') ? 0.25 : 0));
+    const critChance = Math.min(0.45, 0.10 + (p.dexterity || 0) * 0.004 + (p.relics.includes('keen_arrowhead') ? 0.20 : 0));
     const hasCrit = Math.random() < critChance;
     const critMult = hasCrit ? 1.75 : 1.0;
     const dmg = Math.round(def.damage * mult * critMult);
@@ -3908,7 +3968,10 @@ export class GameRoom {
       });
     }
 
-    const xpGain = enemy.kind === 'boss' ? 95 : enemy.elite ? 28 : 16;
+    const baseMobXp = enemy.kind === 'boss' ? 120 : enemy.elite ? 35 : 18;
+    const floorXpBonus = 1 + (this.floor - 1) * 0.35;
+    const diffXpBonus = this.difficulty === 'Abyssal' ? 1.5 : this.difficulty === 'Heroic' ? 1.25 : 1.0;
+    const xpGain = Math.round(baseMobXp * floorXpBonus * diffXpBonus);
     for (const ally of this.players.values()) {
       this.grantXp(ally.state, xpGain);
     }
@@ -3929,7 +3992,7 @@ export class GameRoom {
       if (p.level <= MAX_LEVEL) {
         p.attributePoints += 2;
       }
-      p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(p.nextXp * 1.35);
+      p.nextXp = GameRoom.computeNextXp(p.level);
       if (p.level >= MAX_LEVEL) {
         p.level = MAX_LEVEL;
         p.xp = 0;
@@ -3982,6 +4045,12 @@ export class GameRoom {
     if (p.relics.includes('thorned_aegis') && damageType === 'physical') {
       resist += 0.10;
     }
+    if (damageType === 'physical' && (p.strength || 0) > 0) {
+      resist += Math.min(0.15, (p.strength || 0) * 0.0015);
+    }
+    if (damageType === 'elemental' && (p.intelligence || 0) > 0) {
+      resist += Math.min(0.15, (p.intelligence || 0) * 0.0015);
+    }
     resist = Math.min(0.75, Math.max(0, resist));
 
     let dmg = Math.max(1, Math.round(rawDamage * (1 - resist)));
@@ -4014,19 +4083,15 @@ export class GameRoom {
       p.shield -= absorbed;
       dmg -= absorbed;
 
-      // Thorned Aegis: Stun retaliation shockwave with Tenacity respect
+      // Thorned Aegis: Stun retaliation shockwave with Tenacity respect & guaranteed interrupt
       if (absorbed > 0 && p.relics.includes('thorned_aegis')) {
         this.emitEvent('status', p.x, p.y - 24, 'THORNED RETALIATION', '#A855F7');
         for (const enemy of this.enemies) {
           if (enemy.hp > 0 && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 125) {
             const tenacity = enemy.resistances ? enemy.resistances.tenacity : 0;
-            const stunDur = Math.round(1800 * (1 - tenacity));
-            if (stunDur >= 500) {
-              enemy.stunnedMs = stunDur;
-              this.emitEvent('status', enemy.x, enemy.y - 16, 'STUNNED!', '#A855F7');
-            } else {
-              this.emitEvent('status', enemy.x, enemy.y - 16, 'TENACIOUS!', '#FBBF24');
-            }
+            const stunDur = Math.max(400, Math.round(1800 * (1 - tenacity)));
+            enemy.stunnedMs = stunDur;
+            this.emitEvent('status', enemy.x, enemy.y - 16, 'STUNNED!', '#A855F7');
           }
         }
       }

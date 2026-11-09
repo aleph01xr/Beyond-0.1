@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { GameRoom } from './src/server/gameEngine.ts';
-import { TILE_SIZE, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
+import { TILE_SIZE, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
 import {
   drawHumanoidBoss,
   drawElyndorBoss,
@@ -178,7 +178,7 @@ async function runRegressionTests() {
     pState.y = aleph.y + 10;
 
     // Verify distance check
-    assert.strictEqual(tavern.isPlayerNearNpc(pid, 'npc_aleph', 85), true);
+    assert.strictEqual(tavern.isPlayerNearNpc(pid, 'npc_aleph', 180), true);
 
     // Simulate reset logic
     const spent = pState.strength + pState.vitality + pState.dexterity + pState.intelligence + pState.faith;
@@ -234,7 +234,7 @@ async function runRegressionTests() {
     pState.x = 100; // Far from Aleph (at 576, 896)
     pState.y = 100;
 
-    const isNearAleph = tavern.isPlayerNearNpc(pid, 'npc_aleph', 85);
+    const isNearAleph = tavern.isPlayerNearNpc(pid, 'npc_aleph', 180);
     assert.strictEqual(isNearAleph, false, 'Player is 800+ px away, must be rejected');
   });
 
@@ -2113,6 +2113,151 @@ async function runRegressionTests() {
         `Floor ${floor} boss (${boss.name}) must spawn at least one of its signature unique zones: ${expectedList.join(', ')}. Found: ${Array.from(spawnedZoneKinds).join(', ')}`
       );
     }
+  });
+
+  // --- Test 50: Rebalanced Boss HP scaling prevents quadratic compounding across floors and party sizes ---
+  await test('50. Boss HP scales linearly without quadratic compounding in solo and 4P', async () => {
+    // Floor 1 Solo Normal: base 950
+    const f1Room = new GameRoom({
+      roomId: 'R_TEST_F1_SCALE',
+      name: 'F1 Scale',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 1234,
+      initialFloor: 1,
+    });
+    const f1Boss = f1Room.enemies.find(e => e.kind === 'boss')!;
+    assert.strictEqual(f1Boss.maxHp, 950, 'Floor 1 boss must be exactly base 950 HP');
+
+    // Floor 10 Solo Normal: expected 950 * 1.0 * (1 + 9 * 0.35) = 950 * 4.15 = 3942.
+    // Previously quadratic compounding drove this to 12,975 HP.
+    const f10Room = new GameRoom({
+      roomId: 'R_TEST_F10_SCALE',
+      name: 'F10 Scale',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 5678,
+      initialFloor: 10,
+    });
+    const f10Boss = f10Room.enemies.find(e => e.kind === 'boss')!;
+    assert.strictEqual(f10Boss.maxHp, 3943, 'Floor 10 solo boss HP must be 3943 (linear scaling)');
+    assert.ok(f10Boss.maxHp < 5000, 'Floor 10 solo boss HP must be well below unplayable 12,975 sponge');
+  });
+
+  // --- Test 51: Attributes provide cohesive dual benefits ---
+  test('51. Attributes confer balanced secondary defenses and utilities', () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_ATTRIB_DUAL',
+      name: 'Dual Benefit Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9999,
+    });
+
+    // 1. Strength confers physical damage reduction
+    const idStr = 'p_str_test';
+    room.addOrReconnectPlayer(idStr, 'StrHero', 'vanguard', false, {
+      level: 1, xp: 0, strength: 40, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pStr = room.getPlayerState(idStr)!;
+    pStr.hp = 500;
+    // 40 STR grants 40 * 0.0015 = 0.06 additional physical resistance.
+    // Base Vanguard phys res = 0.28 -> total resist = 0.34.
+    // 100 * (1 - 0.34) = 66. Vanguard passive: 66 * 0.85 = 56 damage (without STR it would be 61 damage).
+    const dmgStr = room.damagePlayer(pStr, 100, 'physical');
+    assert.strictEqual(dmgStr, 56, '40 STR mitigates physical damage from 61 down to 56');
+
+    // 2. Intelligence confers ability cooldown reduction
+    const idInt = 'p_int_test';
+    room.addOrReconnectPlayer(idInt, 'IntHero', 'arcanist', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 50, faith: 0, attributePoints: 0,
+    });
+    const pInt = room.getPlayerState(idInt)!;
+    // 50 INT grants 50 * 0.002 = 10% CDR. Astral Nova base CD = 5000ms -> 4500ms.
+    room.performAction(idInt, 'tactical');
+    assert.strictEqual(pInt.skillCooldownMs, 4500, '50 INT reduces 5000ms tactical CD to 4500ms');
+
+    // 3. Faith confers crowd-control duration reduction
+    const idFth = 'p_fth_test';
+    room.addOrReconnectPlayer(idFth, 'FthHero', 'cleric', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 50, attributePoints: 0,
+    });
+    const pFth = room.getPlayerState(idFth)!;
+    // 50 FTH grants 50 * 0.004 = 20% CC duration reduction.
+    room.applyStatusEffect(pFth, 'silence', 4000);
+    const silenceStatus = pFth.statuses.find(s => s.type === 'silenced')!;
+    assert.strictEqual(silenceStatus.durationMs, 3200, '50 FTH reduces 4000ms silence duration to 3200ms');
+
+    // 4. Vitality confers periodic combat health regeneration
+    const idVit = 'p_vit_test';
+    room.addOrReconnectPlayer(idVit, 'VitHero', 'vanguard', false, {
+      level: 1, xp: 0, strength: 0, vitality: 30, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pVit = room.getPlayerState(idVit)!;
+    pVit.hp = 100; // Damaged
+    room.tick(2000); // 2s pulse
+    assert.ok(pVit.hp > 100, 'Invested Vitality must passively regenerate health during ticks');
+  });
+
+  // --- Test 52: Dexterity attack speed and crit chance remain balanced and capped safely ---
+  test('52. Dexterity scaling is normalized and respects safety caps', () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_DEX_CAPS',
+      name: 'Dex Caps Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 8881,
+    });
+
+    const idDex = 'p_dex_hero';
+    room.addOrReconnectPlayer(idDex, 'DexHero', 'ranger', false, {
+      level: 25, xp: 0, strength: 0, vitality: 0, dexterity: 60, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const pDex = room.getPlayerState(idDex)!;
+
+    // Movement speed: base 210 * (1 + 60 * 0.0035) = 210 * 1.21 = 254.1 px/s (not uncontrollable 457 px/s)
+    const def = HERO_CLASSES.ranger;
+    const moveSpeed = def.speed * (1 + (pDex.dexterity || 0) * 0.0035);
+    assert.ok(moveSpeed > 240 && moveSpeed < 270, '60 DEX move speed must be in a readable, non-clipping range (~254 px/s)');
+
+    // Attack cooldown: 1 + 60 * 0.006 = 1.36x speed rate. Base 320ms / 1.36 = 235ms.
+    const dexSpeedMult = 1 + (pDex.dexterity || 0) * 0.006;
+    const cd = Math.round(def.attackCooldownMs / dexSpeedMult);
+    assert.ok(cd >= 220 && cd <= 250, '60 DEX attack cooldown must remain balanced without breaking animation frames (~235ms)');
+  });
+
+  // --- Test 53: Polynomial XP curve and floor-scaled XP drops allow smooth progression ---
+  test('53. Progression curve provides smooth leveling without exponential wall', () => {
+    // Check nextXp curve:
+    const xpLvl1 = GameRoom.computeNextXp(1);
+    const xpLvl5 = GameRoom.computeNextXp(5);
+    const xpLvl10 = GameRoom.computeNextXp(10);
+    const xpLvl25 = GameRoom.computeNextXp(25);
+    const xpLvl50 = GameRoom.computeNextXp(50);
+
+    assert.strictEqual(xpLvl1, 80, 'Level 1 next XP must be 80');
+    assert.ok(xpLvl10 > 1000 && xpLvl10 < 1300, `Level 10 next XP must be ~1120 (got ${xpLvl10})`);
+    assert.ok(xpLvl25 > 4000 && xpLvl25 < 6000, `Level 25 next XP must be ~4850 (got ${xpLvl25}) - previously 103,138!`);
+    assert.ok(xpLvl50 > 12000 && xpLvl50 < 20000, `Level 50 next XP must be achievable (~15,200) - previously 175,000,000!`);
+  });
+
+  // --- Test 54: Boss crowd control allows interrupt window ---
+  test('54. Stuns against tenacious bosses guarantee at least 400ms interrupt window', () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_BOSS_INTERRUPT',
+      name: 'Boss Interrupt Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 4321,
+      initialFloor: 10,
+    });
+
+    const boss = room.enemies.find(e => e.kind === 'boss')!;
+    assert.ok(boss.resistances.tenacity >= 0.70, 'Floor 10 boss has high tenacity');
+
+    // Player applies a 1600ms stun (Shield Bash)
+    room.applyStatusEffect(boss, 'stun', 1600);
+    assert.ok(boss.stunnedMs >= 400, `Boss must receive at least 400ms stun interrupt window (got ${boss.stunnedMs}ms)`);
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

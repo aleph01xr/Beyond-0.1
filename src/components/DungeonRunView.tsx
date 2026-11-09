@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
 import { getMinecraftObfuscatedString } from '../client/dungeonDecorations.ts';
 
@@ -28,6 +28,11 @@ import {
 } from './TouchControls.tsx';
 import { TouchSettingsModal } from './TouchSettingsModal.tsx';
 import { useFullscreenState } from '../client/fullscreen.ts';
+import { CharacterInventoryModal } from './CharacterInventoryModal.tsx';
+import { ExpandedMapModal } from './ExpandedMapModal.tsx';
+import { CinematicIntroOverlay } from './CinematicIntroOverlay.tsx';
+import { GameMenuModal } from './GameMenuModal.tsx';
+import { calculatePlayerStatProjections } from '../shared/statUtils.ts';
 import {
   HERO_CLASSES,
   MAX_ATTRIBUTE,
@@ -101,11 +106,78 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [expeditionGateOpen, setExpeditionGateOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [attributesModalOpen, setAttributesModalOpen] = useState(false);
+  const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'stats' | 'audio' | 'touch'>('stats');
   const [adminPanelOpen, setAdminPanelOpen] = useState(false);
+  const [expandedMapOpen, setExpandedMapOpen] = useState(false);
   const [partyOpen, setPartyOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
   const [isFullscreen, toggleFullscreen] = useFullscreenState();
+
+  // Cinematic Chapter & Floor Introductions
+  const [cinematicIntro, setCinematicIntro] = useState<{
+    floor: number;
+    biomeTitle: string;
+    isInitialChapterEntry: boolean;
+  } | null>(null);
+
+  const lastSeenFloorRef = useRef<number>(-1);
+  const hasSeenChapter1Ref = useRef<boolean>(false);
+
+  const currentFloor = snapshot.floor !== undefined ? snapshot.floor : map.floor;
+
+  useEffect(() => {
+    if (currentFloor === 0) {
+      // In Tavern Hub: reset chapter 1 seen flag
+      hasSeenChapter1Ref.current = false;
+      lastSeenFloorRef.current = 0;
+      setCinematicIntro(null);
+      return;
+    }
+
+    if (currentFloor === 1 && !hasSeenChapter1Ref.current) {
+      hasSeenChapter1Ref.current = true;
+      lastSeenFloorRef.current = 1;
+      setCinematicIntro({
+        floor: 1,
+        biomeTitle: map.biomeTitle || 'Highkeep Outer Bailey',
+        isInitialChapterEntry: true,
+      });
+    } else if (currentFloor > 1 && currentFloor !== lastSeenFloorRef.current) {
+      lastSeenFloorRef.current = currentFloor;
+      setCinematicIntro({
+        floor: currentFloor,
+        biomeTitle: map.biomeTitle || `Floor ${currentFloor}`,
+        isInitialChapterEntry: false,
+      });
+    }
+  }, [currentFloor, map.biomeTitle]);
+
+  const handleDismissIntro = useCallback(() => {
+    setCinematicIntro(null);
+  }, []);
+
+  // Hotkeys [I] for Inventory & [M] for Map
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (e.key === 'i' || e.key === 'I') {
+        sfx.playUiClick();
+        setInventoryModalOpen((v) => !v);
+      }
+      if (e.key === 'm' || e.key === 'M') {
+        sfx.playUiClick();
+        setExpandedMapOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Touch settings & visibility
   const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
@@ -344,8 +416,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           )}
         </div>
 
-        {/* Right: Room Code, Ping, Chat & Menu */}
-        <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2 overflow-x-auto custom-scrollbar max-w-[65vw] md:max-w-[75vw] lg:max-w-none shrink-0 py-1">
+        {/* Right: Organized HUD Action Bar & Utilities */}
+        <div className="pointer-events-auto flex items-center gap-2 overflow-x-auto custom-scrollbar max-w-[70vw] md:max-w-[80vw] lg:max-w-none shrink-0 py-1 font-mono">
+          
           {/* Quick Expedition Gate Access inside Tavern */}
           {isTavern && (
             <button
@@ -362,129 +435,144 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </button>
           )}
 
-          {/* Latency / Ping Monitor */}
-          <div
-            className="pointer-events-auto hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 bg-[#1E1E2A]/95 border border-[#38364C] font-mono text-xs text-[#E6E4EE] min-h-[36px]"
-            title="Connection Latency (Ping)"
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                pingMs < 80
-                  ? 'bg-emerald-400'
-                  : pingMs < 180
-                    ? 'bg-amber-400'
-                    : 'bg-rose-500 animate-pulse'
-              }`}
-            />
-            <span>{pingMs}ms</span>
+          {/* Group 1: Primary Gameplay Quick Shortcuts ([M] Map, [I] Inventory, [P] Attributes, Chat) */}
+          <div className="flex items-center gap-1.5 bg-[#171622]/90 p-1 border border-[#353442]">
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                setExpandedMapOpen(true);
+              }}
+              className="stone-button stone-button-gold text-[10px] sm:text-xs py-1 px-2.5"
+              title="Open Expanded Tactical Map [M]"
+            >
+              [M] Map
+            </button>
+
+            {me && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setInventoryModalOpen(true);
+                  }}
+                  className="stone-button stone-button-dark text-[10px] sm:text-xs relative flex items-center gap-1 py-1 px-2.5"
+                  title="Open Advanced Inventory & Character Sheet [I]"
+                >
+                  <span>[I] Inventory</span>
+                  {me.relics && me.relics.length > 0 && (
+                    <span className="bg-[#252336] px-1 py-0.2 border border-[#353442] text-[#FCD34D] text-[9px] font-mono font-bold">
+                      {me.relics.length}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setAttributesModalOpen(true);
+                  }}
+                  className="stone-button stone-button-gold text-[10px] sm:text-xs relative py-1 px-2.5"
+                  title="Open Stat Allocation Panel"
+                >
+                  <span>[P] Attributes</span>
+                  {me.attributePoints > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 px-1 py-0.2 bg-[#FACC15] text-black font-mono text-[9px] font-bold rounded-full animate-pulse border border-[#854D0E] shadow">
+                      {me.attributePoints}
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                setChatOpen((v) => !v);
+              }}
+              className="stone-button stone-button-dark text-[10px] sm:text-xs py-1 px-2.5"
+            >
+              Chat ({chatMessages.length})
+            </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleCopyCode}
-            title={isTavern ? 'Copy Tavern Room Code' : 'Copy Party Code'}
-            className="stone-button stone-button-dark text-[10px] sm:text-xs font-mono"
-          >
-            {copiedCode ? 'Copied!' : isTavern ? 'TAVERN-HUB' : snapshot.roomId}
-          </button>
+          {/* Group 2: System Utilities & Session Menu */}
+          <div className="flex items-center gap-1.5 bg-[#171622]/90 p-1 border border-[#353442]">
+            {/* Latency / Ping Monitor */}
+            <div
+              className="hidden sm:flex items-center gap-1 px-2 py-1 bg-[#1E1E2A] border border-[#353442] text-[10px] text-[#E6E4EE]"
+              title="Connection Latency (Ping)"
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  pingMs < 80
+                    ? 'bg-emerald-400'
+                    : pingMs < 180
+                      ? 'bg-amber-400'
+                      : 'bg-rose-500 animate-pulse'
+                }`}
+              />
+              <span>{pingMs}ms</span>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              sfx.playUiClick();
-              setChatOpen((v) => !v);
-            }}
-            className="stone-button stone-button-dark text-[10px] sm:text-xs"
-          >
-            Chat ({chatMessages.length})
-          </button>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              title={isTavern ? 'Copy Tavern Room Code' : 'Copy Party Code'}
+              className="stone-button stone-button-dark text-[10px] py-1 px-2"
+            >
+              {copiedCode ? 'Copied!' : isTavern ? 'TAVERN' : snapshot.roomId}
+            </button>
 
+            <button
+              type="button"
+              onClick={() => {
+                const nextMuted = sfx.toggleMute();
+                setIsMuted(nextMuted);
+                if (!nextMuted) sfx.playUiClick('confirm');
+              }}
+              title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
+              className="stone-button stone-button-dark text-[10px] py-1 px-2"
+            >
+              {isMuted ? 'Muted' : 'SFX'}
+            </button>
 
+            {/* Exclusive Developer Admin Menu Button */}
+            {me && (me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph') && (
+              <button
+                type="button"
+                onClick={() => {
+                  sfx.playUiClick();
+                  setAdminPanelOpen(true);
+                }}
+                className="stone-button stone-button-gold text-[10px] py-1 px-2 border-amber-400 text-amber-900 animate-pulse font-bold"
+                title="Open Exclusive Admin Control Console"
+              >
+                ADMIN
+              </button>
+            )}
 
-          {me && (
             <button
               type="button"
               onClick={() => {
                 sfx.playUiClick();
-                setAttributesModalOpen(true);
+                setPauseOpen((v) => !v);
               }}
-              className="stone-button stone-button-gold text-[10px] sm:text-xs relative"
-              title="Open Stat Allocation Panel"
+              className="stone-button stone-button-gold text-[10px] sm:text-xs py-1 px-3 text-black font-bold"
+              title="Open Master Sanctuary Menu [Esc]"
             >
-              <span>Attributes</span>
-              {me.attributePoints > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 bg-[#FACC15] text-black font-mono text-[9px] font-bold rounded-full animate-pulse border border-[#854D0E] shadow">
-                  {me.attributePoints}
-                </span>
-              )}
+              Menu [Esc]
             </button>
-          )}
+          </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              const nextMuted = sfx.toggleMute();
-              setIsMuted(nextMuted);
-              if (!nextMuted) sfx.playUiClick('confirm');
-            }}
-            title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-            aria-label={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-            className="stone-button stone-button-dark text-[10px] sm:text-xs"
-          >
-            <span className="hidden sm:inline">{isMuted ? 'Muted' : 'SFX'}</span>
-            <span className="sm:hidden">{isMuted ? 'Off' : 'SFX'}</span>
-          </button>
-
-          {/* Exclusive Developer Admin Menu Button */}
-          {me && (me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph') && (
-            <button
-              type="button"
-              onClick={() => {
-                sfx.playUiClick();
-                setAdminPanelOpen(true);
-              }}
-              className="stone-button stone-button-gold text-[10px] sm:text-xs border-amber-400 text-amber-900 animate-pulse"
-              title="Open Exclusive Admin Control Console"
-            >
-              <span>ADMIN</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              sfx.playUiClick();
-              toggleFullscreen();
-            }}
-            title={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
-            aria-label={isFullscreen ? 'Exit Full Screen' : 'Enter Full Screen'}
-            className="stone-button stone-button-dark text-[10px] sm:text-xs flex items-center gap-1"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              {isFullscreen ? (
-                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-              ) : (
-                <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
-              )}
-            </svg>
-            <span className="hidden sm:inline">{isFullscreen ? 'Exit FS' : 'Full Screen'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              sfx.playUiClick();
-              setPauseOpen((v) => !v);
-            }}
-            className="stone-button text-[10px] sm:text-xs"
-          >
-            Menu
-          </button>
         </div>
       </header>
 
-      {/* Boss Health Bar */}
-      {boss && (() => {
+      {/* Boss Health Bar (Only visible when near boss or engaged in combat) */}
+      {boss && me && (boss.hp < boss.maxHp || Math.hypot(boss.x - me.x, boss.y - me.y) <= 480) && (() => {
         const isCatacombs = map.biome === 'catacombs' || snapshot.floor === 2;
         const isEmber = map.biome === 'ember' || snapshot.floor === 3;
         const isVoid = map.biome === 'void' || snapshot.floor === 4;
@@ -950,205 +1038,28 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         </div>
       )}
 
-      {/* Menu / Settings */}
-      {pauseOpen && snapshot.status === 'playing' && (
-        <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4">
-          <div className="stone-panel max-w-md w-full p-5 sm:p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-xl text-white">Expedition Menu</h2>
-              <button
-                type="button"
-                onClick={() => setPauseOpen(false)}
-                className="text-xs text-[#D4D2DC] hover:text-white cursor-pointer min-h-[36px] flex items-center px-2"
-              >
-                Resume
-              </button>
-            </div>
-
-            {/* Touchpad Toggle for testing or preference */}
-            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
-              <span className="text-xs text-[#E2E0EC]">Touch Gamepad:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick('toggle');
-                  setIsTouchDevice((v) => !v);
-                }}
-                className="stone-button stone-button-dark h-8 text-[10px] py-0 px-4 min-h-0"
-              >
-                {isTouchDevice ? 'ENABLED' : 'DISABLED'}
-              </button>
-            </div>
-
-            {/* Audio SFX Toggle */}
-            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
-              <span className="text-xs text-[#E2E0EC]">Sound Effects (SFX):</span>
-              <button
-                type="button"
-                onClick={() => {
-                  const nextMuted = sfx.toggleMute();
-                  setIsMuted(nextMuted);
-                  if (!nextMuted) sfx.playUiClick('confirm');
-                }}
-                className={`stone-button h-8 text-[10px] py-0 px-4 min-h-0 ${isMuted ? 'stone-button-red' : 'stone-button-green'}`}
-              >
-                <span>{isMuted ? ' MUTED' : ' ACTIVE'}</span>
-              </button>
-            </div>
-
-            {/* Display Fullscreen Toggle */}
-            <div className="flex items-center justify-between p-3 bg-[#33313D] border border-[#2B2933]">
-              <div className="space-y-0.5">
-                <span className="text-xs text-[#E2E0EC] block">Full Screen Display Mode:</span>
-                <span className="text-[10px] text-[#A6A4B6] block">Shortcut: F11 or Esc</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  toggleFullscreen();
-                }}
-                className={`stone-button h-8 text-[10px] py-0 px-3 min-h-0 flex items-center gap-1.5 ${
-                  isFullscreen ? 'stone-button-gold' : 'stone-button-dark'
-                }`}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  {isFullscreen ? (
-                    <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
-                  ) : (
-                    <path d="M15 3h6v6M9 21H3v-6M21 15v6h-6M3 9V3h6" />
-                  )}
-                </svg>
-                <span>{isFullscreen ? 'FULLSCREEN' : 'WINDOWED'}</span>
-              </button>
-            </div>
-
-            {/* Account Class Locked Soul Oath */}
-            <div className="p-3.5 bg-[#201F2B] border border-[#3A384C] space-y-2.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-display text-white font-semibold flex items-center gap-1.5">
-                  <span></span> Soul Oath (Class Locked)
-                </span>
-                <span className="text-[10px] font-mono uppercase tracking-wider text-[#FCD34D] px-1.5 py-0.5 bg-[#171622] border border-[#3E3C50]">
-                  {myDef.roleBadge}
-                </span>
-              </div>
-              
-              <div className="flex items-center gap-3">
-                <div className="flex-1 space-y-1">
-                  <p className="text-xs text-[#E2E0EE]">
-                    Bonded as <strong className="text-white">{myDef.name}</strong> · {myDef.title}
-                  </p>
-                  <p className="text-[10.5px] text-[#A6A4B6] leading-relaxed">
-                    <span className="text-[#FBBF24] font-semibold">{myDef.passiveName}:</span> {myDef.passiveDesc}
-                  </p>
-                </div>
-              </div>
-
-
-            </div>
-
-            {/* Active Character Resistances */}
-            {(() => {
-              const baseRes = myDef.resistances;
-              const hasCarapace = me?.relics.includes('runic_carapace');
-              const hasThorned = me?.relics.includes('thorned_aegis');
-              const phys = Math.round((baseRes.physical + (hasCarapace ? 0.15 : 0) + (hasThorned ? 0.10 : 0)) * 100);
-              const fire = Math.round((baseRes.fire + (hasCarapace ? 0.20 : 0)) * 100);
-              const frost = Math.round((baseRes.frost + (hasCarapace ? 0.20 : 0)) * 100);
-              const shock = Math.round((baseRes.lightning + (hasCarapace ? 0.20 : 0)) * 100);
-              const poison = Math.round((baseRes.poison + (hasCarapace ? 0.20 : 0)) * 100);
-              const bleed = Math.round((baseRes.bleed + (hasCarapace ? 0.20 : 0)) * 100);
-
-              return (
-                <div className="p-3 bg-[#201F2B] border border-[#3A384C] space-y-2">
-                  <div className="flex items-center justify-between text-xs font-mono">
-                    <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
-                      <span>️</span> Active Resistances
-                    </span>
-                    <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5 text-[10.5px] font-mono text-center">
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#94A3B8]">Physical</div>
-                      <div className="text-white font-bold">+{phys}%</div>
-                    </div>
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#F97316]"> Fire</div>
-                      <div className="text-white font-bold">+{fire}%</div>
-                    </div>
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#38BDF8]">️ Frost</div>
-                      <div className="text-white font-bold">+{frost}%</div>
-                    </div>
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#FBBF24]"> Shock</div>
-                      <div className="text-white font-bold">+{shock}%</div>
-                    </div>
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#22C55E]">️ Poison</div>
-                      <div className="text-white font-bold">+{poison}%</div>
-                    </div>
-                    <div className="p-1.5 bg-[#171622] border border-[#2B293A]">
-                      <div className="text-[#EF4444]">🩸 Bleed</div>
-                      <div className="text-white font-bold">+{bleed}%</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            <div className="flex flex-col gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  setTouchSettingsOpen(true);
-                }}
-                className="stone-button stone-button-dark py-3"
-              >
-                Touch Controls Setup
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  setPauseOpen(false);
-                }}
-                className="stone-button py-2.5 font-display text-sm text-white cursor-pointer whitespace-nowrap min-h-[44px] flex items-center justify-center"
-              >
-                {isTavern ? 'Resume Tavern Exploration' : 'Return to Combat'}
-              </button>
-              {!isTavern && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sfx.playUiClick();
-                    setPauseOpen(false);
-                    if (onReturnToTavern) {
-                      onReturnToTavern();
-                    } else if (onJoinRoom) {
-                      onJoinRoom('TAVERN-HUB', me.heroClass);
-                    }
-                  }}
-                  className="stone-button stone-button-blue py-3"
-                >
-                  Return to Tavern Hub
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  onLeaveRoom();
-                }}
-                className="stone-button stone-button-red py-3"
-              >
-                {isTavern ? 'Exit to Lobby' : 'Leave Party & Return to Lobby'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Unified Master Game Menu Modal */}
+      {pauseOpen && snapshot.status === 'playing' && me && (
+        <GameMenuModal
+          player={me}
+          mapBiome={map.biomeTitle}
+          isTavern={isTavern}
+          onClose={() => setPauseOpen(false)}
+          onOpenInventory={() => setInventoryModalOpen(true)}
+          onOpenAttributes={() => setAttributesModalOpen(true)}
+          onOpenMap={() => setExpandedMapOpen(true)}
+          onOpenTouchSettings={() => setTouchSettingsOpen(true)}
+          onOpenAdminPanel={() => setAdminPanelOpen(true)}
+          onReturnToTavern={() => {
+            if (onReturnToTavern) {
+              onReturnToTavern();
+            } else if (onJoinRoom) {
+              onJoinRoom('TAVERN-HUB', me.heroClass);
+            }
+          }}
+          onLeaveRoom={onLeaveRoom}
+          isAdmin={Boolean(me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph')}
+        />
       )}
 
       {/* Animated CSS Sprite NPC Dialogue Banner */}
@@ -1159,7 +1070,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         const isLena = speakingNpc.id === 'npc_lena';
         const isAleph = speakingNpc.id === 'npc_aleph';
         const isGate = speakingNpc.id === 'npc_warden_gate' || speakingNpc.name.includes('Gate');
-        const avatarEmoji = isBram ? '🍻' : isLena ? '🍷' : isAleph ? '🎭' : isGate ? '⛩️' : '🛡️';
+        const avatarTag = isBram ? '[HOST]' : isLena ? '[BREWER]' : isAleph ? '[MYSTIC]' : isGate ? '[GATE]' : '[NPC]';
         const roleLabel = isBram
           ? 'Innkeeper & Host'
           : isLena
@@ -1182,9 +1093,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         };
 
         return (
-          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-30 max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 bg-[#1B1A24]/95 border-2 border-[#D9AA52] shadow-2xl flex items-start gap-4 transition-all animate-in slide-in-from-bottom-4 duration-300">
-            <div className="w-12 h-12 sm:w-14 sm:h-14 shrink-0 rounded bg-[#2D231C] border border-[#D9AA52] flex items-center justify-center text-2xl sm:text-3xl relative overflow-hidden shadow-inner">
-              <span className="animate-pulse">{avatarEmoji}</span>
+          <div className="stone-panel max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 flex items-start gap-4 transition-all animate-in slide-in-from-bottom-4 duration-300">
+            <div className="stone-plaque w-12 h-12 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center font-mono font-bold text-xs text-[#FCD34D] relative overflow-hidden shadow-inner">
+              <span className="animate-pulse">{avatarTag}</span>
               <span className="absolute bottom-0 inset-x-0 h-1.5 bg-[#FCD34D] animate-ping" />
             </div>
             <div className="flex-1 space-y-2">
@@ -1375,181 +1286,241 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       )}
 
       {/* Stat Allocation Modal Panel */}
-      {attributesModalOpen && me && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#181722] border border-[#3A384C] w-full max-w-lg shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-[#2B293A]">
-              <div>
-                <h2 className="font-display text-lg text-white font-bold flex items-center gap-2">
-                  <span>Adventurer Attributes</span>
-                  <span className="text-xs font-mono px-2 py-0.5 bg-[#252336] border border-[#3A384C] text-[#D9AA52]">
-                    {me.level >= MAX_LEVEL ? 'MAX LEVEL' : `Lv. ${me.level}`}
-                  </span>
-                </h2>
-                <p className="text-xs text-[#8E8C9E]">
-                  Allocate earned points to empower {me.username} ({HERO_CLASSES[me.heroClass].name}).
+      {attributesModalOpen && me && (() => {
+        const liveStats = calculatePlayerStatProjections(me);
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="stone-panel w-full max-w-lg shadow-2xl p-6 space-y-5 animate-in fade-in zoom-in duration-200">
+              <div className="flex items-center justify-between pb-3 border-b border-[#353442]">
+                <div>
+                  <h2 className="font-display text-lg text-white font-bold flex items-center gap-2">
+                    <span>Adventurer Attributes</span>
+                    <span className="text-xs font-mono px-2 py-0.5 bg-[#252336] border border-[#3A384C] text-[#D9AA52]">
+                      {me.level >= MAX_LEVEL ? 'MAX LEVEL' : `Lv. ${me.level}`}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[#8E8C9E]">
+                    Allocate earned points to empower {me.username} ({HERO_CLASSES[me.heroClass].name}).
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <div className="text-[10px] uppercase font-mono text-[#8E8C9E]">Available Points</div>
+                    <div className="text-sm font-mono font-bold text-[#FCD34D]">
+                      {me.attributePoints} PTS
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sfx.playUiClick();
+                      setAttributesModalOpen(false);
+                    }}
+                    className="stone-button stone-button-dark w-8 h-8 p-0 text-white text-sm font-bold"
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Stat Projections Quick Card */}
+              <div className="stone-input p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono uppercase text-[#FCD34D] font-bold">[STAT PROJECTIONS]</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sfx.playUiClick();
+                      setAttributesModalOpen(false);
+                      setInventoryModalOpen(true);
+                    }}
+                    className="stone-button stone-button-gold py-0.5 px-2.5 text-[10px] font-mono font-bold"
+                  >
+                    Full Inventory Sheet [I]
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono text-[11px]">
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Target DPS</div>
+                    <div className="font-bold text-[#FCD34D]">{liveStats.sustainedDps}</div>
+                  </div>
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Max HP</div>
+                    <div className="font-bold text-[#10B981]">{liveStats.maxHp}</div>
+                  </div>
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Crit Rate</div>
+                    <div className="font-bold text-[#38BDF8]">{liveStats.critChancePct}%</div>
+                  </div>
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Phys Armor</div>
+                    <div className="font-bold text-[#60A5FA]">{liveStats.physicalResistPct}%</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {/* Strength */}
+                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
+                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                        {me.strength || 0} / {MAX_ATTRIBUTE}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A6A4B6]">
+                      Increases physical damage for Vanguard (+3% per point) and grants bonus physical armor mitigation (+0.15% per point).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={me.attributePoints <= 0 || (me.strength || 0) >= MAX_ATTRIBUTE}
+                    onClick={() => {
+                      sfx.playUiClick('confirm');
+                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'strength' });
+                    }}
+                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  >
+                    {(me.strength || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  </button>
+                </div>
+
+                {/* Vitality */}
+                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
+                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                        {me.vitality || 0} / {MAX_ATTRIBUTE}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A6A4B6]">
+                      Increases maximum health pool (+6 Max HP per point) and grants passive combat health regeneration.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={me.attributePoints <= 0 || (me.vitality || 0) >= MAX_ATTRIBUTE}
+                    onClick={() => {
+                      sfx.playUiClick('confirm');
+                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
+                    }}
+                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  >
+                    {(me.vitality || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  </button>
+                </div>
+
+                {/* Dexterity */}
+                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
+                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                        {me.dexterity || 0} / {MAX_ATTRIBUTE}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A6A4B6]">
+                      Increases Ranger damage (+3%), attack speed (+0.6%), movement speed (+0.35%), and crit chance (+0.4%).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={me.attributePoints <= 0 || (me.dexterity || 0) >= MAX_ATTRIBUTE}
+                    onClick={() => {
+                      sfx.playUiClick('confirm');
+                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
+                    }}
+                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  >
+                    {(me.dexterity || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  </button>
+                </div>
+
+                {/* Intelligence */}
+                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
+                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                        {me.intelligence || 0} / {MAX_ATTRIBUTE}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A6A4B6]">
+                      Increases Arcanist damage (+3%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={me.attributePoints <= 0 || (me.intelligence || 0) >= MAX_ATTRIBUTE}
+                    onClick={() => {
+                      sfx.playUiClick('confirm');
+                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'intelligence' });
+                    }}
+                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  >
+                    {(me.intelligence || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  </button>
+                </div>
+
+                {/* Faith */}
+                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
+                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                        {me.faith || 0} / {MAX_ATTRIBUTE}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A6A4B6]">
+                      Increases Cleric divine damage & healing (+3% per point) and grants spiritual crowd-control duration resistance (+0.4%).
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={me.attributePoints <= 0 || (me.faith || 0) >= MAX_ATTRIBUTE}
+                    onClick={() => {
+                      sfx.playUiClick('confirm');
+                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'faith' });
+                    }}
+                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  >
+                    {(me.faith || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-[#2B293A] flex items-center justify-between">
+                <p className="text-[11px] font-mono text-[#8E8C9E]">
+                  Gain +2 attribute points per level (Cap Lv. {MAX_LEVEL}).
                 </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <div className="text-[10px] uppercase font-mono text-[#8E8C9E]">Available Points</div>
-                  <div className="text-sm font-mono font-bold text-[#FCD34D]">
-                    {me.attributePoints} PTS
-                  </div>
-                </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    sfx.playUiClick();
-                    setAttributesModalOpen(false);
-                  }}
-                  className="stone-button stone-button-dark w-8 h-8 p-0 text-white text-sm font-bold"
-                  title="Close"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {/* Strength */}
-              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
-                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.strength || 0} / {MAX_ATTRIBUTE}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#A6A4B6]">
-                    Increases physical damage for Vanguard and Ranger attacks (+3% per point).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={me.attributePoints <= 0 || (me.strength || 0) >= MAX_ATTRIBUTE}
                   onClick={() => {
                     sfx.playUiClick('confirm');
-                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'strength' });
+                    onSendAdminCommand?.({ type: 'player:reset_attributes' });
                   }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
+                  className="stone-button stone-button-red text-xs py-1.5 px-3 font-mono font-bold"
+                  title="Reset all allocated attributes and reclaim points"
                 >
-                  {(me.strength || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
+                  Reset Stats
                 </button>
               </div>
-
-              {/* Vitality */}
-              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
-                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.vitality || 0} / {MAX_ATTRIBUTE}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#A6A4B6]">
-                    Increases maximum health pool (+6 Max HP per point).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={me.attributePoints <= 0 || (me.vitality || 0) >= MAX_ATTRIBUTE}
-                  onClick={() => {
-                    sfx.playUiClick('confirm');
-                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
-                  }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                >
-                  {(me.vitality || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                </button>
-              </div>
-
-              {/* Dexterity */}
-              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
-                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.dexterity || 0} / {MAX_ATTRIBUTE}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#A6A4B6]">
-                    Increases attack speed (+1.2% per point) and critical strike chance (+0.8% per point).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={me.attributePoints <= 0 || (me.dexterity || 0) >= MAX_ATTRIBUTE}
-                  onClick={() => {
-                    sfx.playUiClick('confirm');
-                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
-                  }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                >
-                  {(me.dexterity || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                </button>
-              </div>
-
-              {/* Intelligence */}
-              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
-                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.intelligence || 0} / {MAX_ATTRIBUTE}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#A6A4B6]">
-                    Increases arcane spell damage for Arcanist shards and star rifts (+3% per point).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={me.attributePoints <= 0 || (me.intelligence || 0) >= MAX_ATTRIBUTE}
-                  onClick={() => {
-                    sfx.playUiClick('confirm');
-                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'intelligence' });
-                  }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                >
-                  {(me.intelligence || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                </button>
-              </div>
-
-              {/* Faith */}
-              <div className="bg-[#12111A] border border-[#2B293A] p-3.5 flex items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
-                    <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                      {me.faith || 0} / {MAX_ATTRIBUTE}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#A6A4B6]">
-                    Increases divine damage and healing effectiveness for Cleric reliquary (+3% per point).
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={me.attributePoints <= 0 || (me.faith || 0) >= MAX_ATTRIBUTE}
-                  onClick={() => {
-                    sfx.playUiClick('confirm');
-                    onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'faith' });
-                  }}
-                  className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                >
-                  {(me.faith || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-[#2B293A] text-center">
-              <p className="text-[11px] font-mono text-[#8E8C9E]">
-                Gain exactly +2 attribute points per level gained (Cap Lv. {MAX_LEVEL}).
-              </p>
             </div>
           </div>
-        </div>
+        );
+      })()}
+
+      {/* Advanced Inventory & Character Sheet Modal */}
+      {inventoryModalOpen && me && (
+        <CharacterInventoryModal
+          player={me}
+          onClose={() => setInventoryModalOpen(false)}
+          onSendAdminCommand={onSendAdminCommand}
+          onUnequipRelic={(relicId) => onSendAdminCommand?.({ type: 'player:unequip_relic', relicId })}
+        />
       )}
 
       {/* Exclusive Developer Admin Control Panel Modal */}
@@ -1563,6 +1534,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               onSendAdminCommand(msg);
             }
           }}
+        />
+      )}
+
+      {/* Expanded Fullscreen Tactical Map Modal */}
+      {expandedMapOpen && (
+        <ExpandedMapModal
+          map={map}
+          snapshot={snapshot}
+          playerId={playerId}
+          onClose={() => setExpandedMapOpen(false)}
+        />
+      )}
+
+      {/* Cinematic Chapter I & Floor Intro Overlay */}
+      {cinematicIntro && (
+        <CinematicIntroOverlay
+          floor={cinematicIntro.floor}
+          biomeTitle={cinematicIntro.biomeTitle}
+          isInitialChapterEntry={cinematicIntro.isInitialChapterEntry}
+          onComplete={handleDismissIntro}
         />
       )}
     </div>

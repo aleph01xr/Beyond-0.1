@@ -1127,6 +1127,8 @@ async function startServer() {
         }
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
+      } else if (msg.type === 'player:unequip_relic') {
+        room.unequipRelic(acc.id, msg.relicId);
       } else if (msg.type === 'player:change_class') {
         if (acc.isAdmin) {
           const validClass: HeroClassId =
@@ -1320,8 +1322,8 @@ async function startServer() {
         }
 
         // Verify that the player is within interaction range of Aleph
-        if (!room.isPlayerNearNpc(acc.id, 'npc_aleph', 85)) {
-          sendJson(ws, { type: 'error', message: 'You must be speaking with Aleph to reset your attributes.' });
+        if (!room.isPlayerNearNpc(acc.id, 'npc_aleph', 180)) {
+          sendJson(ws, { type: 'error', message: 'You must be near Aleph to reset your attributes.' });
           return;
         }
 
