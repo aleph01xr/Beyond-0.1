@@ -25,6 +25,7 @@ import {
   drawGenericEnemySprite,
 } from '../client/enemySprites.ts';
 import { drawHumanoidBoss } from '../client/npcSprites.ts';
+import { drawFallenAndGhostPlayer } from '../client/fallenPlayerSprite.ts';
 import { sfx, soundManager } from '../client/sound.ts';
 import {
   HERO_CLASSES,
@@ -3302,32 +3303,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const bob = moving ? Math.sin(now * 0.018) * 2 : 0;
 
         if (p.downed) {
-          ctx.strokeStyle = 'rgba(250, 204, 21, 0.45)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(hx, hy, 52, 0, Math.PI * 2);
-          ctx.stroke();
-
-          if (p.reviveProgress > 0) {
-            ctx.strokeStyle = '#4ADE80';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.arc(
-              hx,
-              hy,
-              52,
-              -Math.PI / 2,
-              -Math.PI / 2 + Math.PI * 2 * p.reviveProgress
-            );
-            ctx.stroke();
-          }
-
-          ctx.fillStyle = '#64748B';
-          ctx.fillRect(hx - 12, hy - 5, 24, 12);
-          ctx.font = '600 11px "JetBrains Mono", monospace';
-          ctx.fillStyle = '#FCA5A5';
-          ctx.textAlign = 'center';
-          ctx.fillText(`${p.username} [DOWNED]`, hx, hy - 16);
+          drawFallenAndGhostPlayer(ctx, p, hx, hy, now, p.id === playerId);
           continue;
         }
 

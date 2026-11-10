@@ -1093,59 +1093,66 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         };
 
         return (
-          <div className="stone-panel max-w-xl w-[92vw] sm:w-full p-4 sm:p-5 flex items-start gap-4 transition-all animate-in slide-in-from-bottom-4 duration-300">
-            <div className="stone-plaque w-12 h-12 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center font-mono font-bold text-xs text-[#FCD34D] relative overflow-hidden shadow-inner">
-              <span className="animate-pulse">{avatarTag}</span>
-              <span className="absolute bottom-0 inset-x-0 h-1.5 bg-[#FCD34D] animate-ping" />
-            </div>
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-display font-bold text-sm sm:text-base text-[#FCD34D] flex items-center gap-1.5">
-                  {speakingNpc.name}
-                  <span className="text-xs font-mono text-[#BDBACF] font-normal">
-                    · {roleLabel}
-                  </span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    // We can't easily set speakingMs to 0 from client without a message,
-                    // but we can at least stop showing it locally if we had local state.
-                    // For now, let's just use the 'Close' button if available.
-                  }}
-                  className="text-[10px] font-mono px-2 py-0.5 bg-[#D9AA52]/20 text-[#FDE68A] border border-[#D9AA52]/40 animate-pulse"
-                >
-                  {speakingNpc.speakingMs && speakingNpc.speakingMs > 6000 ? 'INTERACTIVE' : 'SPEAKING'}
-                </button>
+          <div className="fixed bottom-24 sm:bottom-20 left-1/2 -translate-x-1/2 z-40 max-w-xl w-[92vw] sm:w-full pointer-events-auto">
+            <div className="stone-panel p-4 sm:p-5 flex items-start gap-4 transition-all animate-in slide-in-from-bottom-4 duration-300 shadow-2xl border-2 border-[#D9AA52]">
+              <div className="stone-plaque w-12 h-12 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center font-mono font-bold text-xs text-[#FCD34D] relative overflow-hidden shadow-inner">
+                <span className="animate-pulse">{avatarTag}</span>
+                <span className="absolute bottom-0 inset-x-0 h-1.5 bg-[#FCD34D] animate-ping" />
               </div>
-              <p className="text-xs sm:text-sm text-[#F1F5F9] font-sans leading-relaxed italic">
-                "{speakingNpc.dialogue}"
-              </p>
-
-              {speakingNpc.options && speakingNpc.options.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10 mt-2">
-                  {speakingNpc.options.map((opt) => (
+              <div className="flex-1 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-display font-bold text-sm sm:text-base text-[#FCD34D] flex items-center gap-1.5">
+                    {speakingNpc.name}
+                    <span className="text-xs font-mono text-[#BDBACF] font-normal">
+                      · {roleLabel}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono px-2 py-0.5 bg-[#D9AA52]/20 text-[#FDE68A] border border-[#D9AA52]/40">
+                      {speakingNpc.speakingMs && speakingNpc.speakingMs > 6000 ? 'INTERACTIVE' : 'SPEAKING'}
+                    </span>
                     <button
-                      key={opt.id}
                       type="button"
-                      onClick={() => handlePickOption(opt.id)}
-                      className="stone-button stone-button-gold text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        onSendAdminCommand?.({ type: 'player:dialogue_close' });
+                      }}
+                      className="stone-button stone-button-dark w-6 h-6 p-0 text-xs font-bold text-white flex items-center justify-center shrink-0"
+                      title="Close Dialogue"
                     >
-                      {opt.label}
+                      ✕
                     </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sfx.playUiClick();
-                      onSendAdminCommand?.({ type: 'player:dialogue_close' });
-                    }}
-                    className="stone-button stone-button-dark text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
-                  >
-                    Goodbye
-                  </button>
+                  </div>
                 </div>
-              )}
+                <p className="text-xs sm:text-sm text-[#F1F5F9] font-sans leading-relaxed italic">
+                  "{speakingNpc.dialogue}"
+                </p>
+
+                {speakingNpc.options && speakingNpc.options.length > 0 && (
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-white/10 mt-2">
+                    {speakingNpc.options.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => handlePickOption(opt.id)}
+                        className="stone-button stone-button-gold text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        onSendAdminCommand?.({ type: 'player:dialogue_close' });
+                      }}
+                      className="stone-button stone-button-dark text-[10px] sm:text-xs py-1.5 px-3 min-h-0"
+                    >
+                      Goodbye
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         );

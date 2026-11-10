@@ -562,6 +562,7 @@ export class GameRoom {
       intelligence: number;
       faith: number;
       attributePoints: number;
+      storage?: string[];
     }
   ): PlayerState {
     const existing = this.players.get(playerId);
@@ -569,6 +570,7 @@ export class GameRoom {
       existing.state.connected = true;
       existing.state.username = username;
       existing.state.isAdmin = isAdmin || Boolean(existing.state.isAdmin);
+      if (!existing.state.storage) existing.state.storage = [];
       return existing.state;
     }
 
@@ -602,6 +604,7 @@ export class GameRoom {
       gold: 0,
       potions: 2,
       relics: [],
+      storage: savedStats?.storage ? [...savedStats.storage] : [],
       downed: false,
       downedTimerMs: 0,
       reviveProgress: 0,
@@ -761,10 +764,21 @@ export class GameRoom {
     if (!pr) return;
     if (!pr.state.pendingRelicChoices.includes(relicId)) return;
     pr.state.pendingRelicChoices = [];
+    if (!pr.state.storage) pr.state.storage = [];
+
     if (!pr.state.relics.includes(relicId)) {
       if (pr.state.relics.length >= 5) {
-        this.emitEvent('status', pr.state.x, pr.state.y - 24, 'Vault Full (Max 5)', '#EF4444');
-        this.pushSystemChat(`${pr.state.username} could not claim ${relicId}: Inventory full (Max 5 active relics).`);
+        // Active loadout is full (5/5). If storage has capacity, safely place in Storage Vault!
+        if (pr.state.storage.length < 12 && !pr.state.storage.includes(relicId)) {
+          pr.state.storage.push(relicId);
+          const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+          const relicName = relic ? relic.name : relicId;
+          this.emitEvent('status', pr.state.x, pr.state.y - 24, `+ ${relicName} (Vault)`, relic ? relic.accent : '#FCD34D');
+          this.pushSystemChat(`${pr.state.username}'s active loadout is full. ${relicName} was placed in Storage Vault.`);
+          return;
+        }
+        this.emitEvent('status', pr.state.x, pr.state.y - 24, 'Inventory Full (Max 5)', '#EF4444');
+        this.pushSystemChat(`${pr.state.username} could not claim ${relicId}: Inventory and Vault are both full.`);
         return;
       }
       pr.state.relics.push(relicId);
@@ -784,9 +798,16 @@ export class GameRoom {
   public unequipRelic(playerId: string, relicId: string): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
+    if (!pr.state.storage) pr.state.storage = [];
     const idx = pr.state.relics.indexOf(relicId);
     if (idx >= 0) {
       pr.state.relics.splice(idx, 1);
+      // Safely deposit unequipped relic into storage vault if room exists
+      let storedInVault = false;
+      if (pr.state.storage.length < 12 && !pr.state.storage.includes(relicId)) {
+        pr.state.storage.push(relicId);
+        storedInVault = true;
+      }
       if (relicId === 'bastion_pauldron') {
         const oldMax = pr.state.maxHp;
         pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
@@ -794,9 +815,120 @@ export class GameRoom {
       }
       const relic = RELIC_CATALOG.find((r) => r.id === relicId);
       const relicName = relic ? relic.name : relicId;
-      this.emitEvent('status', pr.state.x, pr.state.y - 24, `- ${relicName}`, '#94A3B8');
-      this.pushSystemChat(`${pr.state.username} unequipped relic: ${relicName}.`);
+      this.emitEvent('status', pr.state.x, pr.state.y - 24, storedInVault ? `Stored ${relicName}` : `- ${relicName}`, '#94A3B8');
+      this.pushSystemChat(
+        storedInVault
+          ? `${pr.state.username} moved relic to Storage Vault: ${relicName}.`
+          : `${pr.state.username} unequipped relic: ${relicName}.`
+      );
     }
+  }
+
+  public storeRelic(playerId: string, relicId: string): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    if (!pr.state.storage) pr.state.storage = [];
+    if (pr.state.storage.length >= 12) {
+      this.emitEvent('status', pr.state.x, pr.state.y - 24, 'Storage Vault Full (12/12)', '#EF4444');
+      return false;
+    }
+    const idx = pr.state.relics.indexOf(relicId);
+    if (idx < 0) return false;
+    pr.state.relics.splice(idx, 1);
+    pr.state.storage.push(relicId);
+    if (relicId === 'bastion_pauldron') {
+      const oldMax = pr.state.maxHp;
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+      pr.state.hp = Math.min(pr.state.hp, pr.state.maxHp);
+    }
+    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+    const relicName = relic ? relic.name : relicId;
+    this.emitEvent('status', pr.state.x, pr.state.y - 24, `Stored ${relicName}`, '#38BDF8');
+    this.pushSystemChat(`${pr.state.username} stored ${relicName} in Storage Vault.`);
+    return true;
+  }
+
+  public equipStoredRelic(playerId: string, relicId: string): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    if (!pr.state.storage) pr.state.storage = [];
+    if (pr.state.relics.length >= 5) {
+      this.emitEvent('status', pr.state.x, pr.state.y - 24, 'Equipped Slots Full (Max 5)', '#EF4444');
+      return false;
+    }
+    const idx = pr.state.storage.indexOf(relicId);
+    if (idx < 0) return false;
+    pr.state.storage.splice(idx, 1);
+    if (!pr.state.relics.includes(relicId)) {
+      pr.state.relics.push(relicId);
+    }
+    if (relicId === 'bastion_pauldron') {
+      const oldMax = pr.state.maxHp;
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+      pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + (pr.state.maxHp - oldMax));
+    }
+    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+    const relicName = relic ? relic.name : relicId;
+    this.emitEvent('status', pr.state.x, pr.state.y - 24, `Equipped ${relicName}`, relic ? relic.accent : '#FCD34D');
+    this.pushSystemChat(`${pr.state.username} equipped ${relicName} from Storage Vault.`);
+    return true;
+  }
+
+  public deleteRelic(playerId: string, relicId: string, fromStorage?: boolean): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    if (!pr.state.storage) pr.state.storage = [];
+    let removed = false;
+    let wasEquipped = false;
+
+    if (fromStorage) {
+      const idx = pr.state.storage.indexOf(relicId);
+      if (idx >= 0) {
+        pr.state.storage.splice(idx, 1);
+        removed = true;
+      }
+    } else {
+      const idx = pr.state.relics.indexOf(relicId);
+      if (idx >= 0) {
+        pr.state.relics.splice(idx, 1);
+        removed = true;
+        wasEquipped = true;
+      } else {
+        const sIdx = pr.state.storage.indexOf(relicId);
+        if (sIdx >= 0) {
+          pr.state.storage.splice(sIdx, 1);
+          removed = true;
+        }
+      }
+    }
+
+    if (!removed) return false;
+
+    if (wasEquipped && relicId === 'bastion_pauldron') {
+      const oldMax = pr.state.maxHp;
+      pr.state.maxHp = GameRoom.computePlayerMaxHp(pr.state.heroClass, pr.state.level, pr.state.vitality, pr.state.relics);
+      pr.state.hp = Math.min(pr.state.hp, pr.state.maxHp);
+    }
+
+    const salvageGold = 40;
+    pr.state.gold = (pr.state.gold || 0) + salvageGold;
+
+    const relic = RELIC_CATALOG.find((r) => r.id === relicId);
+    const relicName = relic ? relic.name : relicId;
+    this.emitEvent('status', pr.state.x, pr.state.y - 24, `+${salvageGold}g (Dismantled)`, '#E0A94F');
+    this.pushSystemChat(`${pr.state.username} dismantled ${relicName} for ${salvageGold} gold.`);
+    return true;
+  }
+
+  public discardPotion(playerId: string, count = 1): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    if (pr.state.potions <= 0) return false;
+    const discardAmount = Math.min(pr.state.potions, Math.max(1, count));
+    pr.state.potions -= discardAmount;
+    this.emitEvent('status', pr.state.x, pr.state.y - 24, `-${discardAmount} Potion`, '#94A3B8');
+    this.pushSystemChat(`${pr.state.username} discarded ${discardAmount} health potion(s).`);
+    return true;
   }
 
   public togglePlayerGodMode(playerId: string, enabled?: boolean): boolean {
@@ -993,7 +1125,7 @@ export class GameRoom {
       // 1. NPC Conversations
       for (const npc of this.npcs) {
         const dist = Math.hypot(npc.x - p.x, npc.y - p.y);
-        if (dist <= 68) {
+        if (dist <= 110) {
           const heroClassName = HERO_CLASSES[p.heroClass]?.name || 'Adventurer';
 
           let lines: string[] = [];

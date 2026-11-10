@@ -19,6 +19,8 @@ import {
   drawWardenEnforcerSprite,
   drawGenericEnemySprite,
 } from './src/client/enemySprites.ts';
+import { drawFallenAndGhostPlayer } from './src/client/fallenPlayerSprite.ts';
+import { CHANGELOG_DATA, CATEGORY_ORDER } from './src/data/changelog.ts';
 
 async function runRegressionTests() {
   console.log('--- STARTING BEYOND REGRESSION TESTS ---');
@@ -2258,6 +2260,225 @@ async function runRegressionTests() {
     // Player applies a 1600ms stun (Shield Bash)
     room.applyStatusEffect(boss, 'stun', 1600);
     assert.ok(boss.stunnedMs >= 400, `Boss must receive at least 400ms stun interrupt window (got ${boss.stunnedMs}ms)`);
+  });
+
+  // --- Test 55: Item storage vault, retrieval, dismantling for gold, and potion discarding ---
+  await test('55. Player can store relics in vault, equip from vault, dismantle for gold, and discard potions', () => {
+    const room = new GameRoom({
+      roomId: 'STORAGE-TEST',
+      name: 'Vault Testing',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 98765,
+    });
+
+    const pid = 'p_storage_tester';
+    room.addOrReconnectPlayer(pid, 'VaultMaster', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+
+    // 1. Give player 5 active relics
+    room.addPlayerRelic(pid, 'crimson_fang');
+    room.addPlayerRelic(pid, 'twinstring_charm');
+    room.addPlayerRelic(pid, 'zephyr_greaves');
+    room.addPlayerRelic(pid, 'sunfire_signet');
+    room.addPlayerRelic(pid, 'bastion_pauldron');
+    assert.strictEqual(p.relics.length, 5, 'Must have 5 active relics equipped');
+    assert.strictEqual(p.storage.length, 0, 'Storage starts empty');
+
+    // 2. Store bastion_pauldron into vault
+    const initialMaxHp = p.maxHp;
+    const stored = room.storeRelic(pid, 'bastion_pauldron');
+    assert.strictEqual(stored, true, 'Storing relic into vault must succeed');
+    assert.strictEqual(p.relics.length, 4, 'Active relics must be reduced to 4');
+    assert.strictEqual(p.storage.length, 1, 'Vault storage must now contain 1 relic');
+    assert.strictEqual(p.storage[0], 'bastion_pauldron');
+    assert.strictEqual(p.maxHp, initialMaxHp - 30, 'Storing Bastion Pauldron must remove its +30 HP bonus');
+
+    // 3. Equip bastion_pauldron back from vault
+    const equipped = room.equipStoredRelic(pid, 'bastion_pauldron');
+    assert.strictEqual(equipped, true, 'Equipping relic from vault must succeed');
+    assert.strictEqual(p.relics.length, 5, 'Active relics must be back to 5');
+    assert.strictEqual(p.storage.length, 0, 'Vault storage must be empty again');
+    assert.strictEqual(p.maxHp, initialMaxHp, 'Equipping Bastion Pauldron must restore its +30 HP bonus');
+
+    // 4. Dismantle / Delete relic for gold
+    const startingGold = p.gold;
+    const dismantled = room.deleteRelic(pid, 'crimson_fang');
+    assert.strictEqual(dismantled, true, 'Dismantling relic must succeed');
+    assert.strictEqual(p.relics.length, 4, 'Active relics reduced to 4');
+    assert.strictEqual(p.gold, startingGold + 40, 'Dismantling relic must award exactly +40 gold');
+
+    // 5. Overflow to storage when active loadout is full (5/5)
+    room.addPlayerRelic(pid, 'cinder_heart');
+    assert.strictEqual(p.relics.length, 5, 'Active loadout is full at 5/5');
+    p.pendingRelicChoices = ['rimefrost_shard'];
+    room.selectRelic(pid, 'rimefrost_shard');
+    assert.strictEqual(p.storage.includes('rimefrost_shard'), true, 'Full loadout drops must overflow into Storage Vault');
+
+    // 6. Discard potion
+    assert.strictEqual(p.potions, 2, 'Starts with 2 potions');
+    const discarded = room.discardPotion(pid, 1);
+    assert.strictEqual(discarded, true, 'Discarding potion must succeed');
+    assert.strictEqual(p.potions, 1, 'Must have 1 potion left after discarding 1');
+  });
+
+  // --- Test 56: Visual fallen and ghost state animations render cleanly across all classes & revive states ---
+  await test('56. Fallen and ethereal ghost state animation renders without errors across all classes and revive states', async () => {
+    function createMockCanvasCtx(): any {
+      return {
+        fillStyle: '#000000',
+        strokeStyle: '#000000',
+        lineWidth: 1,
+        font: '',
+        textAlign: 'center',
+        textBaseline: 'alphabetic',
+        globalAlpha: 1,
+        shadowColor: 'transparent',
+        shadowBlur: 0,
+        save() {},
+        restore() {},
+        translate() {},
+        rotate() {},
+        beginPath() {},
+        closePath() {},
+        moveTo() {},
+        lineTo() {},
+        quadraticCurveTo() {},
+        bezierCurveTo() {},
+        arc() {},
+        ellipse() {},
+        fill() {},
+        stroke() {},
+        fillRect() {},
+        strokeRect() {},
+        fillText() {},
+        setLineDash() {},
+        createRadialGradient() {
+          return { addColorStop() {} };
+        },
+        createLinearGradient() {
+          return { addColorStop() {} };
+        },
+      };
+    }
+
+    const mockCtx = createMockCanvasCtx();
+    const heroClasses: HeroClassId[] = ['vanguard', 'ranger', 'arcanist', 'cleric'];
+    const now = 15000;
+
+    for (const hc of heroClasses) {
+      const mockPlayer: any = {
+        id: `player_${hc}`,
+        username: `Hero_${hc}`,
+        heroClass: hc,
+        x: 300,
+        y: 400,
+        vx: 0,
+        vy: 0,
+        aimAngle: 0,
+        hp: 0,
+        maxHp: 100,
+        shield: 0,
+        level: 5,
+        xp: 100,
+        nextXp: 500,
+        gold: 250,
+        potions: 1,
+        relics: [],
+        storage: [],
+        downed: true,
+        downedTimerMs: 14000,
+        reviveProgress: 0,
+        skillCooldownMs: 0,
+        maxSkillCooldownMs: 8000,
+        ultCooldownMs: 0,
+        maxUltCooldownMs: 30000,
+        attackAnimMs: 0,
+        hasteMs: 0,
+        slowedMs: 0,
+        stunnedMs: 0,
+        burnedMs: 0,
+        frozenMs: 0,
+        shockedMs: 0,
+        poisonedMs: 0,
+        bleedingMs: 0,
+        silencedMs: 0,
+        kills: 10,
+      };
+
+      // State 1: Downed, awaiting rescue (ally view)
+      assert.doesNotThrow(() => {
+        drawFallenAndGhostPlayer(mockCtx, mockPlayer, 300, 400, now, false);
+      }, `Rendering downed ${hc} awaiting rescue should not throw`);
+
+      // State 2: Downed, awaiting rescue (self view)
+      assert.doesNotThrow(() => {
+        drawFallenAndGhostPlayer(mockCtx, mockPlayer, 300, 400, now, true);
+      }, `Rendering downed ${hc} self view should not throw`);
+
+      // State 3: Active revive channel at 65% progress
+      assert.doesNotThrow(() => {
+        drawFallenAndGhostPlayer(mockCtx, { ...mockPlayer, reviveProgress: 0.65 }, 300, 400, now, false);
+      }, `Rendering reviving ${hc} at 65% should not throw`);
+
+      // State 4: Critical bleedout (<5s left)
+      assert.doesNotThrow(() => {
+        drawFallenAndGhostPlayer(mockCtx, { ...mockPlayer, downedTimerMs: 3200 }, 300, 400, now, false);
+      }, `Rendering critical downed ${hc} should not throw`);
+
+      // State 5: Expired timer (0s left)
+      assert.doesNotThrow(() => {
+        drawFallenAndGhostPlayer(mockCtx, { ...mockPlayer, downedTimerMs: 0 }, 300, 400, now, false);
+      }, `Rendering expired downed ${hc} should not throw`);
+    }
+  });
+
+  // --- Test 57: Centralized changelog data management, release chronology, and category validation ---
+  await test('57. Centralized changelog data management preserves release history with valid categorized changes', async () => {
+    assert.ok(Array.isArray(CHANGELOG_DATA), 'CHANGELOG_DATA must be an array');
+    assert.ok(CHANGELOG_DATA.length >= 1, 'CHANGELOG_DATA must have at least one release documented');
+
+    // 1. Verify newest release appears first
+    const newest = CHANGELOG_DATA[0];
+    assert.ok(newest.version && typeof newest.version === 'string', 'Newest release must have a version string');
+    assert.ok(newest.releaseDate && typeof newest.releaseDate === 'string', 'Newest release must have a releaseDate');
+    assert.ok(newest.title && typeof newest.title === 'string', 'Newest release must have a title');
+    assert.ok(newest.description && typeof newest.description === 'string', 'Newest release must have a description');
+
+    // 2. Validate all releases in history
+    const allowedCategories = new Set(CATEGORY_ORDER);
+    const seenVersions = new Set<string>();
+
+    for (const release of CHANGELOG_DATA) {
+      assert.ok(!seenVersions.has(release.version), `Version ${release.version} must be unique in history`);
+      seenVersions.add(release.version);
+
+      assert.ok(release.version.startsWith('v'), `Version ${release.version} must start with 'v'`);
+      assert.ok(release.title.length > 0, `Title for ${release.version} must not be empty`);
+      assert.ok(release.description.length > 0, `Description for ${release.version} must not be empty`);
+      assert.ok(release.releaseDate.length > 0, `Release date for ${release.version} must not be empty`);
+
+      // Check categories
+      const categoryKeys = Object.keys(release.categories);
+      assert.ok(categoryKeys.length > 0, `Release ${release.version} must have at least one category`);
+
+      for (const cat of categoryKeys) {
+        assert.ok(
+          allowedCategories.has(cat as any),
+          `Category '${cat}' in ${release.version} must be one of the 5 allowed categories: ${CATEGORY_ORDER.join(', ')}`
+        );
+        const entries = release.categories[cat as keyof typeof release.categories];
+        assert.ok(Array.isArray(entries), `Category '${cat}' must be an array of change strings`);
+        assert.ok(entries.length > 0, `Category '${cat}' must only be present if it contains actual changes`);
+        for (const change of entries) {
+          assert.strictEqual(typeof change, 'string', `Change in ${cat} must be a string`);
+          assert.ok(change.trim().length > 0, `Change in ${cat} must not be empty whitespace`);
+        }
+      }
+    }
+
+    // 3. Ensure historical releases remain accessible (at least v1.2.0, v1.1.0, v1.0.0 documented)
+    assert.ok(CHANGELOG_DATA.length >= 3, 'Changelog must preserve historical releases for modal archive');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

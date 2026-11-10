@@ -10,7 +10,11 @@ interface CharacterInventoryModalProps {
   onUnequipRelic?: (relicId: string) => void;
 }
 
-type TabType = 'equipment' | 'projections';
+type TabType = 'equipment' | 'storage' | 'projections';
+
+const MAX_EQUIPPED_RELICS = 5;
+const MAX_STORAGE_SLOTS = 12;
+const DISMANTLE_GOLD_REWARD = 40;
 
 export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = ({
   player,
@@ -20,6 +24,8 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('equipment');
   const [selectedRelic, setSelectedRelic] = useState<RelicDef | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ relic: RelicDef; fromStorage: boolean } | null>(null);
+  const [confirmDiscardPotion, setConfirmDiscardPotion] = useState(false);
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
   const stats: PlayerStatProjections = calculatePlayerStatProjections(player);
@@ -27,7 +33,10 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
   const ownedRelics = player.relics || [];
   const ownedRelicDefs = RELIC_CATALOG.filter((r) => ownedRelics.includes(r.id));
 
-  // Determine active synergies
+  const storedRelics = player.storage || [];
+  const storedRelicDefs = RELIC_CATALOG.filter((r) => storedRelics.includes(r.id));
+
+  // Determine active synergies from equipped relics
   const activeSynergies = RELIC_SYNERGIES.filter((syn) =>
     syn.relicIds.every((id) => ownedRelics.includes(id))
   );
@@ -41,19 +50,43 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
   else if (stats.sustainedDps >= 180) { dpsRank = 'B-RANK'; dpsColor = '#3B82F6'; }
   else if (stats.sustainedDps >= 100) { dpsRank = 'C-RANK'; dpsColor = '#10B981'; }
 
-  const handleUnequip = (relicId: string) => {
-    sfx.playUiClick();
-    if (onUnequipRelic) {
-      onUnequipRelic(relicId);
-    } else if (onSendAdminCommand) {
-      onSendAdminCommand({ type: 'player:unequip_relic', relicId });
-    }
+  // Action handlers
+  const handleStoreRelic = (relicId: string) => {
+    sfx.playUiClick('confirm');
+    if (storedRelics.length >= MAX_STORAGE_SLOTS) return;
+    onSendAdminCommand?.({ type: 'player:store_relic', relicId });
+    if (selectedRelic?.id === relicId) setSelectedRelic(null);
+  };
+
+  const handleEquipStoredRelic = (relicId: string) => {
+    sfx.playUiClick('confirm');
+    if (ownedRelics.length >= MAX_EQUIPPED_RELICS) return;
+    onSendAdminCommand?.({ type: 'player:equip_stored_relic', relicId });
+    if (selectedRelic?.id === relicId) setSelectedRelic(null);
+  };
+
+  const handleConfirmDeleteRelic = () => {
+    if (!confirmDelete) return;
+    sfx.playUiClick('confirm');
+    onSendAdminCommand?.({
+      type: 'player:delete_relic',
+      relicId: confirmDelete.relic.id,
+      fromStorage: confirmDelete.fromStorage,
+    });
+    if (selectedRelic?.id === confirmDelete.relic.id) setSelectedRelic(null);
+    setConfirmDelete(null);
+  };
+
+  const handleConfirmDiscardPotion = () => {
+    sfx.playUiClick('confirm');
+    onSendAdminCommand?.({ type: 'player:discard_potion', count: 1 });
+    setConfirmDiscardPotion(false);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none">
       {/* Stone Panel Container */}
-      <div className="stone-panel w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-white rounded-none">
+      <div className="stone-panel w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-white rounded-none relative">
         
         {/* Stone Plaque Header */}
         <div className="stone-plaque p-4 flex items-center justify-between shrink-0">
@@ -119,7 +152,22 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
           >
             <span>[EQUIPMENT] 5 Relic Slots</span>
             <span className="text-[10px] bg-[#252336] px-1.5 py-0.5 border border-[#353442] text-[#FCD34D]">
-              {ownedRelics.length} / 5
+              {ownedRelics.length} / {MAX_EQUIPPED_RELICS}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { sfx.playUiClick(); setActiveTab('storage'); }}
+            className={`px-4 py-3 text-xs font-mono font-bold transition-all flex items-center gap-2 stone-button ${
+              activeTab === 'storage'
+                ? 'stone-button-gold text-black'
+                : 'stone-button-dark text-[#A19FAF]'
+            }`}
+          >
+            <span>[STORAGE VAULT] Stash</span>
+            <span className="text-[10px] bg-[#252336] px-1.5 py-0.5 border border-[#353442] text-[#38BDF8]">
+              {storedRelics.length} / {MAX_STORAGE_SLOTS}
             </span>
           </button>
 
@@ -218,13 +266,24 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                         {player.potions || 0} POUCH
                       </span>
                       {onSendAdminCommand && (player.potions || 0) > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => onSendAdminCommand({ type: 'player:action', action: 'potion' })}
-                          className="stone-button stone-button-dark py-1 px-2.5 text-[10px] font-mono font-bold text-[#5CD68D]"
-                        >
-                          Drink
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onSendAdminCommand({ type: 'player:action', action: 'potion' })}
+                            className="stone-button stone-button-dark py-1 px-2.5 text-[10px] font-mono font-bold text-[#5CD68D]"
+                            title="Drink a potion now"
+                          >
+                            Drink
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDiscardPotion(true)}
+                            className="stone-button stone-button-dark py-1 px-2 text-[10px] font-mono font-bold text-[#EF4444]"
+                            title="Discard 1 health potion"
+                          >
+                            Discard
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -258,14 +317,14 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                   <div className="flex items-center justify-between border-b border-[#353442] pb-2">
                     <h3 className="font-mono text-sm font-bold text-[#FCD34D] flex items-center gap-2">
                       <span>Equipped Dungeon Relics</span>
-                      <span className="text-xs font-mono text-[#A19FAF]">({ownedRelics.length} / 5 Max Slots)</span>
+                      <span className="text-xs font-mono text-[#A19FAF]">({ownedRelics.length} / {MAX_EQUIPPED_RELICS} Max Slots)</span>
                     </h3>
-                    <span className="text-[10px] font-mono text-[#A19FAF]">In-Dungeon Loadout</span>
+                    <span className="text-[10px] font-mono text-[#A19FAF]">Active Combat Loadout</span>
                   </div>
 
                   {/* Render 5 Explicit Slots */}
                   <div className="space-y-3">
-                    {Array.from({ length: 5 }).map((_, slotIndex) => {
+                    {Array.from({ length: MAX_EQUIPPED_RELICS }).map((_, slotIndex) => {
                       const relic = ownedRelicDefs[slotIndex] as RelicDef | undefined;
                       const isSelected = selectedRelic?.id === relic?.id;
 
@@ -273,7 +332,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                         return (
                           <div
                             key={relic.id}
-                            className={`stone-plaque p-3 flex items-start justify-between gap-3 transition-all ${
+                            className={`stone-plaque p-3 flex flex-col sm:flex-row sm:items-start justify-between gap-3 transition-all ${
                               isSelected
                                 ? 'border-2 border-[#FCD34D]'
                                 : 'hover:border-[#525068]'
@@ -300,14 +359,25 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                               <p className="text-[11px] text-[#A19FAF] leading-relaxed">{relic.summary}</p>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => handleUnequip(relic.id)}
-                              className="stone-button stone-button-red text-[10px] font-mono py-1 px-2.5 shrink-0"
-                              title={`Unequip ${relic.name}`}
-                            >
-                              Unequip
-                            </button>
+                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
+                              <button
+                                type="button"
+                                onClick={() => handleStoreRelic(relic.id)}
+                                disabled={storedRelics.length >= MAX_STORAGE_SLOTS}
+                                className="stone-button stone-button-dark text-[10px] font-mono py-1 px-2.5 text-[#38BDF8] disabled:opacity-40"
+                                title={storedRelics.length >= MAX_STORAGE_SLOTS ? 'Vault storage is full (12/12)' : `Move ${relic.name} to Storage Vault`}
+                              >
+                                Store in Vault
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDelete({ relic, fromStorage: false })}
+                                className="stone-button stone-button-red text-[10px] font-mono py-1 px-2.5"
+                                title={`Dismantle ${relic.name} for +${DISMANTLE_GOLD_REWARD} Gold`}
+                              >
+                                Dismantle
+                              </button>
+                            </div>
                           </div>
                         );
                       }
@@ -326,9 +396,22 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                               [ EMPTY RELIC SLOT ]
                             </div>
                           </div>
-                          <span className="text-[10px] font-mono text-[#838192] hidden sm:inline">
-                            Claim from Dungeon Chests
-                          </span>
+                          {storedRelics.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                sfx.playUiClick();
+                                setActiveTab('storage');
+                              }}
+                              className="stone-button stone-button-gold text-[10px] font-mono py-0.5 px-2 text-black font-bold"
+                            >
+                              + Equip from Vault ({storedRelics.length})
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-mono text-[#838192] hidden sm:inline">
+                              Claim from Dungeon Chests
+                            </span>
+                          )}
                         </div>
                       );
                     })}
@@ -366,7 +449,128 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
             </div>
           )}
 
-          {/* TAB 2: DETAILED STAT PROJECTIONS */}
+          {/* TAB 2: STORAGE VAULT (PERSONAL STASH) */}
+          {activeTab === 'storage' && (
+            <div className="space-y-6">
+              
+              {/* Storage Header Banner */}
+              <div className="stone-plaque p-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="text-[10px] font-mono uppercase text-[#38BDF8]">[PERSONAL SANCTUARY CHEST]</div>
+                  <h3 className="font-mono text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <span>Vault Storage Stash</span>
+                    <span className="text-xs font-mono px-2 py-0.5 bg-[#252336] border border-[#353442] text-[#FCD34D]">
+                      {storedRelics.length} / {MAX_STORAGE_SLOTS} SLOTS USED
+                    </span>
+                  </h3>
+                  <p className="text-xs text-[#A19FAF] font-mono max-w-2xl leading-relaxed">
+                    Store extra artifacts here to preserve them across expeditions. Items stored in your vault can be equipped into your active loadout anytime, or dismantled for +{DISMANTLE_GOLD_REWARD} Gold.
+                  </p>
+                </div>
+
+                <div className="stone-input p-3 font-mono text-xs flex items-center gap-4">
+                  <div>
+                    <span className="text-[#A19FAF] text-[10px] block uppercase">Equipped Loadout</span>
+                    <span className="text-[#FCD34D] font-bold text-sm">{ownedRelics.length} / {MAX_EQUIPPED_RELICS} Active</span>
+                  </div>
+                  <div className="border-l border-[#353442] pl-4">
+                    <span className="text-[#A19FAF] text-[10px] block uppercase">Vault Capacity</span>
+                    <span className="text-[#38BDF8] font-bold text-sm">{MAX_STORAGE_SLOTS - storedRelics.length} Free</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 12 Vault Storage Slots Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Array.from({ length: MAX_STORAGE_SLOTS }).map((_, slotIdx) => {
+                  const relic = storedRelicDefs[slotIdx] as RelicDef | undefined;
+                  const isSelected = selectedRelic?.id === relic?.id;
+
+                  if (relic) {
+                    const isLoadoutFull = ownedRelics.length >= MAX_EQUIPPED_RELICS;
+                    return (
+                      <div
+                        key={`vault_${relic.id}_${slotIdx}`}
+                        className={`stone-plaque p-3 flex flex-col justify-between gap-3 transition-all ${
+                          isSelected ? 'border-2 border-[#38BDF8]' : 'hover:border-[#525068]'
+                        }`}
+                      >
+                        <div
+                          className="cursor-pointer space-y-1.5"
+                          onClick={() => {
+                            sfx.playUiClick();
+                            setSelectedRelic(isSelected ? null : relic);
+                          }}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 bg-[#252336] border border-[#353442] text-[#38BDF8]">
+                                Vault {slotIdx + 1}
+                              </span>
+                              <span className="font-mono text-xs font-bold" style={{ color: relic.accent }}>
+                                {relic.name}
+                              </span>
+                            </div>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 border bg-[#252336]" style={{ borderColor: `${relic.accent}66`, color: relic.accent }}>
+                              {relic.category}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A19FAF] leading-relaxed line-clamp-2">{relic.summary}</p>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#353442]">
+                          <button
+                            type="button"
+                            onClick={() => handleEquipStoredRelic(relic.id)}
+                            disabled={isLoadoutFull}
+                            className={`stone-button text-[10px] font-mono py-1 px-3 ${
+                              isLoadoutFull
+                                ? 'stone-button-dark opacity-40 cursor-not-allowed'
+                                : 'stone-button-gold text-black font-bold'
+                            }`}
+                            title={isLoadoutFull ? 'Equipped loadout is full (5/5). Unequip an active relic first.' : `Equip ${relic.name} into battle`}
+                          >
+                            {isLoadoutFull ? 'Loadout Full (5/5)' : 'Equip to Loadout'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDelete({ relic, fromStorage: true })}
+                            className="stone-button stone-button-red text-[10px] font-mono py-1 px-2.5"
+                            title={`Dismantle ${relic.name} for +${DISMANTLE_GOLD_REWARD} Gold`}
+                          >
+                            Dismantle
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Empty Vault Slot
+                  return (
+                    <div
+                      key={`vault_empty_${slotIdx}`}
+                      className="stone-input p-3 border-2 border-dashed border-[#353442] flex items-center justify-between gap-3 text-[#A19FAF]"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 bg-[#171524] border border-[#353442] text-[#716F82]">
+                          Vault {slotIdx + 1}
+                        </span>
+                        <div className="font-mono text-xs text-[#716F82]">
+                          [ EMPTY VAULT SLOT ]
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono text-[#585667]">
+                        Store from Loadout
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+            </div>
+          )}
+
+          {/* TAB 3: DETAILED STAT PROJECTIONS */}
           {activeTab === 'projections' && (
             <div className="space-y-6">
               
@@ -539,6 +743,91 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
             Close Character Sheet
           </button>
         </div>
+
+        {/* CONFIRMATION OVERLAY MODAL: DISMANTLE RELIC */}
+        {confirmDelete && (
+          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="stone-panel max-w-md w-full p-5 space-y-4 border-2 border-[#EF4444] animate-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-[#353442] pb-2">
+                <span className="font-mono text-sm font-bold text-[#EF4444] flex items-center gap-2">
+                  [DISMANTLE ARTIFACT]
+                </span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 bg-[#252336] border border-[#353442] text-[#FCD34D]">
+                  +{DISMANTLE_GOLD_REWARD} Gold
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <span className="text-[#A19FAF]">Artifact:</span>
+                  <span className="font-bold text-white" style={{ color: confirmDelete.relic.accent }}>
+                    {confirmDelete.relic.name}
+                  </span>
+                  <span className="text-[10px] text-[#A19FAF]">
+                    ({confirmDelete.fromStorage ? 'From Vault' : 'Equipped'})
+                  </span>
+                </div>
+                <p className="text-xs text-[#E2E8F0] font-mono leading-relaxed">
+                  Are you sure you want to dismantle <span className="font-bold text-white">{confirmDelete.relic.name}</span>? You will salvage its raw components for <span className="font-bold text-[#FCD34D]">+{DISMANTLE_GOLD_REWARD} Gold</span>. This artifact will be permanently destroyed.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#353442]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(null)}
+                  className="stone-button stone-button-dark py-1.5 px-4 text-xs font-mono"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDeleteRelic}
+                  className="stone-button stone-button-red py-1.5 px-4 text-xs font-mono font-bold"
+                >
+                  Confirm Dismantle (+{DISMANTLE_GOLD_REWARD}g)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CONFIRMATION OVERLAY MODAL: DISCARD POTION */}
+        {confirmDiscardPotion && (
+          <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="stone-panel max-w-sm w-full p-5 space-y-4 border-2 border-[#EF4444] animate-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-[#353442] pb-2">
+                <span className="font-mono text-sm font-bold text-[#EF4444]">
+                  [DISCARD POTION]
+                </span>
+                <span className="text-[10px] font-mono text-[#A19FAF]">
+                  Pouch: {player.potions || 0}
+                </span>
+              </div>
+
+              <p className="text-xs text-[#E2E8F0] font-mono leading-relaxed">
+                Discard 1 Health Potion from your pouch? Discarded potions cannot be recovered.
+              </p>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#353442]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDiscardPotion(false)}
+                  className="stone-button stone-button-dark py-1.5 px-4 text-xs font-mono"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDiscardPotion}
+                  className="stone-button stone-button-red py-1.5 px-4 text-xs font-mono font-bold"
+                >
+                  Confirm Discard
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

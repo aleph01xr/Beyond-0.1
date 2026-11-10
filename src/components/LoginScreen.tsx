@@ -3,6 +3,9 @@ import { getApiEndpoint } from '../client/apiConfig.ts';
 import { sfx } from '../client/sound.ts';
 import { HERO_CLASSES, type HeroClassId, type UserProfile } from '../shared/types.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
+import { ChangelogPanel } from './ChangelogPanel.tsx';
+import { FullChangelogModal } from './FullChangelogModal.tsx';
+import { CHANGELOG_DATA } from '../data/changelog.ts';
 
 interface LoginScreenProps {
   onAuthenticated: (token: string, user: UserProfile) => void;
@@ -25,6 +28,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+  const [showFullChangelog, setShowFullChangelog] = useState(false);
+
+  const latestChangelog = CHANGELOG_DATA[0];
 
   const fxCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -151,7 +157,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
       : 'Create Account';
 
   return (
-    <main className="relative min-h-screen w-screen overflow-x-hidden overflow-y-auto select-none bg-[#0B0A12] flex items-center justify-center p-4">
+    <main className="relative min-h-screen w-screen overflow-x-hidden overflow-y-auto select-none bg-[#0B0A12] flex flex-col items-center justify-start sm:justify-center p-3 sm:p-6 py-6 sm:py-10">
       {/* Deep atmospheric dark fantasy background gradient */}
       <div
         aria-hidden="true"
@@ -181,11 +187,39 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
         className="fixed inset-0 pointer-events-none"
       />
 
-      {/* Central Chiseled Stone Login Modal matching reference screenshot */}
-      <section
-        aria-label={headerTitle}
-        className="stone-panel relative z-10 w-full max-w-[440px] p-6 sm:p-7 pt-9 pb-5 my-auto"
-      >
+      {/* Top Atmospheric Title & Patch Quick Link Bar */}
+      <header className="relative z-10 w-full max-w-5xl mx-auto flex items-center justify-between gap-3 mb-6 sm:mb-8 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-wider text-[#F5F5F7] drop-shadow-[0_2px_0_#2F2E3A]">
+            BEYOND
+          </h1>
+          <span className="hidden sm:inline-block text-[11px] font-mono text-[#D9AA52] px-2 py-0.5 border border-[#85632E] bg-[#252336]/90 shadow-sm">
+            CO-OP ROGUELIKE RPG
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            sfx.playUiClick();
+            setShowFullChangelog(true);
+          }}
+          className="stone-button stone-button-dark py-1.5 px-3 text-[11px] font-mono flex items-center gap-2 cursor-pointer hover:border-[#D9AA52] transition-colors"
+          title="Open complete patch archive"
+        >
+          <span className="w-2 h-2 rounded-full bg-[#10B981] shadow-[0_0_8px_#10B981] animate-pulse" />
+          <span className="text-[#FCD34D] font-bold">{latestChangelog.version}</span>
+          <span className="hidden md:inline text-[#A19FAF]">UPDATE LOG</span>
+        </button>
+      </header>
+
+      {/* Symmetrical Dual Stone Panels: Login / Register + Latest Updates */}
+      <div className="relative z-10 w-full max-w-5xl mx-auto flex flex-col lg:flex-row items-center lg:items-start justify-center gap-8 lg:gap-10 my-auto">
+        {/* Central Chiseled Stone Login Modal matching reference screenshot */}
+        <section
+          aria-label={headerTitle}
+          className="stone-panel relative z-10 w-full max-w-[440px] p-6 sm:p-7 pt-9 pb-5 shrink-0"
+        >
         {/* Subtle stone corner chisel details */}
         <span
           aria-hidden="true"
@@ -425,6 +459,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
           )}
         </div>
       </section>
-    </main>
-  );
+
+      {/* Integrated Latest Updates Changelog Panel */}
+      <ChangelogPanel
+        onOpenFullChangelog={() => setShowFullChangelog(true)}
+        className="shrink-0"
+      />
+    </div>
+
+    {/* Full Changelog Modal */}
+    <FullChangelogModal
+      isOpen={showFullChangelog}
+      onClose={() => setShowFullChangelog(false)}
+    />
+  </main>
+);
 };

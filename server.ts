@@ -1036,6 +1036,7 @@ async function startServer() {
           intelligence: acc.intelligence || 0,
           faith: acc.faith || 0,
           attributePoints: acc.attributePoints || 0,
+          storage: acc.storedRelics || [],
         });
         client.roomId = room.roomId;
 
@@ -1091,6 +1092,7 @@ async function startServer() {
           intelligence: acc.intelligence || 0,
           faith: acc.faith || 0,
           attributePoints: acc.attributePoints || 0,
+          storage: acc.storedRelics || [],
         });
         client.roomId = room.roomId;
 
@@ -1129,8 +1131,27 @@ async function startServer() {
         }
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
+        acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
+        persistAccount(acc).catch(console.error);
       } else if (msg.type === 'player:unequip_relic') {
         room.unequipRelic(acc.id, msg.relicId);
+        acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
+        persistAccount(acc).catch(console.error);
+      } else if (msg.type === 'player:store_relic') {
+        room.storeRelic(acc.id, msg.relicId);
+        acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
+        persistAccount(acc).catch(console.error);
+      } else if (msg.type === 'player:equip_stored_relic') {
+        room.equipStoredRelic(acc.id, msg.relicId);
+        acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
+        persistAccount(acc).catch(console.error);
+      } else if (msg.type === 'player:delete_relic') {
+        room.deleteRelic(acc.id, msg.relicId, msg.fromStorage);
+        acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
+        acc.gold = room.getPlayerState(acc.id)?.gold ?? acc.gold;
+        persistAccount(acc).catch(console.error);
+      } else if (msg.type === 'player:discard_potion') {
+        room.discardPotion(acc.id, msg.count);
       } else if (msg.type === 'player:change_class') {
         if (acc.isAdmin) {
           const validClass: HeroClassId =
@@ -1374,10 +1395,17 @@ async function startServer() {
           sendJson(ws, { type: 'error', message: 'Failed to reset attributes. Please try again.' });
         }
         
-        // Close dialogue if it was active
+        // Keep Aleph dialogue active with confirmation of reclaimed points
         const aleph = room.npcs.find(n => n.id === 'npc_aleph');
         if (aleph) {
-          aleph.speakingMs = 0;
+          aleph.dialogue = spent > 0
+            ? `Your spirit is purified. Reclaimed ${spent} attribute points. Forge your destiny anew.`
+            : 'Your attributes are already at balance. Earn greater experience to hone your spirit.';
+          aleph.speakingMs = 9999999;
+          aleph.options = [
+            { id: 'lore', label: 'Who are you?' },
+            { id: 'goodbye', label: 'Thank you, Aleph. (Close)' }
+          ];
         }
       } else if (msg.type === 'player:dialogue_close') {
         const speakingNpc = room.npcs.find(n => (n.speakingMs ?? 0) > 0);
@@ -1389,19 +1417,21 @@ async function startServer() {
         if (speakingNpc) {
           if (speakingNpc.id === 'npc_aleph') {
             if (msg.optionId === 'lore') {
-              speakingNpc.dialogue = 'I am who I am.';
+              speakingNpc.dialogue = 'I am Aleph, weaver of dormant spirits. In this Sanctuary, I return what you have sown so you may reap a new path.';
               speakingNpc.speakingMs = 9999999; 
               speakingNpc.options = [
+                { id: 'reset_stats', label: 'I wish to reset my attributes.' },
                 { id: 'back', label: 'I see. (Back)' }
               ];
             } else if (msg.optionId === 'back') {
-              speakingNpc.dialogue = 'The paths you walk are many, but your soul remains constant.';
+              speakingNpc.dialogue = 'The paths you walk are many, but your soul remains constant. Do you seek a different focus?';
+              speakingNpc.speakingMs = 9999999;
               speakingNpc.options = [
                 { id: 'reset_stats', label: 'I wish to reset my attributes.' },
                 { id: 'lore', label: 'Who are you?' }
               ];
-            } else if (msg.optionId === 'reset_stats') {
-              // Frontend sends reset_attributes for this, but handle here just in case or for consistency
+            } else if (msg.optionId === 'goodbye') {
+              speakingNpc.speakingMs = 0;
             }
           }
         }

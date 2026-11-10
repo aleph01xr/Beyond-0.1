@@ -37,6 +37,7 @@ export interface AccountRecord {
   intelligence?: number;
   faith?: number;
   attributePoints?: number;
+  storedRelics?: string[];
 }
 
 export interface HeroClassStats {
@@ -406,6 +407,7 @@ export interface PlayerState {
   gold: number;
   potions: number;
   relics: string[];
+  storage: string[];
   downed: boolean;
   downedTimerMs: number;
   reviveProgress: number; // 0 to 1
@@ -707,6 +709,10 @@ export type ClientMessage =
   | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact'; aimAngle: number }
   | { type: 'player:select_relic'; relicId: string }
   | { type: 'player:unequip_relic'; relicId: string }
+  | { type: 'player:store_relic'; relicId: string }
+  | { type: 'player:equip_stored_relic'; relicId: string }
+  | { type: 'player:delete_relic'; relicId: string; fromStorage?: boolean }
+  | { type: 'player:discard_potion'; count?: number }
   | { type: 'player:change_class'; heroClass: HeroClassId }
   | { type: 'player:ping'; label: string; x: number; y: number }
   | { type: 'chat:send'; text: string }
