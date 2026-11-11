@@ -47,20 +47,20 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
   const stats = calculatePlayerStatProjections(player);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none">
-      <div className="stone-panel w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden text-white rounded-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe">
+      <div className="stone-panel w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden text-white rounded-none">
         
         {/* Header Plaque */}
-        <div className="stone-plaque p-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 border-2 border-[#D9AA52] bg-[#252336] flex items-center justify-center font-mono font-bold text-xs text-[#FCD34D] shadow">
+        <div className="stone-plaque p-2.5 sm:p-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 border-2 border-[#D9AA52] bg-[#252336] flex items-center justify-center font-mono font-bold text-[10px] sm:text-xs text-[#FCD34D] shadow shrink-0">
               [MENU]
             </div>
             <div>
-              <h2 className="font-mono text-base sm:text-lg font-bold text-white tracking-wide">
+              <h2 className="font-mono text-sm sm:text-lg font-bold text-white tracking-wide">
                 Sanctuary Master Menu
               </h2>
-              <p className="text-xs text-[#A19FAF] font-mono mt-0.5">
+              <p className="text-[10px] sm:text-xs text-[#A19FAF] font-mono mt-0.5 truncate">
                 Expedition Hub · {player.username} ({heroDef.name})
               </p>
             </div>
@@ -72,7 +72,7 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
               sfx.playUiClick();
               onClose();
             }}
-            className="stone-button stone-button-dark w-9 h-9 p-0 text-white font-mono font-bold text-base flex items-center justify-center"
+            className="stone-button stone-button-dark w-8 h-8 sm:w-9 sm:h-9 p-0 text-white font-mono font-bold text-sm sm:text-base flex items-center justify-center"
             title="Close Menu [Esc]"
           >
             ✕
@@ -80,7 +80,7 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="stone-plaque border-t border-b border-[#353442] px-4 flex items-center gap-2 shrink-0 overflow-x-auto">
+        <div className="stone-plaque border-t border-b border-[#353442] px-2 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0 overflow-x-auto custom-scrollbar">
           <button
             type="button"
             onClick={() => { sfx.playUiClick(); setActiveTab('settings'); }}

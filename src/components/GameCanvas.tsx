@@ -50,7 +50,7 @@ interface GameCanvasProps {
     aimAngle: number;
   }) => void;
   onTriggerAction: (
-    action: 'tactical' | 'ult' | 'potion' | 'interact',
+    action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
     aimAngle: number
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
@@ -472,6 +472,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       } else if (k === 'r' || e.key === 'Shift') {
         sfx.playSkill('ult');
         onTriggerAction('ult', aimAngleRef.current);
+      } else if (k === 'c' || k === 'f' || k === 'v') {
+        sfx.playDash();
+        onTriggerAction('dash', aimAngleRef.current);
       } else if (k === 'h' || k === '1') {
         sfx.playHeal();
         onTriggerAction('potion', aimAngleRef.current);
@@ -3091,12 +3094,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Active Status Badges beneath health bar
         const activeStatuses: { icon: string; color: string }[] = [];
-        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#F97316' });
-        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: '️', color: '#38BDF8' });
-        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#FBBF24' });
-        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: '️', color: '#22C55E' });
-        if ((en.bleedingMs ?? 0) > 0) activeStatuses.push({ icon: '🩸', color: '#EF4444' });
-        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: '', color: '#EAB308' });
+        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: 'BRN', color: '#F97316' });
+        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: 'FRZ', color: '#38BDF8' });
+        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: 'SHK', color: '#FBBF24' });
+        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: 'PSN', color: '#22C55E' });
+        if ((en.bleedingMs ?? 0) > 0) activeStatuses.push({ icon: 'BLD', color: '#EF4444' });
+        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: 'STN', color: '#EAB308' });
 
         if (activeStatuses.length > 0) {
           ctx.save();
@@ -3859,12 +3862,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // ——— HIGH-DETAIL STONE RADAR MINIMAP ———
       const isMobileScreen = cw < 640;
-      const mmScale = isMobileScreen ? 2 : 2.5;
+      let mmScale = 2.5;
+      if (isMobileScreen) {
+        const targetMaxW = Math.min(100, Math.floor(cw * 0.24));
+        mmScale = Math.max(1.0, Math.min(1.5, targetMaxW / Math.max(1, map.width)));
+      }
       const mmW = map.width * mmScale;
       const mmH = map.height * mmScale;
-      const pad = 6;
-      const mmX = cw - mmW - (isMobileScreen ? 12 : 20);
-      const mmY = isMobileScreen ? 56 : 74;
+      const pad = isMobileScreen ? 4 : 6;
+      const mmX = cw - mmW - (isMobileScreen ? 8 : 20);
+      const mmY = isMobileScreen ? 42 : 74;
 
       // 1. Stone Outer Bevel Frame (.stone-panel aesthetic)
       ctx.save();

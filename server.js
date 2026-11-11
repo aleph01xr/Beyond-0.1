@@ -1298,11 +1298,15 @@ var GameRoom = class _GameRoom {
     const lvl = Math.max(1, level);
     return Math.round(80 + (lvl - 1) * 60 + Math.pow(lvl - 1, 1.75) * 12);
   }
-  computeEnemyDamage(baseHit) {
+  computeEnemyDamage(baseHit, enemy) {
     const diffMult = this.difficulty === "Abyssal" ? 1.4 : this.difficulty === "Heroic" ? 1.18 : 1;
     const floorBonus = (this.floor - 1) * 2;
     const partyScale = 1 + Math.max(0, this.players.size - 1) * 0.1;
-    return Math.max(1, Math.round((baseHit + floorBonus) * diffMult * partyScale));
+    let dmg = (baseHit + floorBonus) * diffMult * partyScale;
+    if (enemy && (enemy.poisonedMs || 0) > 0) {
+      dmg *= 0.7;
+    }
+    return Math.max(1, Math.round(dmg));
   }
   computeHealingAmount(baseHealing, healer) {
     return _GameRoom.computeHealingAmount(baseHealing, healer);
@@ -1722,6 +1726,8 @@ var GameRoom = class _GameRoom {
       maxSkillCooldownMs: def.tacticalCooldownMs,
       ultCooldownMs: 0,
       maxUltCooldownMs: def.ultCooldownMs,
+      dashCooldownMs: 0,
+      maxDashCooldownMs: 2600,
       attackAnimMs: 0,
       hasteMs: 0,
       slowedMs: 0,
@@ -2022,7 +2028,7 @@ var GameRoom = class _GameRoom {
       "status",
       pr.state.x,
       pr.state.y - 28,
-      nextState ? " GOD MODE ON" : "\uFE0F GOD MODE OFF",
+      nextState ? "GOD MODE ON" : "GOD MODE OFF",
       nextState ? "#F59E0B" : "#64748B"
     );
     return nextState;
@@ -2124,7 +2130,7 @@ var GameRoom = class _GameRoom {
       lastHitTimerMs: 0
     };
     this.trainingDummies.push(dummy);
-    this.emitEvent("status", dummy.x, dummy.y - 20, "\uFE0F Training Dummy Spawned", "#FBBF24");
+    this.emitEvent("status", dummy.x, dummy.y - 20, "Training Dummy Spawned", "#FBBF24");
   }
   rollRelicChoices(owned) {
     const unowned = RELIC_CATALOG.filter((r) => !owned.includes(r.id));
@@ -2156,6 +2162,25 @@ var GameRoom = class _GameRoom {
     const relicCdr = p.relics.includes("hourglass_shard") ? 0.25 : 0;
     const cdrMult = Math.max(0.55, 1 - (intCdr + relicCdr));
     const isSilenced = p.statuses && p.statuses.some((s) => s.type === "silenced");
+    if (action === "dash") {
+      if (p.dashCooldownMs > 0) return {};
+      p.dashCooldownMs = Math.round(2600 * cdrMult);
+      p.maxDashCooldownMs = p.dashCooldownMs;
+      let dashAngle = p.aimAngle;
+      if (Math.hypot(p.vx, p.vy) > 0.1) {
+        dashAngle = Math.atan2(p.vy, p.vx);
+      }
+      const dashDist = 110;
+      this.moveWithCollision(
+        p,
+        Math.cos(dashAngle) * dashDist,
+        Math.sin(dashAngle) * dashDist,
+        14
+      );
+      p.hasteMs = Math.max(p.hasteMs || 0, 600);
+      this.emitEvent("status", p.x, p.y - 22, "Dash!", "#F59E0B");
+      return {};
+    }
     if (action === "potion") {
       if (p.potions > 0 && p.hp < p.maxHp) {
         p.potions -= 1;
@@ -2334,7 +2359,11 @@ var GameRoom = class _GameRoom {
       return {};
     }
     if (action === "tactical") {
-      if (p.skillCooldownMs > 0 || isSilenced) return {};
+      if (isSilenced) {
+        this.emitEvent("status", p.x, p.y - 24, "[SILENCED]", "#C084FC");
+        return {};
+      }
+      if (p.skillCooldownMs > 0) return {};
       p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
@@ -2436,7 +2465,11 @@ var GameRoom = class _GameRoom {
       return {};
     }
     if (action === "ult") {
-      if (p.ultCooldownMs > 0 || isSilenced) return {};
+      if (isSilenced) {
+        this.emitEvent("status", p.x, p.y - 24, "[SILENCED]", "#C084FC");
+        return {};
+      }
+      if (p.ultCooldownMs > 0) return {};
       p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
       if (p.heroClass === "vanguard") {
@@ -2915,6 +2948,7 @@ var GameRoom = class _GameRoom {
       pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
       p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
       p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
+      p.dashCooldownMs = Math.max(0, p.dashCooldownMs - dtMs);
       p.attackAnimMs = Math.max(0, p.attackAnimMs - dtMs);
       p.hasteMs = Math.max(0, p.hasteMs - dtMs);
       if (p.downed) {
@@ -2947,6 +2981,9 @@ var GameRoom = class _GameRoom {
       if (p.statuses.some((s) => s.type === "frostbite")) {
         moveSpeed *= 0.55;
       }
+      if (p.statuses.some((s) => s.type === "impaled")) {
+        moveSpeed *= 0.75;
+      }
       let mx = 0;
       let my = 0;
       if (typeof pr.input.stickX === "number" && typeof pr.input.stickY === "number" && (Math.abs(pr.input.stickX) > 0.05 || Math.abs(pr.input.stickY) > 0.05)) {
@@ -2968,31 +3005,35 @@ var GameRoom = class _GameRoom {
         mx += Math.cos(drift) * 0.25;
         my += Math.sin(drift * 0.8) * 0.25;
       }
+      const charmed = p.statuses.find((s) => s.type === "charmed");
+      let charmVx = 0;
+      let charmVy = 0;
+      if (charmed) {
+        const boss = this.enemies.find((e) => e.kind === "boss");
+        if (boss) {
+          const dx = boss.x - p.x;
+          const dy = boss.y - p.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 20) {
+            charmVx = dx / dist * moveSpeed * 0.75;
+            charmVy = dy / dist * moveSpeed * 0.75;
+          }
+        }
+      }
       if (mx !== 0 || my !== 0) {
         const inputLen = Math.hypot(mx, my);
         if (inputLen > 1) {
           mx /= inputLen;
           my /= inputLen;
         }
-        p.vx = mx * moveSpeed;
-        p.vy = my * moveSpeed;
-        const charmed = p.statuses.find((s) => s.type === "charmed");
-        if (charmed) {
-          const boss = this.enemies.find((e) => e.kind === "boss");
-          if (boss) {
-            const dx = boss.x - p.x;
-            const dy = boss.y - p.y;
-            const dist = Math.hypot(dx, dy);
-            if (dist > 20) {
-              p.vx += dx / dist * moveSpeed * 0.7;
-              p.vy += dy / dist * moveSpeed * 0.7;
-            }
-          }
-        }
-        this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
+        p.vx = mx * moveSpeed + charmVx;
+        p.vy = my * moveSpeed + charmVy;
       } else {
-        p.vx = 0;
-        p.vy = 0;
+        p.vx = charmVx;
+        p.vy = charmVy;
+      }
+      if (p.vx !== 0 || p.vy !== 0) {
+        this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
       }
       const room = this.findRoomContaining(p.x, p.y);
       if (room) {
@@ -3017,7 +3058,10 @@ var GameRoom = class _GameRoom {
       }
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
         const dexSpeedMult = 1 + (p.dexterity || 0) * 6e-3;
-        const hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
+        let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
+        if (p.statuses.some((s) => s.type === "frostbite")) {
+          hasteFactor *= 1.25;
+        }
         pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
@@ -3046,6 +3090,7 @@ var GameRoom = class _GameRoom {
       enemy.shockedMs = Math.max(0, enemy.shockedMs - dtMs);
       enemy.poisonedMs = Math.max(0, enemy.poisonedMs - dtMs);
       enemy.bleedingMs = Math.max(0, enemy.bleedingMs - dtMs);
+      enemy.silencedMs = Math.max(0, (enemy.silencedMs || 0) - dtMs);
       if (pulseDotNow && enemy.hp > 0) {
         if (enemy.burnedMs > 0) {
           const rawBurn = 7 + this.floor;
@@ -3067,7 +3112,7 @@ var GameRoom = class _GameRoom {
           const bleedRes = _GameRoom.getEnemyResistance(enemy.resistances, "bleed");
           const bleedDmg = Math.max(1, Math.round(rawBleed * (1 - bleedRes)));
           enemy.hp -= bleedDmg;
-          this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `\u{1FA78} ${bleedDmg}`, "#DC2626");
+          this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `${bleedDmg}`, "#DC2626");
         }
         if (enemy.hp <= 0) {
           this.processEnemyDeath(enemy, null);
@@ -3158,9 +3203,8 @@ var GameRoom = class _GameRoom {
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
-          let baseHit = enemy.kind === "knight" ? 19 : enemy.kind === "goblin" ? 13 : 11;
-          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit));
+          const baseHit = enemy.kind === "knight" ? 19 : enemy.kind === "goblin" ? 13 : 11;
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy));
           enemy.windupMs = enemy.kind === "goblin" ? 850 : 1100;
         }
       } else if (enemy.kind === "shadow_stalker") {
@@ -3171,9 +3215,8 @@ var GameRoom = class _GameRoom {
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 24 && enemy.windupMs <= 0) {
-          let baseHit = 22;
-          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "physical");
+          const baseHit = 22;
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "physical");
           nearest.hasteMs = Math.min(nearest.hasteMs, 0);
           enemy.windupMs = 800;
         }
@@ -3195,24 +3238,29 @@ var GameRoom = class _GameRoom {
           );
         }
         if (enemy.windupMs <= 0) {
-          for (let k = -0.18; k <= 0.18; k += 0.36) {
-            const a = angle + k;
-            this.spawnProjectile({
-              ownerType: "enemy",
-              ownerId: enemy.id,
-              style: "arcane",
-              x: enemy.x,
-              y: enemy.y,
-              vx: Math.cos(a) * 230,
-              vy: Math.sin(a) * 230,
-              angle: a,
-              radius: 6,
-              damage: 18 + this.floor * 2,
-              pierce: 1,
-              ttlMs: 2e3
-            });
+          if (enemy.silencedMs > 0) {
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
+            enemy.windupMs = 1200;
+          } else {
+            for (let k = -0.18; k <= 0.18; k += 0.36) {
+              const a = angle + k;
+              this.spawnProjectile({
+                ownerType: "enemy",
+                ownerId: enemy.id,
+                style: "arcane",
+                x: enemy.x,
+                y: enemy.y,
+                vx: Math.cos(a) * 230,
+                vy: Math.sin(a) * 230,
+                angle: a,
+                radius: 6,
+                damage: 18 + this.floor * 2,
+                pierce: 1,
+                ttlMs: 2e3
+              });
+            }
+            enemy.windupMs = 1850;
           }
-          enemy.windupMs = 1850;
         }
       } else if (enemy.kind === "skeleton" || enemy.kind === "cultist") {
         const spd = 82 * slowFactor;
@@ -3232,7 +3280,10 @@ var GameRoom = class _GameRoom {
           );
         }
         if (enemy.windupMs <= 0) {
-          if (enemy.kind === "skeleton") {
+          if (enemy.silencedMs > 0) {
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
+            enemy.windupMs = 1200;
+          } else if (enemy.kind === "skeleton") {
             this.spawnProjectile({
               ownerType: "enemy",
               ownerId: enemy.id,
@@ -3287,25 +3338,30 @@ var GameRoom = class _GameRoom {
           );
         }
         if (enemy.windupMs <= 0) {
-          for (let k = -1; k <= 1; k += 2) {
-            const a = angle + k * 0.18;
-            this.spawnProjectile({
-              ownerType: "enemy",
-              ownerId: enemy.id,
-              style: "arcane",
-              x: enemy.x,
-              y: enemy.y,
-              vx: Math.cos(a) * 220,
-              vy: Math.sin(a) * 220,
-              angle: a,
-              radius: 6,
-              damage: 18 + this.floor * 2,
-              pierce: 1,
-              ttlMs: 2e3
-            });
+          if (enemy.silencedMs > 0) {
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
+            enemy.windupMs = 1200;
+          } else {
+            for (let k = -1; k <= 1; k += 2) {
+              const a = angle + k * 0.18;
+              this.spawnProjectile({
+                ownerType: "enemy",
+                ownerId: enemy.id,
+                style: "arcane",
+                x: enemy.x,
+                y: enemy.y,
+                vx: Math.cos(a) * 220,
+                vy: Math.sin(a) * 220,
+                angle: a,
+                radius: 6,
+                damage: 18 + this.floor * 2,
+                pierce: 1,
+                ttlMs: 2e3
+              });
+            }
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CHORAL WAIL", "#C084FC");
+            enemy.windupMs = 1750;
           }
-          this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CHORAL WAIL", "#C084FC");
-          enemy.windupMs = 1750;
         }
       } else if (enemy.kind === "relic_golem") {
         const spd = 74 * slowFactor;
@@ -3315,9 +3371,8 @@ var GameRoom = class _GameRoom {
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 28 && enemy.windupMs <= 0) {
-          let baseHit = 26;
-          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, baseHit + this.floor * 2, "physical");
+          const baseHit = 26;
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "physical");
           this.emitEvent("damage", nearest.x, nearest.y - 14, "SEISMIC SLAM!", "#F59E0B");
           for (let k = 0; k < 6; k++) {
             const sa = k * Math.PI * 2 / 6;
@@ -3356,25 +3411,30 @@ var GameRoom = class _GameRoom {
           );
         }
         if (enemy.windupMs <= 0) {
-          for (let k = -1; k <= 1; k++) {
-            const a = angle + k * 0.22;
-            this.spawnProjectile({
-              ownerType: "enemy",
-              ownerId: enemy.id,
-              style: "voidorb",
-              x: enemy.x,
-              y: enemy.y,
-              vx: Math.cos(a) * 215,
-              vy: Math.sin(a) * 215,
-              angle: a,
-              radius: 7,
-              damage: 19 + this.floor * 2,
-              pierce: 1,
-              ttlMs: 1900
-            });
+          if (enemy.silencedMs > 0) {
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
+            enemy.windupMs = 1200;
+          } else {
+            for (let k = -1; k <= 1; k++) {
+              const a = angle + k * 0.22;
+              this.spawnProjectile({
+                ownerType: "enemy",
+                ownerId: enemy.id,
+                style: "voidorb",
+                x: enemy.x,
+                y: enemy.y,
+                vx: Math.cos(a) * 215,
+                vy: Math.sin(a) * 215,
+                angle: a,
+                radius: 7,
+                damage: 19 + this.floor * 2,
+                pierce: 1,
+                ttlMs: 1900
+              });
+            }
+            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CORRUPTED SCRIPTURE", "#A855F7");
+            enemy.windupMs = 1950;
           }
-          this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "CORRUPTED SCRIPTURE", "#A855F7");
-          enemy.windupMs = 1950;
         }
       } else if (enemy.kind === "celestial_arbiter") {
         const spd = 112 * slowFactor;
@@ -3385,28 +3445,32 @@ var GameRoom = class _GameRoom {
         }
         if (enemy.windupMs <= 0) {
           if (nearestDist <= enemy.radius + 24) {
-            let baseHit = 24;
-            if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-            this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "elemental");
+            const baseHit = 24;
+            this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "elemental");
             this.emitEvent("damage", nearest.x, nearest.y - 14, "JUDGEMENT!", "#FDE047");
             enemy.windupMs = 1100;
           } else if (nearestDist <= 220) {
-            this.spawnProjectile({
-              ownerType: "enemy",
-              ownerId: enemy.id,
-              style: "radiant",
-              x: enemy.x,
-              y: enemy.y,
-              vx: Math.cos(angle) * 310,
-              vy: Math.sin(angle) * 310,
-              angle,
-              radius: 8,
-              damage: 22 + this.floor * 2,
-              pierce: 1,
-              ttlMs: 1600
-            });
-            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "SOLAR THRUST", "#FBBF24");
-            enemy.windupMs = 1400;
+            if (enemy.silencedMs > 0) {
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
+              enemy.windupMs = 1200;
+            } else {
+              this.spawnProjectile({
+                ownerType: "enemy",
+                ownerId: enemy.id,
+                style: "radiant",
+                x: enemy.x,
+                y: enemy.y,
+                vx: Math.cos(angle) * 310,
+                vy: Math.sin(angle) * 310,
+                angle,
+                radius: 8,
+                damage: 22 + this.floor * 2,
+                pierce: 1,
+                ttlMs: 1600
+              });
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "SOLAR THRUST", "#FBBF24");
+              enemy.windupMs = 1400;
+            }
           }
         }
       } else if (enemy.kind === "warden_enforcer") {
@@ -3417,9 +3481,8 @@ var GameRoom = class _GameRoom {
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
         }
         if (nearestDist <= enemy.radius + 26 && enemy.windupMs <= 0) {
-          let baseHit = 25;
-          if (enemy.poisonedMs > 0) baseHit = Math.round(baseHit * 0.7);
-          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit), "physical");
+          const baseHit = 25;
+          this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "physical");
           this.emitEvent("damage", nearest.x, nearest.y - 14, "HALBERD CLEAVE!", "#38BDF8");
           enemy.shieldWallMs = 1200;
           for (let off = -0.22; off <= 0.22; off += 0.44) {
@@ -3444,8 +3507,8 @@ var GameRoom = class _GameRoom {
       } else if (enemy.kind === "boss") {
         if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
           enemy.enraged = true;
-          this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 24, " ENRAGED! ", "#EF4444");
-          this.pushSystemChat(`\uFE0F ${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
+          this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 24, "ENRAGED!", "#EF4444");
+          this.pushSystemChat(`${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
         }
         const hpRatio = enemy.hp / enemy.maxHp;
         const curWave = enemy.summonWave || 0;
@@ -3494,6 +3557,17 @@ var GameRoom = class _GameRoom {
           );
         }
         if (enemy.windupMs <= 0) {
+          if (enemy.silencedMs > 0) {
+            if (nearestDist <= enemy.radius + 24) {
+              const baseHit = 18 + this.floor * 2;
+              this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "physical");
+              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, "[SILENCED]", "#C084FC");
+              enemy.windupMs = isEnraged ? 700 : 1100;
+            } else {
+              enemy.windupMs = 600;
+            }
+            continue;
+          }
           const patternChoice = Math.random();
           if (this.floor === 1) {
             if (patternChoice < 0.25) {
@@ -4275,7 +4349,12 @@ var GameRoom = class _GameRoom {
         for (const pr of this.players.values()) {
           if (pr.state.downed || !pr.state.connected) continue;
           if (Math.hypot(pr.state.x - proj.x, pr.state.y - proj.y) <= 14 + proj.radius) {
-            this.damagePlayer(pr.state, proj.damage);
+            const ownerEnemy = proj.ownerId ? this.enemies.find((e) => e.id === proj.ownerId) : null;
+            let finalProjDmg = proj.damage;
+            if (ownerEnemy && (ownerEnemy.poisonedMs || 0) > 0) {
+              finalProjDmg = Math.max(1, Math.round(finalProjDmg * 0.7));
+            }
+            this.damagePlayer(pr.state, finalProjDmg);
             if (proj.statusOnHit) {
               this.applyPlayerStatus(pr.state, proj.statusOnHit, proj.statusDurationMs || 3e3);
             }
@@ -4541,6 +4620,9 @@ var GameRoom = class _GameRoom {
     const targetRes = _GameRoom.getEnemyResistance(enemy.resistances, cat);
     const markBonus = enemy.markedMs > 0 ? 1.35 : 1;
     let finalDmg = Math.max(1, Math.round(rawAmount * (1 - targetRes) * markBonus));
+    if (attacker && attacker.statuses && attacker.statuses.some((s) => s.type === "charmed")) {
+      finalDmg = Math.max(1, Math.round(finalDmg * 0.65));
+    }
     if (enemy.shieldWallMs && enemy.shieldWallMs > 0) {
       finalDmg = Math.max(1, Math.round(finalDmg * 0.4));
       this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, " BLOCKED! (-60%)", "#60A5FA");
@@ -4866,8 +4948,9 @@ var GameRoom = class _GameRoom {
     );
     if (inAegis) dmg = Math.max(1, Math.round(dmg * 0.65));
     const finalMitigatedDamage = dmg;
+    let absorbed = 0;
     if (p.shield > 0) {
-      const absorbed = Math.min(p.shield, dmg);
+      absorbed = Math.min(p.shield, dmg);
       p.shield -= absorbed;
       dmg -= absorbed;
       if (absorbed > 0 && p.relics.includes("thorned_aegis")) {
@@ -4889,6 +4972,10 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", p.x + 16, p.y - 26, "ARMORED", "#94A3B8");
       }
     }
+    if ((dmg >= 20 || absorbed >= 20 || rawDamage >= 20) && p.statuses && p.statuses.some((s) => s.type === "charmed")) {
+      p.statuses = p.statuses.filter((s) => s.type !== "charmed");
+      this.emitEvent("status", p.x, p.y - 30, "CHARM BROKEN!", "#F472B6");
+    }
     if (p.hp <= 0) {
       p.downed = true;
       p.downedTimerMs = 18e3;
@@ -4906,6 +4993,7 @@ var GameRoom = class _GameRoom {
     target.reviveProgress = 0;
     target.hp = Math.round(target.maxHp * 0.45);
     target.shield = 20;
+    target.statuses = [];
     const reviver = this.players.get(reviverId);
     if (reviver && reviver.state.id !== target.id) {
       reviver.state.revives += 1;

@@ -50,9 +50,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="admin-title"
-      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-5 animate-in fade-in duration-200 pb-safe pt-safe pl-safe pr-safe"
     >
-      <div className="stone-panel max-w-2xl w-full p-5 sm:p-6 space-y-5 relative border-2 border-[#D9AA52] shadow-[0_0_60px_rgba(217,170,82,0.3)] text-[#E6E4EE] flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="stone-panel max-w-2xl w-full p-3.5 sm:p-6 space-y-3 sm:space-y-5 relative border-2 border-[#D9AA52] shadow-[0_0_60px_rgba(217,170,82,0.3)] text-[#E6E4EE] flex flex-col max-h-[90dvh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 pb-3 border-b border-[#383548]">
           <div className="flex items-center gap-3">

@@ -94,9 +94,9 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="gate-title"
-      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-5 animate-in fade-in duration-200 pb-safe pt-safe pl-safe pr-safe"
     >
-      <div className="stone-panel max-w-2xl w-full p-5 sm:p-7 space-y-6 relative border-2 border-[#D9AA52] shadow-[0_0_50px_rgba(217,170,82,0.2)]">
+      <div className="stone-panel max-w-2xl w-full max-h-[92dvh] overflow-y-auto p-3.5 sm:p-7 space-y-4 sm:space-y-6 relative border-2 border-[#D9AA52] shadow-[0_0_50px_rgba(217,170,82,0.2)]">
         {/* Close Button */}
           <button
             type="button"
@@ -131,7 +131,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
         {/* Character & Party Notice */}
         <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#1A1926] border border-[#3A384F] text-xs font-mono">
           <div className="flex items-center gap-2 text-[#E6E4EE]">
-            <span className="text-[#D9AA52]">️ Embarking as:</span>
+            <span className="text-[#D9AA52]">Embarking as:</span>
             <span className="font-display text-white font-semibold">
               {defaultHostName}
             </span>

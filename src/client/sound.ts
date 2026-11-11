@@ -357,6 +357,47 @@ class RetroAudioEngine {
     }
   }
 
+  /**
+   * Universal dash/evasion sound effect: swift wind swoosh & acoustic pitch lift.
+   */
+  public playDash(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    if (noise) {
+      const noiseSrc = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const noiseGain = ctx.createGain();
+      noiseSrc.buffer = noise;
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(400, now);
+      filter.frequency.exponentialRampToValueAtTime(1800, now + 0.14);
+      filter.Q.setValueAtTime(3.0, now);
+      noiseGain.gain.setValueAtTime(0.08, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      noiseSrc.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(dest);
+      noiseSrc.start(now);
+      noiseSrc.stop(now + 0.17);
+    }
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.exponentialRampToValueAtTime(740, now + 0.13);
+    gain.gain.setValueAtTime(0.07, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
   // ==========================================
   // DAMAGE & HEALTH FEEDBACK
   // ==========================================

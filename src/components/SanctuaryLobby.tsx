@@ -8,6 +8,12 @@ import {
   type RoomSummary,
   type UserProfile,
 } from '../shared/types.ts';
+import {
+  GUARDIAN_STATUS_EFFECTS,
+  COMBAT_STATUS_EFFECTS,
+  ALL_STATUS_EFFECTS,
+  type StatusEffectMeta,
+} from '../shared/statusEffects.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
 import {
   loadSavedTouchSettings,
@@ -55,6 +61,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [muted, setMuted] = useState(() => sfx.isMuted());
   const [isFullscreen, toggleFullscreen] = useFullscreenState();
   const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'guardian' | 'combat'>('all');
 
   // Touch & SFX Menu Modal state
   const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
@@ -671,7 +678,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     <div className="pt-2 border-t border-[#2C2B3B] space-y-1.5">
                       <div className="flex items-center justify-between text-[11px] font-mono text-[#E2E8F0]">
                         <span className="text-[#D9AA52] font-semibold flex items-center gap-1">
-                          <span>️</span> Innate Resistances
+                          Innate Resistances
                         </span>
                         <span className="text-[10px] text-[#8E8C9E]">Damage Mitigation</span>
                       </div>
@@ -681,23 +688,23 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                           <span className="font-semibold text-white">+{Math.round(c.resistances.physical * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#F97316]"> Fire</span>
+                          <span className="text-[#F97316]">Fire</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.fire * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#38BDF8]">️ Frost</span>
+                          <span className="text-[#38BDF8]">Frost</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.frost * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#FBBF24]"> Shock</span>
+                          <span className="text-[#FBBF24]">Shock</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.lightning * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#22C55E]">️ Poison</span>
+                          <span className="text-[#22C55E]">Poison</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.poison * 100)}%</span>
                         </div>
                         <div className="p-1.5 bg-[#171622] border border-[#2B293A] flex flex-col">
-                          <span className="text-[#EF4444]">🩸 Bleed</span>
+                          <span className="text-[#EF4444]">Bleed</span>
                           <span className="font-semibold text-white">+{Math.round(c.resistances.bleed * 100)}%</span>
                         </div>
                       </div>
@@ -761,65 +768,108 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
               </p>
             </div>
 
-            {/* Status Effects Mechanics Guide */}
-            <div className="bg-[#1C1C27] border border-[#2F2E40] p-4 sm:p-5 space-y-3">
-              <h3 className="font-display text-base text-[#D9AA52] flex items-center gap-2">
-                <span></span> Elemental &amp; Combat Status Afflictions
-              </h3>
+            {/* Complete Status Effects Codex */}
+            <div className="bg-[#1C1C27] border border-[#2F2E40] p-4 sm:p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#292837] pb-3">
+                <div>
+                  <h3 className="font-display text-base text-[#D9AA52] flex items-center gap-2">
+                    Status Effects &amp; Boss Afflictions Codex
+                  </h3>
+                  <p className="text-xs text-[#9B99AB] mt-0.5">
+                    Official combat mechanics for Chapter 1 Sanctuary Boss Afflictions (Floors 1-10) and Elemental Procs.
+                  </p>
+                </div>
+
+                {/* Sub-filter tabs for Status Effects */}
+                <div className="flex items-center gap-1.5 bg-[#14141B] p-1 border border-[#2E2D3E] self-start sm:self-auto">
+                  {(
+                    [
+                      { id: 'all', label: 'All Statuses (19)' },
+                      { id: 'guardian', label: 'Guardian Afflictions (10)' },
+                      { id: 'combat', label: 'Combat & Elemental (9)' },
+                    ] as const
+                  ).map((sf) => (
+                    <button
+                      key={sf.id}
+                      type="button"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        setStatusFilter(sf.id);
+                      }}
+                      className={`px-2.5 py-1 text-[11px] font-mono transition-colors cursor-pointer ${
+                        statusFilter === sf.id
+                          ? 'bg-[#D9AA52] text-[#14141B] font-semibold'
+                          : 'text-[#A5A3B8] hover:text-white'
+                      }`}
+                    >
+                      {sf.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Status Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#F97316] space-y-1">
-                  <div className="font-display text-sm text-[#F97316] font-semibold flex items-center gap-1.5">
-                    <span></span> Burn (Ignite)
-                  </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Ticks fire damage every 0.65s based on your attack power. Extinguishes over 4 seconds.
-                  </p>
-                </div>
+                {(statusFilter === 'all'
+                  ? ALL_STATUS_EFFECTS
+                  : statusFilter === 'guardian'
+                  ? Object.values(GUARDIAN_STATUS_EFFECTS)
+                  : Object.values(COMBAT_STATUS_EFFECTS)
+                ).map((meta) => (
+                  <div
+                    key={meta.id}
+                    className="p-3 bg-[#13131A] border-l-2 space-y-2 flex flex-col justify-between"
+                    style={{ borderLeftColor: meta.color }}
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {/* Dedicated Pixel Art Icon Slot */}
+                          <div
+                            className={`w-7 h-7 flex-shrink-0 flex items-center justify-center border font-mono text-[10px] font-bold ${meta.iconSlotId}`}
+                            style={{
+                              borderColor: `${meta.color}66`,
+                              backgroundColor: `${meta.color}15`,
+                              color: meta.color,
+                            }}
+                            title={`Pixel Slot: ${meta.iconSlotId}`}
+                          >
+                            {meta.badge}
+                          </div>
+                          <div>
+                            <div className="font-display text-sm font-semibold leading-tight" style={{ color: meta.color }}>
+                              {meta.name}
+                            </div>
+                            <div className="text-[10px] font-mono text-[#7E7C8D]">
+                              {meta.boss ? `Floor ${meta.floor}: ${meta.boss}` : 'Combat & Elemental Affliction'}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className="text-[9px] font-mono px-1.5 py-0.5 border"
+                          style={{
+                            borderColor: `${meta.color}44`,
+                            backgroundColor: `${meta.color}12`,
+                            color: meta.color,
+                          }}
+                        >
+                          {meta.category === 'guardian' ? 'BOSS' : 'COMBAT'}
+                        </span>
+                      </div>
 
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#38BDF8] space-y-1">
-                  <div className="font-display text-sm text-[#38BDF8] font-semibold flex items-center gap-1.5">
-                    <span>️</span> Freeze &amp; Shatter
-                  </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Immobilizes the target completely. Hitting a frozen target triggers <strong className="text-white">Shatter</strong> (+60% damage + frost burst to adjacent foes).
-                  </p>
-                </div>
+                      <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                        {meta.summary}
+                      </p>
+                    </div>
 
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#FBBF24] space-y-1">
-                  <div className="font-display text-sm text-[#FBBF24] font-semibold flex items-center gap-1.5">
-                    <span></span> Shock &amp; Chain Lightning
+                    <div className="pt-2 border-t border-[#20202B] flex items-center justify-between text-[10px] font-mono text-[#8E8C9E]">
+                      <span>{meta.category === 'guardian' ? 'Afflicts: Player' : 'Afflicts: Monster / Boss'}</span>
+                      <span className="truncate max-w-[140px] text-right" title={meta.resistanceMitigation}>
+                        {meta.resistanceMitigation ? meta.resistanceMitigation.split('&')[0] : 'Universal'}
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Electrocutes the foe. The 3rd hit discharges a high-voltage lightning arc jumping to up to 3 nearby enemies.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#22C55E] space-y-1">
-                  <div className="font-display text-sm text-[#22C55E] font-semibold flex items-center gap-1.5">
-                    <span>️</span> Acid Poison &amp; Weaken
-                  </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Corrosive venom ticks for 5 seconds and weakens afflicted enemies, reducing their attack damage by 30%.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#EF4444] space-y-1">
-                  <div className="font-display text-sm text-[#EF4444] font-semibold flex items-center gap-1.5">
-                    <span>🩸</span> Lacerate Bleed
-                  </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Inflicts deep open wounds. Bleed damage doubles whenever the afflicted monster moves.
-                  </p>
-                </div>
-
-                <div className="p-3 bg-[#13131A] border-l-2 border-[#EAB308] space-y-1">
-                  <div className="font-display text-sm text-[#EAB308] font-semibold flex items-center gap-1.5">
-                    <span></span> Concussive Stun
-                  </div>
-                  <p className="text-xs text-[#C7C5D6] leading-relaxed">
-                    Disorients and completely incapacitates monsters, preventing all attacks and movement.
-                  </p>
-                </div>
+                ))}
               </div>
             </div>
 

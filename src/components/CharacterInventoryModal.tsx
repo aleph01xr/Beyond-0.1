@@ -84,35 +84,32 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe">
       {/* Stone Panel Container */}
-      <div className="stone-panel w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden text-white rounded-none relative">
+      <div className="stone-panel w-full max-w-4xl max-h-[92dvh] flex flex-col overflow-hidden text-white rounded-none relative">
         
         {/* Stone Plaque Header */}
-        <div className="stone-plaque p-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 border-2 border-[#D9AA52] bg-[#252336] flex items-center justify-center font-mono font-bold text-lg text-[#FCD34D] shadow">
+        <div className="stone-plaque p-2.5 sm:p-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="w-8 h-8 sm:w-10 sm:h-10 border-2 border-[#D9AA52] bg-[#252336] flex items-center justify-center font-mono font-bold text-base sm:text-lg text-[#FCD34D] shadow shrink-0">
               {heroDef.name.substring(0, 1)}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="font-mono text-base sm:text-lg font-bold text-white tracking-wide">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <h2 className="font-mono text-sm sm:text-lg font-bold text-white tracking-wide truncate">
                   {player.username}
                 </h2>
-                <span className="text-[10px] font-mono px-2 py-0.5 bg-[#252336] border border-[#353442] text-[#FCD34D]">
-                  Lv. {player.level} {heroDef.name}
-                </span>
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 border" style={{ color: heroDef.accentColor, borderColor: `${heroDef.accentColor}66`, backgroundColor: `${heroDef.accentColor}15` }}>
-                  {heroDef.roleBadge}
+                <span className="text-[9px] sm:text-[10px] font-mono px-1.5 sm:px-2 py-0.5 bg-[#252336] border border-[#353442] text-[#FCD34D]">
+                  Lv.{player.level} {heroDef.name}
                 </span>
               </div>
-              <p className="text-xs text-[#A19FAF] font-mono mt-0.5">
-                {heroDef.title} · {heroDef.weapon}
+              <p className="text-[10px] sm:text-xs text-[#A19FAF] font-mono mt-0.5 truncate">
+                {heroDef.title}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Quick Stats Summary */}
             <div className="hidden sm:flex items-center gap-4 font-mono text-xs border-r border-[#353442] pr-4">
               <div>
@@ -131,7 +128,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                 sfx.playUiClick();
                 onClose();
               }}
-              className="stone-button stone-button-dark w-9 h-9 p-0 text-white font-mono font-bold text-base flex items-center justify-center"
+              className="stone-button stone-button-dark w-8 h-8 sm:w-9 sm:h-9 p-0 text-white font-mono font-bold text-sm sm:text-base flex items-center justify-center"
               title="Close Inventory [I]"
             >
               ✕
@@ -140,7 +137,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
         </div>
 
         {/* Stone Navigation Tabs */}
-        <div className="stone-plaque border-t border-b border-[#353442] px-4 flex items-center gap-2 shrink-0 overflow-x-auto">
+        <div className="stone-plaque border-t border-b border-[#353442] px-2 sm:px-4 flex items-center gap-1.5 sm:gap-2 shrink-0 overflow-x-auto custom-scrollbar">
           <button
             type="button"
             onClick={() => { sfx.playUiClick(); setActiveTab('equipment'); }}

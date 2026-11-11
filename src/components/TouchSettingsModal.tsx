@@ -122,9 +122,9 @@ export const TouchSettingsModal: React.FC<TouchSettingsModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="touch-settings-title"
-      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 select-none"
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-5 select-none pb-safe pt-safe pl-safe pr-safe"
     >
-      <div className="stone-panel max-w-lg w-full p-4 sm:p-6 space-y-4 my-auto max-h-[92vh] overflow-y-auto">
+      <div className="stone-panel max-w-lg w-full p-3.5 sm:p-6 space-y-3 sm:space-y-4 my-auto max-h-[92dvh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[#434152] pb-3">
           <div className="flex items-center gap-2">

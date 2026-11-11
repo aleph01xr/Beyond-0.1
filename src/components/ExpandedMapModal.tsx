@@ -27,11 +27,11 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
   const canvasH = map.height * scale;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none">
-      <div className="stone-panel w-full max-w-4xl max-h-[94vh] flex flex-col overflow-hidden text-white rounded-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe">
+      <div className="stone-panel w-full max-w-4xl max-h-[94dvh] flex flex-col overflow-hidden text-white rounded-none">
         
         {/* Header */}
-        <div className="stone-plaque p-4 flex items-center justify-between shrink-0">
+        <div className="stone-plaque p-2.5 sm:p-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 border-2 border-[#D9AA52] bg-[#252336] flex items-center justify-center font-mono font-bold text-xs text-[#FCD34D] shadow">
               [MAP]
@@ -200,7 +200,7 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                         style={{ left: ex, top: ey }}
                         title={`${en.name} (Boss)`}
                       >
-                        ☠
+                        B
                       </div>
                     );
                   }

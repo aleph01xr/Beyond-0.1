@@ -52,7 +52,7 @@ interface TouchControlsProps {
   onStickMove: (stickX: number, stickY: number, aimAngle?: number) => void;
   onAttackPress: (pressed: boolean, aimAngle?: number) => void;
   onTriggerAction: (
-    action: 'tactical' | 'ult' | 'potion' | 'interact',
+    action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
     aimAngle: number
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
@@ -107,9 +107,39 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
   const tacSec = Math.ceil(player.skillCooldownMs / 1000);
   const ultSec = Math.ceil(player.ultCooldownMs / 1000);
+  const dashSec = Math.ceil((player.dashCooldownMs || 0) / 1000);
+  const isSilenced = Boolean(player.statuses && player.statuses.some((s) => s.type === 'silenced'));
 
-  const joySpec = JOYSTICK_CONFIGS[settings.joystickSize] || JOYSTICK_CONFIGS.medium;
-  const btnSpec = BUTTON_CONFIGS[settings.buttonSize] || BUTTON_CONFIGS.compact;
+  // Dynamic scale calculation for compact mobile screens (100% zoom on mobile browsers)
+  const mobileViewportScale = React.useMemo(() => {
+    if (typeof window === 'undefined') return 1;
+    const minDim = Math.min(window.innerWidth, window.innerHeight);
+    if (minDim < 380) return 0.8;
+    if (minDim < 480) return 0.88;
+    if (minDim < 640) return 0.94;
+    return 1;
+  }, []);
+
+  const baseJoySpec = JOYSTICK_CONFIGS[settings.joystickSize] || JOYSTICK_CONFIGS.medium;
+  const joySpec = React.useMemo(() => {
+    if (mobileViewportScale === 1) return baseJoySpec;
+    return {
+      basePx: Math.round(baseJoySpec.basePx * mobileViewportScale),
+      knobPx: Math.round(baseJoySpec.knobPx * mobileViewportScale),
+      maxRadius: Math.round(baseJoySpec.maxRadius * mobileViewportScale),
+    };
+  }, [baseJoySpec, mobileViewportScale]);
+
+  const baseBtnSpec = BUTTON_CONFIGS[settings.buttonSize] || BUTTON_CONFIGS.compact;
+  const btnSpec = React.useMemo(() => {
+    if (mobileViewportScale === 1) return baseBtnSpec;
+    return {
+      util: Math.round(baseBtnSpec.util * mobileViewportScale),
+      skill: Math.round(baseBtnSpec.skill * mobileViewportScale),
+      attack: Math.round(baseBtnSpec.attack * mobileViewportScale),
+      icon: Math.round(baseBtnSpec.icon * mobileViewportScale),
+    };
+  }, [baseBtnSpec, mobileViewportScale]);
 
   const triggerHaptic = (ms = 12) => {
     if (settings.haptics && typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -264,7 +294,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         onTouchMove={handleLeftZoneTouchMove}
         onTouchEnd={handleLeftZoneTouchEnd}
         onTouchCancel={handleLeftZoneTouchEnd}
-        className="pointer-events-auto absolute left-0 bottom-0 top-16 w-[50vw] touch-none flex items-end p-4 sm:p-5"
+        className="pointer-events-auto absolute left-0 bottom-0 top-12 sm:top-16 w-[50vw] touch-none flex items-end p-2.5 sm:p-5 pl-safe pb-safe"
       >
         {/* Floating Joystick Base */}
         {settings.joystickMode === 'floating' && floatingOrigin && isStickActive && (
@@ -333,7 +363,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       </div>
 
       {/* RIGHT ACTION CLUSTER */}
-      <div className="pointer-events-auto absolute right-2.5 sm:right-5 bottom-2.5 sm:bottom-5 flex flex-col items-end gap-2.5">
+      <div className="pointer-events-auto absolute right-1.5 sm:right-5 bottom-1.5 sm:bottom-5 pr-safe pb-safe flex flex-col items-end gap-1.5 sm:gap-2.5">
         {/* Progression Status Bar (Mobile) */}
         <div className="flex flex-col items-end gap-1 mb-1 pr-1">
           <div className="text-[9px] font-mono font-bold text-[#FCD34D] bg-[#181822]/60 px-1.5 py-0.5 border border-[#3C3A4D]">
@@ -440,6 +470,33 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           >
             [E]
           </button>
+
+          {/* Dash Button */}
+          <button
+            type="button"
+            onTouchStart={(e) => {
+              e.stopPropagation();
+              if (dashSec === 0) {
+                sfx.playDash();
+                triggerHaptic(14);
+                onTriggerAction('dash', player.aimAngle);
+              }
+            }}
+            style={{ width: `${btnSpec.util + 8}px`, height: `${btnSpec.util + 8}px` }}
+            className={`rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-md cursor-pointer ${
+              dashSec > 0
+                ? 'bg-[#1E1E28]/85 border-[#38364C] text-[#6E6C7D]'
+                : 'bg-[#2A2314]/95 border-[#F59E0B] text-[#FDE68A]'
+            }`}
+            aria-label="Dash Evasion"
+          >
+            <span className="text-[10px] font-mono font-bold leading-none">
+              {dashSec > 0 ? `${dashSec}s` : 'DASH'}
+            </span>
+            <span className="text-[7.5px] font-mono leading-none mt-0.5 opacity-80">
+              [C]
+            </span>
+          </button>
         </div>
 
         {/* Lower Combat Cluster */}
@@ -455,6 +512,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             type="button"
             onTouchStart={(e) => {
               e.stopPropagation();
+              if (isSilenced) {
+                sfx.playUiClick();
+                return;
+              }
               if (tacSec === 0) {
                 sfx.playSkill('tactical');
                 triggerHaptic(16);
@@ -467,17 +528,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               height: `${btnSpec.skill}px`,
             }}
             className={`absolute top-0 left-0 rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-lg cursor-pointer ${
-              tacSec > 0
+              isSilenced
+                ? 'bg-[#251B33]/90 border-[#A855F7] text-[#D8B4FE]'
+                : tacSec > 0
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
                 : 'bg-[#282738]/95 border-[#818CF8] text-[#C7D2FE]'
             }`}
             aria-label={heroDef.tacticalName}
           >
             <span className="text-xs font-mono font-bold leading-none">
-              {tacSec > 0 ? `${tacSec}s` : 'Q'}
+              {isSilenced ? 'SIL' : tacSec > 0 ? `${tacSec}s` : 'Q'}
             </span>
             <span className="text-[7.5px] font-display truncate max-w-[42px] mt-0.5">
-              {tacSec > 0 ? 'Wait' : heroDef.tacticalName.split(' ')[0]}
+              {isSilenced ? 'Sealed' : tacSec > 0 ? 'Wait' : heroDef.tacticalName.split(' ')[0]}
             </span>
           </button>
 
@@ -486,6 +549,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             type="button"
             onTouchStart={(e) => {
               e.stopPropagation();
+              if (isSilenced) {
+                sfx.playUiClick();
+                return;
+              }
               if (ultSec === 0) {
                 sfx.playSkill('ult');
                 triggerHaptic(25);
@@ -499,17 +566,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
               right: `${btnSpec.attack * 0.9}px`,
             }}
             className={`absolute top-0 rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-lg cursor-pointer ${
-              ultSec > 0
+              isSilenced
+                ? 'bg-[#251B33]/90 border-[#A855F7] text-[#D8B4FE]'
+                : ultSec > 0
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
                 : 'bg-[#372A18]/95 border-[#F59E0B] text-[#FEF08A]'
             }`}
             aria-label={heroDef.ultName}
           >
             <span className="text-xs font-mono font-bold leading-none">
-              {ultSec > 0 ? `${ultSec}s` : 'R'}
+              {isSilenced ? 'SIL' : ultSec > 0 ? `${ultSec}s` : 'R'}
             </span>
             <span className="text-[7.5px] font-display truncate max-w-[42px] mt-0.5">
-              {ultSec > 0 ? 'Wait' : 'ULT'}
+              {isSilenced ? 'Sealed' : ultSec > 0 ? 'Wait' : 'ULT'}
             </span>
           </button>
 

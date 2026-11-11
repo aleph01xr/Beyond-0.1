@@ -417,7 +417,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onAuthenticated }) => 
               })()}
 
               <p className="text-[10.5px] text-[#A5A3B5] text-center font-mono">
-                ️ Each account is permanently bound to 1 class. To play another hero, create another adventurer account.
+                Notice: Each account is permanently bound to 1 class. To play another hero, create another adventurer account.
               </p>
             </div>
           )}

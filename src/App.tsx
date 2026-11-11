@@ -272,7 +272,7 @@ export function App() {
   );
 
   const handleTriggerAction = useCallback(
-    (action: 'tactical' | 'ult' | 'potion' | 'interact', aimAngle: number) => {
+    (action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash', aimAngle: number) => {
       sendWs({ type: 'player:action', action, aimAngle });
     },
     [sendWs]

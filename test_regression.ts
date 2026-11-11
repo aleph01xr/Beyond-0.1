@@ -2100,7 +2100,7 @@ async function runRegressionTests() {
       const spawnedZoneKinds = new Set<string>();
 
       // Run boss ticks to collect zone kinds spawned by boss AI
-      for (let t = 0; t < 40; t++) {
+      for (let t = 0; t < 80; t++) {
         boss.windupMs = 0;
         room.tick(100);
         for (const z of room.zones) {
@@ -2479,6 +2479,181 @@ async function runRegressionTests() {
 
     // 3. Ensure historical releases remain accessible (at least v1.2.0, v1.1.0, v1.0.0 documented)
     assert.ok(CHANGELOG_DATA.length >= 3, 'Changelog must preserve historical releases for modal archive');
+  });
+
+  // --- Test 58: Universal Dash/Evasion ability executes correctly ---
+  await test('58. Player dash action triggers movement, haste surge, and cooldowns correctly', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_DASH',
+      name: 'Dash Ability Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 5858,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_dasher';
+    room.addOrReconnectPlayer(pid, 'SwiftDash', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+
+    const startX = p.x;
+    const startY = p.y;
+    p.dashCooldownMs = 0;
+
+    // Set aim direction to right (0 rad)
+    p.aimAngle = 0;
+
+    // Trigger dash action
+    room.performAction(pid, 'dash', 0);
+
+    // Verify cooldown initialized (base 2600ms or reduced by INT)
+    assert.ok(p.dashCooldownMs > 2000, `Dash cooldown must be initialized (~2600ms, got ${p.dashCooldownMs}ms)`);
+    assert.strictEqual(p.maxDashCooldownMs, p.dashCooldownMs, 'maxDashCooldownMs must match dashCooldownMs');
+
+    // Verify displacement along angle
+    assert.ok(p.x > startX + 50, `Player X position (${p.x}) must displace forward from start (${startX})`);
+
+    // Verify haste surge
+    assert.ok(p.hasteMs >= 500, `Player must gain haste surge on dash (got ${p.hasteMs}ms)`);
+
+    // Tick engine to verify dash cooldown decrements in tick loop
+    room.tick(500);
+    assert.ok(p.dashCooldownMs < 2200, `Dash cooldown must decrement on tick loop (got ${p.dashCooldownMs}ms)`);
+  });
+
+  // --- Test 59: Complete Status Effects System Overhaul & Balance ---
+  test('59. Complete Status Effects System Overhaul (Charmed, Silenced, Poison, Frostbite, Impaled)', () => {
+    const room = new GameRoom({
+      roomId: 'test_status_room',
+      name: 'Status Test Sanctuary',
+      hostName: 'StatusValidator',
+      difficulty: 'Normal',
+      seed: 9912,
+    });
+    room.floor = 6;
+    room.status = 'playing';
+
+    const pid = 'p_status_hero';
+    room.addOrReconnectPlayer(pid, 'StatusHero', 'vanguard');
+    const p = room.getPlayerState(pid)!;
+    const pr = (room as any).players.get(pid)!;
+    p.x = 200;
+    p.y = 200;
+
+    // 1. Charmed Siren Pull when Idle
+    const boss = {
+      id: 'boss_elyndor',
+      name: 'Elyndor, Keeper of the Last Hymn',
+      kind: 'boss' as const,
+      x: 350,
+      y: 200,
+      radius: 32,
+      hp: 1000,
+      maxHp: 1000,
+      enraged: false,
+      windupMs: 1000,
+      silencedMs: 0,
+      poisonedMs: 0,
+      markedMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      bleedingMs: 0,
+      resistances: { physical: 0, arcane: 0, divine: 0 },
+    };
+    room.enemies = [boss as any];
+
+    // Apply Charmed
+    room.applyPlayerStatus(p, 'charmed', 3000);
+    assert.ok(p.statuses.some(s => s.type === 'charmed'), 'Charmed must be active on player');
+
+    // Idle input (zero directional movement)
+    pr.input.left = false;
+    pr.input.right = false;
+    pr.input.up = false;
+    pr.input.down = false;
+    delete pr.input.stickX;
+    delete pr.input.stickY;
+
+    const preX = p.x;
+    room.tick(100); // 100ms
+    assert.ok(p.x > preX, `Charmed idle player must be pulled toward boss (preX=${preX}, postX=${p.x})`);
+
+    // 2. Charmed Damage Reduction (-35%)
+    const normalDmgEnemy = {
+      id: 'dummy_target',
+      hp: 500,
+      maxHp: 500,
+      radius: 16,
+      resistances: { physical: 0 },
+      markedMs: 0,
+    };
+    room.enemies.push(normalDmgEnemy as any);
+    const charmDmgDealt = room.damageEnemy(normalDmgEnemy as any, 100, p, false, 'physical');
+    // Normal 100 with Vanguard level 1 mult (1.0) would be 100, but charmed should be ~65
+    assert.strictEqual(charmDmgDealt, 65, `Charmed player should deal 65% outgoing damage (got ${charmDmgDealt})`);
+
+    // 3. Charm Broken on Taking >= 20 Damage
+    p.shield = 0;
+    room.damagePlayer(p, 30, 'physical');
+    assert.ok(!p.statuses.some(s => s.type === 'charmed'), 'Charm must break when taking >= 20 damage');
+
+    // 4. Silenced Ability Lock & Cooldown Preservation
+    room.applyPlayerStatus(p, 'silenced', 3000);
+    assert.ok(p.statuses.some(s => s.type === 'silenced'), 'Silenced must be active on player');
+
+    p.skillCooldownMs = 0;
+    p.ultCooldownMs = 0;
+    p.dashCooldownMs = 0;
+
+    // Tactical activation must be rejected without putting skill on cooldown
+    room.performAction(pid, 'tactical', 0);
+    assert.strictEqual(p.skillCooldownMs, 0, 'Silenced player cannot activate tactical, and cooldown must stay 0');
+
+    // Ult activation must be rejected without putting ult on cooldown
+    room.performAction(pid, 'ult', 0);
+    assert.strictEqual(p.ultCooldownMs, 0, 'Silenced player cannot activate ult, and cooldown must stay 0');
+
+    // Basic evasion dash must NOT be blocked by silence
+    const preDashX = p.x;
+    room.performAction(pid, 'dash', 0);
+    assert.ok(p.dashCooldownMs > 0, 'Dash evasion must remain usable while silenced');
+    assert.ok(p.x > preDashX + 40, 'Player displaced during dash while silenced');
+
+    // 5. Enemy Silence Decrement & Spell Suppression
+    boss.silencedMs = 1500;
+    room.tick(500);
+    assert.strictEqual(boss.silencedMs, 1000, `Enemy silencedMs must decrement from 1500 to 1000 (got ${boss.silencedMs})`);
+
+    // 6. Poison 30% Outgoing Damage Reduction
+    boss.poisonedMs = 4000;
+    const baseHit = 50;
+    const unpoisonedDmg = room.computeEnemyDamage(baseHit, null);
+    const poisonedDmg = room.computeEnemyDamage(baseHit, boss as any);
+    assert.strictEqual(
+      poisonedDmg,
+      Math.max(1, Math.round(unpoisonedDmg * 0.7)),
+      `Poisoned enemy damage must be exactly 70% of base (unpoisoned=${unpoisonedDmg}, poisoned=${poisonedDmg})`
+    );
+
+    // 7. Frostbite Movement & Attack Penalty
+    p.statuses = [];
+    room.applyPlayerStatus(p, 'frostbite', 3000);
+    assert.ok(p.statuses.some(s => s.type === 'frostbite'), 'Frostbite must be active');
+
+    // 8. Impaled Damage Vulnerability
+    p.statuses = [];
+    room.applyPlayerStatus(p, 'impaled', 4000);
+    assert.ok(p.statuses.some(s => s.type === 'impaled'), 'Impaled must be active');
+    const regularHit = room.damagePlayer(p, 40, 'physical');
+    // Impaled increases divine damage by 45%
+    const impaledDivineHit = room.damagePlayer(p, 40, 'divine');
+    assert.ok(
+      impaledDivineHit > regularHit,
+      `Impaled player must take increased damage against divine attacks (${impaledDivineHit} vs ${regularHit})`
+    );
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

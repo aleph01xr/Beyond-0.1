@@ -415,6 +415,8 @@ export interface PlayerState {
   maxSkillCooldownMs: number;
   ultCooldownMs: number;
   maxUltCooldownMs: number;
+  dashCooldownMs: number;
+  maxDashCooldownMs: number;
   attackAnimMs: number;
   hasteMs: number;
   // Status Effects
@@ -706,7 +708,7 @@ export type ClientMessage =
     }
   | { type: 'room:leave' }
   | { type: 'player:input'; input: PlayerInputState }
-  | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact'; aimAngle: number }
+  | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash'; aimAngle: number }
   | { type: 'player:select_relic'; relicId: string }
   | { type: 'player:unequip_relic'; relicId: string }
   | { type: 'player:store_relic'; relicId: string }

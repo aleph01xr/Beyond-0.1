@@ -85,9 +85,9 @@ export const FullChangelogModal: React.FC<FullChangelogModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="changelog-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe"
     >
-      <div className="stone-panel w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden text-white rounded-none relative shadow-2xl">
+      <div className="stone-panel w-full max-w-3xl max-h-[92dvh] flex flex-col overflow-hidden text-white rounded-none relative shadow-2xl">
         {/* Subtle stone corner chisel details */}
         <span
           aria-hidden="true"
