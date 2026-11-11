@@ -2389,8 +2389,9 @@ var GameRoom = class _GameRoom {
             this.emitEvent("status", ally.state.x, ally.state.y - 22, "+28 Shield", "#93C5FD");
           }
         }
-        for (const enemy of this.enemies) {
-          if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 84) {
+        const bashTargets = [...this.enemies];
+        for (const enemy of bashTargets) {
+          if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 84) {
             enemy.stunnedMs = 1700;
             this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false, "physical");
           }
@@ -2451,8 +2452,9 @@ var GameRoom = class _GameRoom {
             this.emitEvent("heal", ally.state.x, ally.state.y - 20, `+${heal} HP`, "#6EE7B7");
           }
         }
-        for (const enemy of this.enemies) {
-          if (Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 135) {
+        const smiteTargets = [...this.enemies];
+        for (const enemy of smiteTargets) {
+          if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 135) {
             this.damageEnemy(enemy, Math.round(28 * dmgMult), p, false, "divine");
           }
         }
@@ -4378,11 +4380,12 @@ var GameRoom = class _GameRoom {
           }
         }
         const ownerPr = this.players.get(proj.ownerId);
-        if (!proj.hitEntityIds) {
+        if (!Array.isArray(proj.hitEntityIds)) {
           proj.hitEntityIds = [];
         }
         let hitDummy = false;
         for (const dummy of this.trainingDummies) {
+          if (!dummy || !dummy.id) continue;
           if (proj.hitEntityIds.includes(dummy.id)) continue;
           if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
             proj.hitEntityIds.push(dummy.id);
@@ -4401,8 +4404,9 @@ var GameRoom = class _GameRoom {
           }
         }
         if (hitDummy) continue;
-        for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
-          const enemy = this.enemies[eIdx];
+        const candidateEnemies = [...this.enemies];
+        for (const enemy of candidateEnemies) {
+          if (!enemy || !enemy.id || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
           if (proj.hitEntityIds.includes(enemy.id)) continue;
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
             proj.hitEntityIds.push(enemy.id);
@@ -4652,8 +4656,9 @@ var GameRoom = class _GameRoom {
       finalDmg = Math.round(finalDmg * 1.6);
       shattered = true;
       this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 20, " SHATTER!", "#38BDF8");
-      for (const other of this.enemies) {
-        if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 85) {
+      const shatterTargets = [...this.enemies];
+      for (const other of shatterTargets) {
+        if (other !== enemy && other.hp > 0 && this.enemies.includes(other) && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 85) {
           const otherRes = _GameRoom.getEnemyResistance(other.resistances, "frost");
           const otherMark = other.markedMs > 0 ? 1.35 : 1;
           const aoeDmg = Math.max(1, Math.round(finalDmg * 0.4 * (1 - otherRes) * otherMark));
@@ -4736,9 +4741,10 @@ var GameRoom = class _GameRoom {
       }
     }
     if (enemy.shockedMs > 0 && finalDmg > 6) {
+      const chainTargets = [...this.enemies];
       let arcs = 3;
-      for (const other of this.enemies) {
-        if (other !== enemy && other.hp > 0 && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 130) {
+      for (const other of chainTargets) {
+        if (other !== enemy && other.hp > 0 && this.enemies.includes(other) && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 130) {
           const otherRes = _GameRoom.getEnemyResistance(other.resistances, "lightning");
           const otherMark = other.markedMs > 0 ? 1.35 : 1;
           const arcDmg = Math.max(1, Math.round(finalDmg * 0.45 * (1 - otherRes) * otherMark));

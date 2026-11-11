@@ -86,6 +86,28 @@ export const CATEGORY_ORDER: ChangelogCategory[] = [
 
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
+    version: 'v1.3.0',
+    releaseDate: 'November 11, 2026',
+    title: 'Status Effects & Engine Integrity Overhaul',
+    description:
+      'Complete overhaul of all 19 status effects (10 Guardian Boss Afflictions & 9 Combat Afflictions), Unified Codex grid display, server-authoritative ability suppression, and snapshot array safeguards for projectile collisions, Freeze Shatter AoEs, and Chain Lightning arcs.',
+    categories: {
+      'NEW FEATURES': [
+        'Status Effect Codex Grid: Reorganized Status Effect Codex into sleek, high-contrast cards matching the Ancient Relics Codex 1:1 with icon slots, duration badges, and detailed combat mechanics.',
+        'Charmed Mechanics: Charmed players experience an ethereal siren pull toward the source, -35% damage penalty, and damage threshold break condition (breaks on >= 20 damage taken).',
+        'Silenced Ability Lock: Server-authoritative suppression for Tactical and Ultimate skills with visual lock indicators, preserving basic attacks, movement, and evasion dash.',
+      ],
+      IMPROVEMENTS: [
+        'Poison Damage Reduction: Applied 30% outgoing damage mitigation consistently across enemy melee attacks, ranged projectiles, and floor hazard zones.',
+        'Clean Codex Display: Removed floor number prefixes from status entries for clean information hierarchy.',
+      ],
+      'BUG FIXES': [
+        'Snapshot Array Safety: Resolved production server crash (TypeError: Cannot read properties of undefined (reading \'id\')) by using snapshot array iterations across projectile collisions, Freeze Shatter AoE waves, and Shock Chain Lightning arcs.',
+        'Duplicate Reward Prevention: Verified strict single-execution guarantees for XP, kill counts, gold, and potion drops during simultaneous multi-target deaths.',
+      ],
+    },
+  },
+  {
     version: 'v1.2.0',
     releaseDate: 'November 10, 2026',
     title: 'Fallen Spirits & Vault Expansion',

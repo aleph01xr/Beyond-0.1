@@ -62,6 +62,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const [isFullscreen, toggleFullscreen] = useFullscreenState();
   const [relicFilter, setRelicFilter] = useState<'all' | 'status' | 'offensive' | 'defensive' | 'mobility' | 'coop'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'guardian' | 'combat'>('all');
+  const [codexSubTab, setCodexSubTab] = useState<'relics' | 'statuses'>('relics');
 
   // Touch & SFX Menu Modal state
   const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
@@ -758,35 +759,153 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
         {/* TAB 3: RELIC CODEX & STATUS EFFECTS */}
         {activeTab === 'codex' && (
-          <section className="space-y-6">
-            <div>
-              <h2 className="font-display text-2xl text-white">
-                Ancient Relics &amp; Status Effects Codex
-              </h2>
-              <p className="text-xs sm:text-sm text-[#9B99AB] mt-1">
-                Draft relics from Relic Vaults located in treasure rooms and after defeating floor bosses to trigger elemental afflictions.
-              </p>
+          <section className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#292837] pb-3">
+              <div>
+                <h2 className="font-display text-xl sm:text-2xl text-white">
+                  Codex Archives
+                </h2>
+              </div>
+
+              {/* Top Sub-Nav: Relics vs Status Effects */}
+              <div className="flex items-center gap-2 bg-[#14141B] p-1 border border-[#2E2D3E]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setCodexSubTab('relics');
+                  }}
+                  className={`px-3.5 py-1.5 text-xs font-mono transition-colors cursor-pointer ${
+                    codexSubTab === 'relics'
+                      ? 'bg-[#D9AA52] text-[#14141B] font-bold shadow-sm'
+                      : 'text-[#A5A3B8] hover:text-white'
+                  }`}
+                >
+                  Ancient Relics (12)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sfx.playUiClick();
+                    setCodexSubTab('statuses');
+                  }}
+                  className={`px-3.5 py-1.5 text-xs font-mono transition-colors cursor-pointer ${
+                    codexSubTab === 'statuses'
+                      ? 'bg-[#D9AA52] text-[#14141B] font-bold shadow-sm'
+                      : 'text-[#A5A3B8] hover:text-white'
+                  }`}
+                >
+                  Status Effects (19)
+                </button>
+              </div>
             </div>
 
-            {/* Complete Status Effects Codex */}
-            <div className="bg-[#1C1C27] border border-[#2F2E40] p-4 sm:p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#292837] pb-3">
-                <div>
-                  <h3 className="font-display text-base text-[#D9AA52] flex items-center gap-2">
-                    Status Effects &amp; Boss Afflictions Codex
-                  </h3>
-                  <p className="text-xs text-[#9B99AB] mt-0.5">
-                    Official combat mechanics for Chapter 1 Sanctuary Boss Afflictions (Floors 1-10) and Elemental Procs.
-                  </p>
+            {/* SUB-VIEW 1: RELICS */}
+            {codexSubTab === 'relics' && (
+              <div className="space-y-4">
+                {/* Relic Category Filters */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#8E8C9E] font-mono mr-1">Filter:</span>
+                  {(
+                    [
+                      { id: 'all', label: 'All (12)' },
+                      { id: 'status', label: 'Status Procs (6)' },
+                      { id: 'offensive', label: 'Offense' },
+                      { id: 'defensive', label: 'Defense' },
+                      { id: 'mobility', label: 'Mobility' },
+                      { id: 'coop', label: 'Co-op' },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        setRelicFilter(f.id);
+                      }}
+                      className={`px-2.5 py-1 text-xs font-mono transition-colors cursor-pointer ${
+                        relicFilter === f.id
+                          ? 'bg-[#D9AA52] text-[#14141B] font-semibold'
+                          : 'bg-[#20202B] text-[#A5A3B8] hover:text-white border border-[#2E2D3E]'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Sub-filter tabs for Status Effects */}
-                <div className="flex items-center gap-1.5 bg-[#14141B] p-1 border border-[#2E2D3E] self-start sm:self-auto">
+                {/* Relic Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {RELIC_CATALOG.filter((relic) => {
+                    if (relicFilter === 'status') {
+                      return [
+                        'cinder_heart',
+                        'rimefrost_shard',
+                        'stormcaller_lodestone',
+                        'viper_crucible',
+                        'bloodletter_talisman',
+                        'thorned_aegis',
+                      ].includes(relic.id);
+                    }
+                    if (relicFilter === 'offensive') return relic.category === 'Offense';
+                    if (relicFilter === 'defensive') return relic.category === 'Defense';
+                    if (relicFilter === 'mobility') return relic.category === 'Mobility';
+                    if (relicFilter === 'coop') return relic.category === 'Co-op';
+                    return true;
+                  }).map((relic) => {
+                    const isStatusRelic = [
+                      'cinder_heart',
+                      'rimefrost_shard',
+                      'stormcaller_lodestone',
+                      'viper_crucible',
+                      'bloodletter_talisman',
+                      'thorned_aegis',
+                    ].includes(relic.id);
+
+                    return (
+                      <div
+                        key={relic.id}
+                        className="p-3.5 bg-[#1C1C27] border border-[#2F2E40] hover:border-[#4B4961] transition-colors space-y-1.5 relative"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <h3
+                            style={{ color: relic.accent }}
+                            className="font-display text-base font-semibold flex items-center gap-1.5"
+                          >
+                            {relic.name}
+                          </h3>
+                          <span className="text-[10px] text-[#9E9CAE] font-mono px-2 py-0.5 bg-[#13131A] border border-[#2B2A3A]">
+                            {relic.category}
+                          </span>
+                        </div>
+
+                        {isStatusRelic && (
+                          <div className="text-[9.5px] font-mono text-[#FCD34D] uppercase">
+                            Status Proc Relic
+                          </div>
+                        )}
+
+                        <p className="text-xs text-[#C7C5D5] leading-snug">
+                          {relic.summary}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* SUB-VIEW 2: STATUS EFFECTS */}
+            {codexSubTab === 'statuses' && (
+              <div className="space-y-4">
+                {/* Status Category Filters */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#8E8C9E] font-mono mr-1">Filter:</span>
                   {(
                     [
                       { id: 'all', label: 'All Statuses (19)' },
                       { id: 'guardian', label: 'Guardian Afflictions (10)' },
-                      { id: 'combat', label: 'Combat & Elemental (9)' },
+                      { id: 'combat', label: 'Combat Procs (9)' },
                     ] as const
                   ).map((sf) => (
                     <button
@@ -796,172 +915,53 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                         sfx.playUiClick();
                         setStatusFilter(sf.id);
                       }}
-                      className={`px-2.5 py-1 text-[11px] font-mono transition-colors cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs font-mono transition-colors cursor-pointer ${
                         statusFilter === sf.id
                           ? 'bg-[#D9AA52] text-[#14141B] font-semibold'
-                          : 'text-[#A5A3B8] hover:text-white'
+                          : 'bg-[#20202B] text-[#A5A3B8] hover:text-white border border-[#2E2D3E]'
                       }`}
                     >
                       {sf.label}
                     </button>
                   ))}
                 </div>
-              </div>
 
-              {/* Status Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {(statusFilter === 'all'
-                  ? ALL_STATUS_EFFECTS
-                  : statusFilter === 'guardian'
-                  ? Object.values(GUARDIAN_STATUS_EFFECTS)
-                  : Object.values(COMBAT_STATUS_EFFECTS)
-                ).map((meta) => (
-                  <div
-                    key={meta.id}
-                    className="p-3 bg-[#13131A] border-l-2 space-y-2 flex flex-col justify-between"
-                    style={{ borderLeftColor: meta.color }}
-                  >
-                    <div className="space-y-1.5">
+                {/* Status Grid matching Relic Grid styling 1:1 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {(statusFilter === 'all'
+                    ? ALL_STATUS_EFFECTS
+                    : statusFilter === 'guardian'
+                    ? Object.values(GUARDIAN_STATUS_EFFECTS)
+                    : Object.values(COMBAT_STATUS_EFFECTS)
+                  ).map((meta) => (
+                    <div
+                      key={meta.id}
+                      className="p-3.5 bg-[#1C1C27] border border-[#2F2E40] hover:border-[#4B4961] transition-colors space-y-1.5 relative"
+                    >
                       <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          {/* Dedicated Pixel Art Icon Slot */}
-                          <div
-                            className={`w-7 h-7 flex-shrink-0 flex items-center justify-center border font-mono text-[10px] font-bold ${meta.iconSlotId}`}
-                            style={{
-                              borderColor: `${meta.color}66`,
-                              backgroundColor: `${meta.color}15`,
-                              color: meta.color,
-                            }}
-                            title={`Pixel Slot: ${meta.iconSlotId}`}
-                          >
-                            {meta.badge}
-                          </div>
-                          <div>
-                            <div className="font-display text-sm font-semibold leading-tight" style={{ color: meta.color }}>
-                              {meta.name}
-                            </div>
-                            <div className="text-[10px] font-mono text-[#7E7C8D]">
-                              {meta.boss ? `Floor ${meta.floor}: ${meta.boss}` : 'Combat & Elemental Affliction'}
-                            </div>
-                          </div>
-                        </div>
-                        <span
-                          className="text-[9px] font-mono px-1.5 py-0.5 border"
-                          style={{
-                            borderColor: `${meta.color}44`,
-                            backgroundColor: `${meta.color}12`,
-                            color: meta.color,
-                          }}
+                        <h3
+                          style={{ color: meta.color }}
+                          className="font-display text-base font-semibold flex items-center gap-1.5"
                         >
-                          {meta.category === 'guardian' ? 'BOSS' : 'COMBAT'}
+                          {meta.name}
+                        </h3>
+                        <span className="text-[10px] text-[#9E9CAE] font-mono px-2 py-0.5 bg-[#13131A] border border-[#2B2A3A]">
+                          {meta.category === 'guardian' ? 'Boss Affliction' : 'Combat Proc'}
                         </span>
                       </div>
 
-                      <p className="text-xs text-[#C7C5D6] leading-relaxed">
+                      <div className="text-[9.5px] font-mono text-[#FCD34D] uppercase">
+                        {meta.boss ? meta.boss : 'Elemental & Combat Status'}
+                      </div>
+
+                      <p className="text-xs text-[#C7C5D5] leading-snug">
                         {meta.summary}
                       </p>
                     </div>
-
-                    <div className="pt-2 border-t border-[#20202B] flex items-center justify-between text-[10px] font-mono text-[#8E8C9E]">
-                      <span>{meta.category === 'guardian' ? 'Afflicts: Player' : 'Afflicts: Monster / Boss'}</span>
-                      <span className="truncate max-w-[140px] text-right" title={meta.resistanceMitigation}>
-                        {meta.resistanceMitigation ? meta.resistanceMitigation.split('&')[0] : 'Universal'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-2 pt-1 border-b border-[#292837] pb-3">
-              <span className="text-xs text-[#8E8C9E] font-mono mr-2">Filter Codex:</span>
-              {(
-                [
-                  { id: 'all', label: 'All Relics (12)' },
-                  { id: 'status', label: 'Status Procs (6)' },
-                  { id: 'offensive', label: 'Offense' },
-                  { id: 'defensive', label: 'Defense' },
-                  { id: 'mobility', label: 'Mobility' },
-                  { id: 'coop', label: 'Co-op' },
-                ] as const
-              ).map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  onClick={() => {
-                    sfx.playUiClick();
-                    setRelicFilter(f.id);
-                  }}
-                  className={`px-3 py-1 text-xs font-mono transition-colors cursor-pointer ${
-                    relicFilter === f.id
-                      ? 'bg-[#D9AA52] text-[#14141B] font-semibold shadow-sm'
-                      : 'bg-[#20202B] text-[#A5A3B8] hover:text-white border border-[#2E2D3E]'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Relic Cards Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {RELIC_CATALOG.filter((relic) => {
-                if (relicFilter === 'status') {
-                  return [
-                    'cinder_heart',
-                    'rimefrost_shard',
-                    'stormcaller_lodestone',
-                    'viper_crucible',
-                    'bloodletter_talisman',
-                    'thorned_aegis',
-                  ].includes(relic.id);
-                }
-                if (relicFilter === 'offensive') return relic.category === 'Offense';
-                if (relicFilter === 'defensive') return relic.category === 'Defense';
-                if (relicFilter === 'mobility') return relic.category === 'Mobility';
-                if (relicFilter === 'coop') return relic.category === 'Co-op';
-                return true;
-              }).map((relic) => {
-                const isStatusRelic = [
-                  'cinder_heart',
-                  'rimefrost_shard',
-                  'stormcaller_lodestone',
-                  'viper_crucible',
-                  'bloodletter_talisman',
-                  'thorned_aegis',
-                ].includes(relic.id);
-
-                return (
-                  <div
-                    key={relic.id}
-                    className="p-4 bg-[#20202B] border border-[#2F2E3E] hover:border-[#4B4961] transition-colors space-y-2 relative"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <h3
-                        style={{ color: relic.accent }}
-                        className="font-display text-base sm:text-lg font-semibold flex items-center gap-1.5"
-                      >
-                        {relic.name}
-                      </h3>
-                      <span className="text-[11px] text-[#9E9CAE] font-mono px-2 py-0.5 bg-[#171720] border border-[#2B2A3A]">
-                        {relic.category}
-                      </span>
-                    </div>
-
-                    {isStatusRelic && (
-                      <div className="text-[10px] font-mono tracking-wider text-[#FCD34D] uppercase">
-                         Inflicts Status Affliction
-                      </div>
-                    )}
-
-                    <p className="text-xs sm:text-sm text-[#C7C5D5] leading-relaxed">
-                      {relic.summary}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
+            )}
           </section>
         )}
 

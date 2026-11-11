@@ -2072,7 +2072,7 @@ async function runRegressionTests() {
     // B: Verify Floors 6-10 create their signature unique zone kinds
     const expectedZoneKinds: Record<number, string[]> = {
       6: ['sound_lane', 'lament_mark'],
-      7: ['ashen_cloud', 'censer_sweep'],
+      7: ['ashen_cloud', 'censer_sweep', 'lament_mark'],
       8: ['scripture_line', 'lancefall_mark', 'silence_seal'],
       9: ['lance_thrust', 'lancefall_mark'],
       10: ['warden_edict', 'warden_parry', 'verdict_combo'],
@@ -2654,6 +2654,112 @@ async function runRegressionTests() {
       impaledDivineHit > regularHit,
       `Impaled player must take increased damage against divine attacks (${impaledDivineHit} vs ${regularHit})`
     );
+  });
+
+  // --- Test 60: Targeted Audit — Simultaneous Enemy Deaths During Projectile Iteration ---
+  await test('60. Targeted Audit: Simultaneous enemy deaths during projectile iteration', async () => {
+    const room = new GameRoom({ roomId: 'TEST_AUDIT_60', name: 'Audit Room 60', hostName: 'Host', difficulty: 'Normal' });
+    const p = room.addOrReconnectPlayer('pid_audit_1', 'VanguardAlpha', 'vanguard', true);
+    p.relics = [];
+    room.enemies.length = 0; // Clear floor mobs so only test enemies are evaluated
+
+    const startX = p.x;
+    const startY = p.y;
+
+    // Spawn 5 low-HP enemies in a line along the projectile trajectory using valid EnemyKinds and walkable coordinates
+    const e1 = room.spawnEnemyForTesting('skeleton', startX + 30, startY); e1.hp = 5;
+    const e2 = room.spawnEnemyForTesting('cultist', startX + 50, startY); e2.hp = 5;
+    const e3 = room.spawnEnemyForTesting('slime', startX + 70, startY); e3.hp = 5;
+    const e4 = room.spawnEnemyForTesting('goblin', startX + 90, startY); e4.hp = 5;
+    const e5 = room.spawnEnemyForTesting('knight', startX + 110, startY); e5.hp = 5;
+
+    // Spawn a piercing projectile (pierce: 5) travelling through all 5 enemies
+    room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p.id,
+      style: 'slash',
+      x: startX,
+      y: startY,
+      vx: 300,
+      vy: 0,
+      angle: 0,
+      radius: 30,
+      damage: 25,
+      pierce: 5,
+      ttlMs: 2000,
+    });
+
+    // Tick room in small steps so projectile moves and hits all 5 enemies
+    for (let t = 0; t < 5; t++) {
+      room.tick(100);
+    }
+
+    assert.strictEqual(room.enemies.length, 0, 'All 5 low-HP enemies must be processed and removed safely');
+    assert.strictEqual(p.kills, 5, 'Attacker must receive exactly 5 kill credits without duplicates');
+  });
+
+  // --- Test 61: Targeted Audit — AoE Freeze Shatter & Shock Chain Lightning Chain Reactions ---
+  await test('61. Targeted Audit: Freeze Shatter & Shock Chain Lightning chain reactions', async () => {
+    const room = new GameRoom({ roomId: 'TEST_AUDIT_61', name: 'Audit Room 61', hostName: 'Host', difficulty: 'Normal' });
+    const p = room.addOrReconnectPlayer('pid_audit_2', 'ArcanistBeta', 'arcanist', true);
+    room.enemies.length = 0;
+
+    // Spawn 3 enemies clustered together: E1 (frozen, 20 HP), E2 (1 HP), E3 (30 HP)
+    const e1 = room.spawnEnemyForTesting('slime', 100, 100); e1.frozenMs = 3000; e1.hp = 20;
+    const e2 = room.spawnEnemyForTesting('skeleton', 130, 100); e2.hp = 1;
+    const e3 = room.spawnEnemyForTesting('goblin', 160, 100); e3.hp = 30;
+
+    // Damage E1 to trigger Shatter AoE. Shatter AoE will hit E2 and kill E2 (1 HP), which splices E2 from room.enemies.
+    // With snapshot array iteration, E3 must STILL receive Shatter AoE damage without being skipped!
+    room.damageEnemy(e1, 30, p, true, 'frost');
+
+    assert.ok(e1.hp <= 0, 'Primary target E1 must be dead from Shatter damage');
+    assert.ok(!room.enemies.includes(e2), 'Intermediate target E2 must be killed and removed from room.enemies');
+    assert.ok(e3.hp < 30, 'Target E3 must have received Shatter AoE damage despite E2 dying mid-iteration');
+
+    // Test Shock Chain Lightning arc reaction
+    room.enemies.length = 0;
+    const c1 = room.spawnEnemyForTesting('cultist', 200, 200); c1.shockedMs = 4000; c1.hp = 50;
+    const c2 = room.spawnEnemyForTesting('slime', 230, 200); c2.hp = 1; // Dies on arc 1
+    const c3 = room.spawnEnemyForTesting('goblin', 260, 200); c3.hp = 40; // Receives arc 2
+
+    room.damageEnemy(c1, 20, p, false, 'lightning');
+    assert.ok(!room.enemies.includes(c2), 'Chain lightning arc 1 must kill low-HP c2 and splice it');
+    assert.ok(c3.hp < 40, 'Chain lightning arc 2 must safely hit c3 even after c2 died');
+  });
+
+  // --- Test 62: Targeted Audit — Two-Player Co-op Combat & Boss Cleanup ---
+  await test('62. Targeted Audit: Two-Player co-op combat & boss cleanup', async () => {
+    const room = new GameRoom({ roomId: 'TEST_AUDIT_62', name: 'Audit Room 62', hostName: 'Host', difficulty: 'Normal' });
+    const p1 = room.addOrReconnectPlayer('pid_coop_1', 'PlayerOne', 'vanguard', true);
+    const p2 = room.addOrReconnectPlayer('pid_coop_2', 'PlayerTwo', 'ranger', false);
+
+    // Load Floor 1 Boss room
+    room.summonBossForFloor(1);
+    const boss = room.enemies.find(e => e.kind === 'boss');
+    assert.ok(boss, 'Boss must be spawned');
+    const initialBossHp = boss.hp;
+
+    // Both players attack boss simultaneously in the same tick
+    const dmg1 = room.damageEnemy(boss, 40, p1, false, 'physical');
+    const dmg2 = room.damageEnemy(boss, 40, p2, false, 'physical');
+
+    assert.strictEqual(boss.hp, initialBossHp - dmg1 - dmg2, 'Boss HP must reflect total damage from both players');
+    assert.strictEqual(p1.damageDealt, dmg1, 'P1 damageDealt must match dealt damage');
+    assert.strictEqual(p2.damageDealt, dmg2, 'P2 damageDealt must match dealt damage');
+
+    // Retain only the boss in the room so room clearing can trigger
+    room.enemies = [boss];
+
+    // Lethal strike on boss (5000 raw damage ensures lethal net damage after resistance)
+    room.damageEnemy(boss, 5000, p1, true, 'physical');
+    room.tick(50); // Process room clear check
+
+    assert.ok(!room.enemies.includes(boss), 'Boss must be cleaned up from room.enemies');
+    assert.ok(room.map.portalActive, 'Portal must activate on boss defeat');
+
+    const chest = room.props.find(pr => pr.kind === 'relic_chest');
+    assert.ok(chest, 'Relic Vault chest prop must spawn upon boss defeat');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
