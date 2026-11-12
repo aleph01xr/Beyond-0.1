@@ -93,11 +93,14 @@ export const CHANGELOG_DATA: ChangelogEntry[] = [
       'Complete overhaul of all 19 status effects (10 Guardian Boss Afflictions & 9 Combat Afflictions), Unified Codex grid display, server-authoritative ability suppression, and snapshot array safeguards for projectile collisions, Freeze Shatter AoEs, and Chain Lightning arcs.',
     categories: {
       'NEW FEATURES': [
+        'CombatEffects Component: Created a dedicated CombatEffects React component consuming the extracted SlashFX sprite sheets, triggered upon successful enemy hits to provide animated hit feedback for Vanguard.',
+        'SlashFX Sprite Sheets: Extracted and integrated custom multi-frame animated slash sprite sheets (SlashFX SimpleCombo & Combo1) from archive for Vanguard cleaves and critical attacks.',
         'Status Effect Codex Grid: Reorganized Status Effect Codex into sleek, high-contrast cards matching the Ancient Relics Codex 1:1 with icon slots, duration badges, and detailed combat mechanics.',
         'Charmed Mechanics: Charmed players experience an ethereal siren pull toward the source, -35% damage penalty, and damage threshold break condition (breaks on >= 20 damage taken).',
         'Silenced Ability Lock: Server-authoritative suppression for Tactical and Ultimate skills with visual lock indicators, preserving basic attacks, movement, and evasion dash.',
       ],
       IMPROVEMENTS: [
+        'Vanguard Melee Cleave: Refined Vanguard primary attack into a heavy close-range claymore cleave (85px melee engagement range, 34px cleave radius), replacing the long-distance flying wave.',
         'Poison Damage Reduction: Applied 30% outgoing damage mitigation consistently across enemy melee attacks, ranged projectiles, and floor hazard zones.',
         'Clean Codex Display: Removed floor number prefixes from status entries for clean information hierarchy.',
       ],

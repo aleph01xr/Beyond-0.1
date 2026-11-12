@@ -1,6 +1,0 @@
-{
-  "summary": "Updated implementation plan featuring the Best Move recommendation: unified Render Singapore deployment, managed PostgreSQL for permanent player storage, and a stress-free zero-downtime blue/green migration.",
-  "updatedAt": "2026-11-03T09:02:44.990743665Z",
-  "requestFeedback": true,
-  "userFacing": true
-}

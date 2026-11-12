@@ -3700,10 +3700,10 @@ export class GameRoom {
     const bonusPierce = p.relics.includes('piercing_prism') ? 1 : 0;
 
     // Automatic Target Acquisition: Find nearest enemy or training dummy within strike range
-    // Vanguard: 140px cleave search; Ranged: 460px line-of-fire search
+    // Vanguard: 85px melee cleave range; Ranged: 460px line-of-fire search
     let bestTarget: { id: string; x: number; y: number } | null = null;
     let bestDist = Infinity;
-    const maxSearchDist = p.heroClass === 'vanguard' ? 140 : 460;
+    const maxSearchDist = p.heroClass === 'vanguard' ? 85 : 460;
 
     for (const enemy of this.enemies) {
       if (enemy.hp <= 0) continue;
@@ -3740,16 +3740,16 @@ export class GameRoom {
           ownerType: 'player',
           ownerId: p.id,
           style: 'slash',
-          x: p.x + Math.cos(ang) * 20,
-          y: p.y + Math.sin(ang) * 20,
-          vx: Math.cos(ang) * 310,
-          vy: Math.sin(ang) * 310,
+          x: p.x + Math.cos(ang) * 22,
+          y: p.y + Math.sin(ang) * 22,
+          vx: Math.cos(ang) * 60,
+          vy: Math.sin(ang) * 60,
           angle: ang,
-          radius: 28,
+          radius: 34,
           damage: shotDmg,
           pierce: 4 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 260,
+          ttlMs: 140,
           targetEnemyId: bestTarget?.id,
         });
       } else if (p.heroClass === 'ranger') {
