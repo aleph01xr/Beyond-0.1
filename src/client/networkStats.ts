@@ -17,23 +17,36 @@ export interface PingDiagnostics {
   maxRttMs: number;
   samples: number;
   quality: ConnectionQuality;
+  serverTickMs?: number;
 }
 
 export const HUD_MAX_STALE_MS = 450;
 export const CLIENT_INPUT_CONTINUOUS_INTERVAL_MS = 33;
+export const CLIENT_INPUT_BACKPRESSURE_RETRY_MS = 16;
 export const CLIENT_WS_BACKPRESSURE_LIMIT_BYTES = 64 * 1024;
+export const CLIENT_PING_INTERVAL_ACTIVE_MS = 1500;
+export const CLIENT_PING_INTERVAL_IDLE_MS = 3000;
+
+export function computeExpSmoothingFactor(ratePerSec: number, dtSec: number): number {
+  if (dtSec <= 0) return 0;
+  return 1 - Math.exp(-ratePerSec * dtSec);
+}
 
 export class PingTracker {
   private readonly windowSize: number;
   private readonly samplesWindow: number[] = [];
   private smoothedRtt: number | null = null;
   private jitterEwma = 0;
+  private lastServerTickMs: number | undefined = undefined;
 
   constructor(windowSize = 10) {
     this.windowSize = Math.max(2, windowSize);
   }
 
-  public recordSample(rttMs: number): PingDiagnostics {
+  public recordSample(rttMs: number, serverTickMs?: number): PingDiagnostics {
+    if (typeof serverTickMs === 'number' && Number.isFinite(serverTickMs) && serverTickMs >= 0) {
+      this.lastServerTickMs = serverTickMs;
+    }
     const clamped = Math.max(1, Math.round(rttMs));
     const prevLast =
       this.samplesWindow.length > 0
@@ -61,6 +74,7 @@ export class PingTracker {
     this.samplesWindow.length = 0;
     this.smoothedRtt = null;
     this.jitterEwma = 0;
+    this.lastServerTickMs = undefined;
   }
 
   public getDiagnostics(): PingDiagnostics {
@@ -102,6 +116,7 @@ export class PingTracker {
       maxRttMs: max,
       samples: this.samplesWindow.length,
       quality,
+      serverTickMs: this.lastServerTickMs,
     };
   }
 }
@@ -272,4 +287,105 @@ export function isSameQuantizedInput(a: PlayerInputState | null, b: PlayerInputS
     (a.stickX ?? 0) === (b.stickX ?? 0) &&
     (a.stickY ?? 0) === (b.stickY ?? 0)
   );
+}
+
+export interface QueuedInputPacket {
+  type: 'player:input';
+  input: PlayerInputState;
+  seq: number;
+}
+
+export interface InputDispatchResult {
+  status: 'sent' | 'deduped' | 'queued_throttle' | 'queued_backpressure';
+  seq?: number;
+  retryDelayMs?: number;
+}
+
+/**
+ * Coordinates quantized input deduplication, continuous aim/stick throttling,
+ * monotonic sequence tagging, and zero-loss backpressure retry scheduling.
+ * Unlike fire-and-forget senders, `lastSentInput` only advances once transport
+ * accepts the frame, ensuring key-up/attack transitions are never silenced by dedup.
+ */
+export class ReliableInputDispatcher {
+  private lastSentInput: PlayerInputState | null = null;
+  private lastSentAtMs = 0;
+  private pendingInput: PlayerInputState | null = null;
+  private nextSeq = 0;
+
+  public get latestSentSeq(): number {
+    return this.nextSeq;
+  }
+
+  public hasPending(): boolean {
+    return this.pendingInput !== null;
+  }
+
+  public reset(): void {
+    this.lastSentInput = null;
+    this.lastSentAtMs = 0;
+    this.pendingInput = null;
+    this.nextSeq = 0;
+  }
+
+  public submit(
+    rawInput: PlayerInputState,
+    nowMs: number,
+    transportSend: (msg: QueuedInputPacket) => boolean
+  ): InputDispatchResult {
+    const quantized = quantizePlayerInput(rawInput);
+    const baseline = this.pendingInput ?? this.lastSentInput;
+    if (isSameQuantizedInput(baseline, quantized)) {
+      return { status: 'deduped' };
+    }
+
+    const discreteChanged = hasDiscreteInputChanged(this.lastSentInput, quantized);
+    const elapsed = nowMs - this.lastSentAtMs;
+
+    if (discreteChanged || elapsed >= CLIENT_INPUT_CONTINUOUS_INTERVAL_MS) {
+      const seq = this.nextSeq + 1;
+      if (transportSend({ type: 'player:input', input: quantized, seq })) {
+        this.nextSeq = seq;
+        this.lastSentInput = quantized;
+        this.lastSentAtMs = nowMs;
+        this.pendingInput = null;
+        return { status: 'sent', seq };
+      }
+      // Retain latest state and schedule fast backpressure drain retry without updating lastSentInput
+      this.pendingInput = quantized;
+      return {
+        status: 'queued_backpressure',
+        retryDelayMs: CLIENT_INPUT_BACKPRESSURE_RETRY_MS,
+      };
+    }
+
+    this.pendingInput = quantized;
+    return {
+      status: 'queued_throttle',
+      retryDelayMs: Math.max(4, CLIENT_INPUT_CONTINUOUS_INTERVAL_MS - elapsed),
+    };
+  }
+
+  public flushPending(
+    nowMs: number,
+    transportSend: (msg: QueuedInputPacket) => boolean
+  ): { sent: boolean; seq?: number; retryDelayMs?: number } {
+    const queued = this.pendingInput;
+    if (!queued) {
+      return { sent: false };
+    }
+    if (isSameQuantizedInput(this.lastSentInput, queued)) {
+      this.pendingInput = null;
+      return { sent: false };
+    }
+    const seq = this.nextSeq + 1;
+    if (transportSend({ type: 'player:input', input: queued, seq })) {
+      this.nextSeq = seq;
+      this.lastSentInput = queued;
+      this.lastSentAtMs = nowMs;
+      this.pendingInput = null;
+      return { sent: true, seq };
+    }
+    return { sent: false, retryDelayMs: CLIENT_INPUT_BACKPRESSURE_RETRY_MS };
+  }
 }

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import pg from 'pg';
@@ -966,6 +967,7 @@ async function startServer() {
   });
 
   const server = http.createServer(app);
+  let lastTickDurationMs = 0;
   const wss = new WebSocketServer({
     server,
     path: '/ws',
@@ -973,6 +975,9 @@ async function startServer() {
   });
 
   wss.on('connection', (ws, req) => {
+    // Disable Nagle's algorithm so small input/pong frames flush immediately
+    req.socket?.setNoDelay?.(true);
+
     // --- WebSocket Handshake Origin Validation ---
     const origin = req.headers.origin;
     const originAllowed = isOriginAllowed(origin, req.headers.host);
@@ -1015,7 +1020,7 @@ async function startServer() {
       }
 
       if (msg.type === 'ping') {
-        sendJson(ws, { type: 'pong', t: msg.t });
+        sendJson(ws, { type: 'pong', t: msg.t, tickMs: lastTickDurationMs });
         return;
       }
 
@@ -1141,7 +1146,7 @@ async function startServer() {
       if (!room) return;
 
       if (msg.type === 'player:input') {
-        room.updateInput(acc.id, msg.input);
+        room.updateInput(acc.id, msg.input, msg.seq);
       } else if (msg.type === 'player:action') {
         const res = room.performAction(acc.id, msg.action, msg.aimAngle);
         if (res.floorChanged) {
@@ -1474,6 +1479,7 @@ async function startServer() {
 
   const TICK_MS = 50;
   setInterval(() => {
+    const tickStart = performance.now();
     for (const [roomId, room] of rooms.entries()) {
       if (room.getPlayerCount() === 0) {
         if (roomId !== 'TAVERN-HUB') {
@@ -1484,13 +1490,14 @@ async function startServer() {
       const prevStatus = room.status;
       room.tick(TICK_MS);
       if (roomClientIndex.getRoomClientCount(roomId) > 0) {
-        const snapshot = room.buildSnapshot();
+        const snapshot = room.buildNetworkSnapshot();
         broadcastToRoom(roomId, { type: 'room:tick', snapshot }, { droppable: true });
       }
       if (room.status !== prevStatus) {
         broadcastRoomList();
       }
     }
+    lastTickDurationMs = Math.round((performance.now() - tickStart) * 10) / 10;
   }, TICK_MS);
 
   const distPath = path.resolve(__dirname, 'dist');

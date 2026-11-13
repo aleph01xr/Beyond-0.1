@@ -70,6 +70,8 @@ interface DungeonRunViewProps {
   onSendAdminCommand?: (msg: ClientMessage) => void;
   pingMs?: number;
   pingDiagnostics?: PingDiagnostics;
+  latestInputSeqRef?: React.MutableRefObject<number>;
+  pingMsRef?: React.MutableRefObject<number>;
   onCreateRoom?: (opts: {
     name: string;
     difficulty: DifficultyTier;
@@ -98,6 +100,8 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onSendAdminCommand,
   pingMs = 18,
   pingDiagnostics,
+  latestInputSeqRef,
+  pingMsRef,
   onCreateRoom,
   onJoinRoom,
   onReturnToTavern,
@@ -393,6 +397,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         playerId={playerId}
         map={map}
         latestSnapshotRef={latestSnapshotRef}
+        localInputRef={unifiedInputRef}
+        latestInputSeqRef={latestInputSeqRef}
+        pingMsRef={pingMsRef}
         onSendKeyboardInput={handleKeyboardInput}
         onTriggerAction={handleTriggerActionWithPortal}
         onSendPing={onSendPing}
@@ -567,7 +574,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               className="hidden sm:flex items-center gap-1 px-2 py-1 bg-[#1E1E2A] border border-[#353442] text-[10px] text-[#E6E4EE]"
               title={
                 pingDiagnostics && pingDiagnostics.samples > 0
-                  ? `RTT: ${pingMs}ms · Avg: ${pingDiagnostics.avgRttMs}ms · Jitter: ${pingDiagnostics.jitterMs}ms (${pingDiagnostics.minRttMs}-${pingDiagnostics.maxRttMs}ms) · ${pingDiagnostics.quality.toUpperCase()}`
+                  ? `RTT: ${pingMs}ms · Avg: ${pingDiagnostics.avgRttMs}ms · Jitter: ${pingDiagnostics.jitterMs}ms (${pingDiagnostics.minRttMs}-${pingDiagnostics.maxRttMs}ms)${pingDiagnostics.serverTickMs !== undefined ? ` · Tick: ${pingDiagnostics.serverTickMs}ms` : ''} · ${pingDiagnostics.quality.toUpperCase()}`
                   : 'Connection Latency (Ping)'
               }
             >

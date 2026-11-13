@@ -5,6 +5,8 @@ import {
   getWorldViewBounds,
   stepCameraFollow,
 } from '../client/camera.ts';
+import { computeExpSmoothingFactor } from '../client/networkStats.ts';
+import { LocalPredictionController } from '../client/prediction.ts';
 import { drawEnhancedProjectile, ParticleManager } from '../client/canvasEffects.ts';
 import {
   drawDungeonPortal,
@@ -51,6 +53,9 @@ interface GameCanvasProps {
   playerId: string;
   map: DungeonMap;
   latestSnapshotRef: React.MutableRefObject<GameSnapshot | null>;
+  localInputRef?: React.MutableRefObject<PlayerInputState>;
+  latestInputSeqRef?: React.MutableRefObject<number>;
+  pingMsRef?: React.MutableRefObject<number>;
   onSendKeyboardInput: (keys: {
     up: boolean;
     down: boolean;
@@ -80,6 +85,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   playerId,
   map,
   latestSnapshotRef,
+  localInputRef,
+  latestInputSeqRef,
+  pingMsRef,
   onSendKeyboardInput,
   onTriggerAction,
   onSendPing,
@@ -116,6 +124,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   onTriggerActionRef.current = onTriggerAction;
   const onSendPingRef = useRef(onSendPing);
   onSendPingRef.current = onSendPing;
+  const localInputPropRef = useRef(localInputRef);
+  localInputPropRef.current = localInputRef;
+  const latestInputSeqPropRef = useRef(latestInputSeqRef);
+  latestInputSeqPropRef.current = latestInputSeqRef;
+  const pingMsPropRef = useRef(pingMsRef);
+  pingMsPropRef.current = pingMsRef;
 
   const triggerLocalSwing = (kind: HeroSwingKind) => {
     const now = performance.now();
@@ -636,6 +650,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const floatingTexts: ActiveFloatingText[] = [];
     const seenEventIds = new Set<string>();
     const particleManager = new ParticleManager();
+    const localPredictor = new LocalPredictionController();
+    let lastSeenSnapshot: GameSnapshot | null = null;
     let screenShake = 0;
     let lastMyAttackAnim = 0;
     let lastPlayerHp: number | null = null;
@@ -675,6 +691,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         rafId = requestAnimationFrame(render);
         return;
       }
+      const isNewSnapshot = snap !== lastSeenSnapshot;
+      lastSeenSnapshot = snap;
 
       const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
       let bossAimAngle = 0;
@@ -908,7 +926,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             const dashMoveAngle = Math.hypot(dx, dy) > 4 ? Math.atan2(dy, dx) : p.aimAngle;
             particleManager.spawnClassDashEffect(p.heroClass, prev.x, prev.y, p.x, p.y, dashMoveAngle, now);
             activeDashTrails.set(p.id, {
-              until: now + 420,
+              until: now + (p.heroClass === 'vanguard' ? 190 : 280),
               lastEmit: now,
               heroClass: p.heroClass,
               angle: dashMoveAngle,
@@ -934,7 +952,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               particleManager.spawnRangerQuarryCast(p.x, p.y, now);
             }
           }
-          if (p.shield > prev.shield) {
+          if (p.shield - prev.shield >= 8) {
             particleManager.spawnVanguardShieldGrant(p.x, p.y, now);
           } else if (prev.shield > 0 && p.shield === 0) {
             particleManager.spawnVanguardShieldBreak(p.x, p.y, now);
@@ -1173,20 +1191,46 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       prevBossState = activeBoss ? { id: activeBoss.id, x: activeBoss.x, y: activeBoss.y } : null;
       hasInitWorldEffects = true;
 
-      // Smooth & Predict Players (Extrapolate along velocity + gently pull toward authoritative server pos)
+      // Client-side prediction with server reconciliation for local player;
+      // dt-normalized exponential smoothing for remote players & enemies
+      const remoteBlend = computeExpSmoothingFactor(45, dtSec);
+      const oneWaySec = Math.max(0.005, ((pingMsPropRef.current?.current ?? 18) * 0.5) / 1000);
+      const activeLocalInput: PlayerInputState = localInputPropRef.current?.current ?? {
+        up: keysRef.current.up,
+        down: keysRef.current.down,
+        left: keysRef.current.left,
+        right: keysRef.current.right,
+        attack: keysRef.current.attack,
+        aimAngle: aimAngleRef.current,
+      };
+
       for (const p of snap.players) {
+        if (p.id === playerId) {
+          const pred = localPredictor.step({
+            me: p,
+            liveInput: activeLocalInput,
+            latestSentSeq: latestInputSeqPropRef.current?.current ?? 0,
+            map,
+            props: snap.props,
+            dtSec,
+            nowMs: now,
+            isNewSnapshot,
+            oneWayLatencySec: oneWaySec,
+          });
+          smoothedPlayers.set(p.id, { x: pred.x, y: pred.y });
+          continue;
+        }
+
         let cur = smoothedPlayers.get(p.id);
         if (!cur || Math.hypot(p.x - cur.x, p.y - cur.y) > 100) {
           smoothedPlayers.set(p.id, { x: p.x, y: p.y });
         } else {
-          // If player has velocity, predict forward in current frame
           if (Math.hypot(p.vx, p.vy) > 10) {
             cur.x += p.vx * dtSec;
             cur.y += p.vy * dtSec;
           }
-          // Smoothly reconcile error with server
-          cur.x += (p.x - cur.x) * 0.58;
-          cur.y += (p.y - cur.y) * 0.58;
+          cur.x += (p.x - cur.x) * remoteBlend;
+          cur.y += (p.y - cur.y) * remoteBlend;
         }
       }
 
@@ -1199,8 +1243,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             cur.x += en.vx * dtSec;
             cur.y += en.vy * dtSec;
           }
-          cur.x += (en.x - cur.x) * 0.58;
-          cur.y += (en.y - cur.y) * 0.58;
+          cur.x += (en.x - cur.x) * remoteBlend;
+          cur.y += (en.y - cur.y) * remoteBlend;
         }
       }
 
@@ -3988,34 +4032,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(hx - 10, hy + 10, 20, 5);
 
-        // Class-specific Passive Ground Visual Effects
-        if (p.heroClass === 'vanguard') {
-          // Vanguard: Iron Will Slate-Blue & Gold Metallic Shield Ring
-          const shieldPulse = Math.sin(now * 0.006 + hx) * 2;
-          const hasShield = p.shield > 0;
-          ctx.strokeStyle = hasShield ? 'rgba(251, 191, 36, 0.75)' : 'rgba(148, 163, 184, 0.5)';
-          ctx.lineWidth = hasShield ? 2 : 1.5;
-          ctx.beginPath();
-          ctx.ellipse(hx, hy + 11, 18 + shieldPulse, 7, 0, 0, Math.PI * 2);
-          ctx.stroke();
-
-          if (hasShield) {
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.12)';
-            ctx.beginPath();
-            ctx.ellipse(hx, hy + 11, 18 + shieldPulse, 7, 0, 0, Math.PI * 2);
-            ctx.fill();
-            particleManager.spawnVanguardAegisMotes(hx, hy, 20, now);
-          }
-        } else if (p.heroClass === 'ranger') {
-          // Ranger: Eagle Keenness Emerald Swiftness Aura & Wind Motion Trail
-          const swiftPulse = Math.sin(now * 0.008 + hx) * 2;
+        // Class-specific Subtle Aura / Motion Effects (no obstructive rings on character)
+        if (p.heroClass === 'ranger') {
           const isSwift = p.hasteMs > 0 || moving;
-          ctx.strokeStyle = isSwift ? 'rgba(74, 222, 128, 0.85)' : 'rgba(52, 211, 153, 0.45)';
-          ctx.lineWidth = isSwift ? 2.5 : 1.5;
-          ctx.beginPath();
-          ctx.ellipse(hx, hy + 11, 17 + swiftPulse, 6.5, 0, 0, Math.PI * 2);
-          ctx.stroke();
-
           if (isSwift) {
             // Swiftness wind motion lines drifting behind movement
             const windOffX = -Math.cos(p.aimAngle) * 14;
@@ -4048,11 +4067,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#E0F2FE';
             ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
           }
-          ctx.strokeStyle = 'rgba(129, 140, 248, 0.45)';
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.ellipse(hx, hy + 4, 20, 8, 0, 0, Math.PI * 2);
-          ctx.stroke();
         } else if (p.heroClass === 'cleric') {
           // Cleric: Radiant Aura 140px Translucent Golden Warmth Halo
           const auraPulse = Math.sin(now * 0.004 + hx) * 3;
@@ -4065,13 +4079,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Inner halo ring
-          ctx.strokeStyle = 'rgba(254, 240, 138, 0.75)';
-          ctx.lineWidth = 1.8;
-          ctx.beginPath();
-          ctx.ellipse(hx, hy + 11, 18 + auraPulse * 0.5, 7, 0, 0, Math.PI * 2);
           ctx.stroke();
 
           particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
@@ -4150,15 +4157,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           swingKind: swingState?.kind,
         });
 
-        // Protective Shield Bubble
-        if (p.shield > 0) {
-          ctx.strokeStyle = 'rgba(147, 197, 253, 0.75)';
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.arc(hx, hy - 4, 20, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
         // Player Name Tag
         const isLocalPlayer = p.id === playerId;
         const displayLabel = p.username;
@@ -4192,13 +4190,20 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = isLocalPlayer ? '#FCD34D' : '#7DD3FC';
         ctx.fillText(displayLabel, hx, badgeY + 1);
 
-        // Health Bar
+        // Health Bar & Compact Shield Bar (replaces circle overlay on sprite)
         const pBarW = 36;
         const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
         ctx.fillStyle = '#0F172A';
         ctx.fillRect(hx - pBarW / 2 - 1, hy - 18, pBarW + 2, 5);
         ctx.fillStyle = isLocalPlayer ? '#22C55E' : '#38BDF8';
         ctx.fillRect(hx - pBarW / 2, hy - 17, Math.round(pBarW * pHpRatio), 3);
+        if (p.shield > 0) {
+          const pShieldRatio = Math.min(1, p.shield / 60);
+          ctx.fillStyle = '#0F172A';
+          ctx.fillRect(hx - pBarW / 2 - 1, hy - 21, pBarW + 2, 3);
+          ctx.fillStyle = '#93C5FD';
+          ctx.fillRect(hx - pBarW / 2, hy - 20, Math.max(2, Math.round(pBarW * pShieldRatio)), 2);
+        }
       }
 
       // Enhanced Projectiles & Combat Trails
@@ -4507,6 +4512,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    if (keysRef.current.attack) {
+      onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {

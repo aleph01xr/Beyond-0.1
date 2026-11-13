@@ -1706,7 +1706,7 @@ async function runRegressionTests() {
       const boss = room.enemies.find((e) => e.kind === 'boss');
       assert.ok(boss, `Floor ${f} boss must exist`);
       assert.ok(boss.maxHp > 1000, `Floor ${f} boss HP must scale above 1000`);
-      assert.ok(boss.resistances.tenacity >= 0.70, `Floor ${f} boss tenacity must be high`);
+      assert.ok((boss.resistances?.tenacity ?? 0) >= 0.70, `Floor ${f} boss tenacity must be high`);
     }
   });
 
@@ -1819,7 +1819,7 @@ async function runRegressionTests() {
       const e = room.spawnEnemyForTesting(spec.kind, 100, 100);
       assert.strictEqual(e.name, spec.name);
       assert.ok(e.maxHp > 0);
-      assert.ok(e.resistances.physical !== undefined);
+      assert.ok(e.resistances?.physical !== undefined);
     }
   });
 
@@ -2280,7 +2280,7 @@ async function runRegressionTests() {
     });
 
     const boss = room.enemies.find(e => e.kind === 'boss')!;
-    assert.ok(boss.resistances.tenacity >= 0.70, 'Floor 10 boss has high tenacity');
+    assert.ok((boss.resistances?.tenacity ?? 0) >= 0.70, 'Floor 10 boss has high tenacity');
 
     // Player applies a 1600ms stun (Shield Bash)
     room.applyStatusEffect(boss, 'stun', 1600);
@@ -4065,6 +4065,176 @@ async function runRegressionTests() {
     assert.strictEqual(d3.samples, 3);
   });
 
+  // --- Test 77: Advanced Latency Optimization — Input Backpressure Recovery, Network Snapshot Slimming & Client-Side Prediction ---
+  await test('77. Advanced Latency Optimization: Backpressure recovery, network snapshot projection, and client-side prediction', async () => {
+    const {
+      ReliableInputDispatcher,
+      buildSnapshotHudKey,
+      computeExpSmoothingFactor,
+    } = await import('./src/client/networkStats.ts');
+    const { LocalPredictionController } = await import('./src/client/prediction.ts');
+
+    // 1. ReliableInputDispatcher never loses discrete key-up/press transitions under WS backpressure
+    const dispatcher = new ReliableInputDispatcher();
+    const sentPackets: { input: any; seq: number }[] = [];
+    let allowSend = true;
+
+    const r1 = dispatcher.submit(
+      { up: false, down: false, left: false, right: true, attack: true, aimAngle: 0.25 },
+      100,
+      (pkt) => {
+        if (!allowSend) return false;
+        sentPackets.push({ input: pkt.input, seq: pkt.seq });
+        return true;
+      }
+    );
+    assert.strictEqual(r1.status, 'sent');
+    assert.strictEqual(r1.seq, 1);
+
+    // Simulate backpressure during key-up transition
+    allowSend = false;
+    const r2 = dispatcher.submit(
+      { up: false, down: false, left: false, right: false, attack: false, aimAngle: 0.25 },
+      116,
+      (pkt) => {
+        if (!allowSend) return false;
+        sentPackets.push({ input: pkt.input, seq: pkt.seq });
+        return true;
+      }
+    );
+    assert.strictEqual(r2.status, 'queued_backpressure');
+    assert.strictEqual(dispatcher.hasPending(), true);
+    assert.strictEqual(dispatcher.latestSentSeq, 1, 'Seq must not advance until transport accepts');
+
+    // Re-submitting identical idle key-up must stay queued (not deduped against old held state!)
+    const r3 = dispatcher.submit(
+      { up: false, down: false, left: false, right: false, attack: false, aimAngle: 0.25 },
+      124,
+      (pkt) => {
+        if (!allowSend) return false;
+        sentPackets.push({ input: pkt.input, seq: pkt.seq });
+        return true;
+      }
+    );
+    assert.strictEqual(r3.status, 'deduped');
+    assert.strictEqual(dispatcher.hasPending(), true);
+
+    // Socket drains -> retry flushes queued key-up with seq=2
+    allowSend = true;
+    const flush = dispatcher.flushPending(132, (pkt) => {
+      sentPackets.push({ input: pkt.input, seq: pkt.seq });
+      return true;
+    });
+    assert.strictEqual(flush.sent, true);
+    assert.strictEqual(flush.seq, 2);
+    assert.strictEqual(dispatcher.hasPending(), false);
+    assert.strictEqual(sentPackets.length, 2);
+    assert.strictEqual(sentPackets[1].input.right, false);
+    assert.strictEqual(sentPackets[1].input.attack, false);
+
+    // 2. Network snapshot slimming & seq acknowledgment
+    const room = new GameRoom({
+      roomId: 'OPT-F5',
+      name: 'Optimization Room',
+      hostName: 'Hero1',
+      difficulty: 'Normal',
+      seed: 9001,
+      initialFloor: 5,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p1', 'Hero1', 'vanguard');
+    room.updateInput('p1', { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0.12345 }, 42);
+    room.tick(50);
+
+    const fullSnap = room.buildSnapshot();
+    const netSnap = room.buildNetworkSnapshot();
+    const fullBytes = Buffer.byteLength(JSON.stringify({ type: 'room:tick', snapshot: fullSnap }), 'utf8');
+    const netBytes = Buffer.byteLength(JSON.stringify({ type: 'room:tick', snapshot: netSnap }), 'utf8');
+    assert.ok(netBytes < fullBytes, `Expected network snapshot (${netBytes}B) < full (${fullBytes}B)`);
+
+    const meNet = netSnap.players.find((p) => p.id === 'p1')!;
+    assert.strictEqual(meNet.lastInputSeq, 42, 'Server must acknowledge latest processed input seq');
+
+    const netBoss = netSnap.enemies.find((e) => e.kind === 'boss');
+    const netMob = netSnap.enemies.find((e) => e.kind !== 'boss');
+    assert.ok(netBoss?.resistances && typeof netBoss.resistances.tenacity === 'number', 'Boss resistances must be preserved for HUD');
+    assert.strictEqual(netMob?.resistances, undefined, 'Non-boss resistances should be omitted from wire ticks');
+    assert.ok(buildSnapshotHudKey(netSnap, 'p1', room.map).length > 0, 'HUD key must compute cleanly on trimmed snapshot');
+
+    // Also check Tavern idle NPCs strip dialogue text while speaking NPC keeps dialogue
+    const tavern = new GameRoom({
+      roomId: 'TAVERN-HUB',
+      name: 'Tavern',
+      hostName: 'Innkeeper',
+      difficulty: 'Normal',
+      seed: 777,
+    });
+    tavern.addOrReconnectPlayer('p1', 'Hero1', 'vanguard');
+    tavern.npcs[0].speakingMs = 4000;
+    const tavNet = tavern.buildNetworkSnapshot();
+    assert.ok(tavNet.npcs[0].dialogue.length > 0, 'Speaking NPC retains dialogue');
+    if (tavNet.npcs.length > 1) {
+      assert.strictEqual(tavNet.npcs[1].dialogue, '', 'Silent NPC strips dialogue on network ticks');
+    }
+
+    // 3. LocalPredictionController instant step + reconciliation + dash snap
+    const predictor = new LocalPredictionController();
+    const pState = room.getPlayerState('p1')!;
+    const initX = pState.x;
+    const initY = pState.y;
+
+    const step0 = predictor.step({
+      me: { ...pState, lastInputSeq: 2 },
+      liveInput: { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0 },
+      latestSentSeq: 2,
+      map: room.map,
+      props: room.props,
+      dtSec: 0.016,
+      nowMs: 1000,
+      isNewSnapshot: true,
+      oneWayLatencySec: 0.02,
+    });
+    assert.strictEqual(step0.x, initX, 'Initial frame initializes at authoritative spawn');
+
+    // Next frame predicts forward immediately without waiting for server snapshot
+    const step1 = predictor.step({
+      me: { ...pState, lastInputSeq: 2 },
+      liveInput: { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0 },
+      latestSentSeq: 3,
+      map: room.map,
+      props: room.props,
+      dtSec: 0.05,
+      nowMs: 1050,
+      isNewSnapshot: false,
+      oneWayLatencySec: 0.02,
+    });
+    assert.ok(step1.x > initX, `Expected immediate predicted forward movement (${step1.x} > ${initX})`);
+
+    // Authoritative dash displacement > 48px must snap cleanly without rubber-banding
+    room.performAction('p1', 'dash', 0);
+    const dashedSnap = room.buildNetworkSnapshot();
+    const meDashed = dashedSnap.players.find((p) => p.id === 'p1')!;
+    const dashRes = predictor.step({
+      me: meDashed,
+      liveInput: { up: false, down: false, left: false, right: false, attack: false, aimAngle: 0 },
+      latestSentSeq: 3,
+      map: room.map,
+      props: dashedSnap.props,
+      dtSec: 0.016,
+      nowMs: 1100,
+      isNewSnapshot: true,
+      oneWayLatencySec: 0.02,
+    });
+    assert.ok(Math.hypot(dashRes.x - meDashed.x, dashRes.y - meDashed.y) < 1, 'Expected dash jump >48px to snap immediately to authoritative position');
+    assert.strictEqual(dashRes.snapped, true);
+
+    // 4. Refresh-rate invariance of exponential smoothing factor
+    const f60 = computeExpSmoothingFactor(45, 1 / 60);
+    const f120 = computeExpSmoothingFactor(45, 1 / 120);
+    const combined120 = 1 - Math.pow(1 - f120, 2);
+    assert.ok(Math.abs(f60 - combined120) < 1e-9, 'Expected dt-normalized smoothing to match across 60Hz and 120Hz');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);
@@ -4075,6 +4245,7 @@ runRegressionTests().catch(err => {
   console.error('Fatal error in regression tests:', err);
   process.exit(1);
 });
+
 
 
 

@@ -1463,7 +1463,7 @@ export class ParticleManager {
   ): void {
     const primaryColor =
       heroClass === 'vanguard'
-        ? '#F59E0B'
+        ? '#94A3B8'
         : heroClass === 'ranger'
           ? '#34D399'
           : heroClass === 'arcanist'
@@ -1479,37 +1479,37 @@ export class ParticleManager {
             : '#FEF9C3';
     const suctionEndColor =
       heroClass === 'vanguard'
-        ? '#475569'
+        ? '#334155'
         : heroClass === 'ranger'
           ? '#059669'
           : heroClass === 'arcanist'
             ? '#312E81'
             : '#D97706';
 
-    // 1. Contracting suction ring collapsing toward launch center
+    // 1. Contracting suction ring collapsing toward launch center (subtle grounded dust ring for Vanguard)
     this.acquireParticle({
       x: fromX,
-      y: fromY,
+      y: heroClass === 'vanguard' ? fromY + 6 : fromY,
       vx: 0,
       vy: 0,
       color: primaryColor,
       colorEnd: secondaryColor,
       size: 3,
-      ringRadius: 26,
+      ringRadius: heroClass === 'vanguard' ? 18 : 26,
       ringMaxRadius: 2,
-      ringLineWidth: 2,
+      ringLineWidth: heroClass === 'vanguard' ? 1.5 : 2,
       bornAt: now,
-      maxAgeMs: 220,
+      maxAgeMs: heroClass === 'vanguard' ? 170 : 220,
       shape: 'ring',
-      alphaStart: 0.9,
+      alphaStart: heroClass === 'vanguard' ? 0.55 : 0.9,
       alphaEnd: 0,
       alphaCurve: 'easeOut',
-      glow: true,
+      glow: heroClass !== 'vanguard',
       priority: 'high',
     });
 
     // 2. Radial inward-attracted vortex particles spiraling into starting position
-    const count = 10;
+    const count = heroClass === 'vanguard' ? 7 : 10;
     const spiralBias =
       heroClass === 'arcanist'
         ? 0.85
@@ -1517,18 +1517,18 @@ export class ParticleManager {
           ? 0.72
           : heroClass === 'cleric'
             ? 0.58
-            : 0.45;
+            : 0.25;
 
     for (let i = 0; i < count; i++) {
       const a = (i * Math.PI * 2) / count + (Math.random() - 0.5) * 0.25;
-      const dist = 22 + Math.random() * 11;
+      const dist = (heroClass === 'vanguard' ? 16 : 22) + Math.random() * 10;
       const px = fromX + Math.cos(a) * dist;
-      const py = fromY + Math.sin(a) * dist;
+      const py = (heroClass === 'vanguard' ? fromY + 6 : fromY) + Math.sin(a) * dist * (heroClass === 'vanguard' ? 0.55 : 1);
       const shape: ParticleShape =
         heroClass === 'vanguard'
           ? i % 2 === 0
-            ? 'shard'
-            : 'hexagon'
+            ? 'smoke'
+            : 'streak'
           : heroClass === 'ranger'
             ? i % 2 === 0
               ? 'diamond'
@@ -1599,7 +1599,7 @@ export class ParticleManager {
   }
 
   /**
-   * Emits a lingering spectral ghosting step behind a dashing hero during active dash duration.
+   * Emits a lingering class-appropriate dash step behind a dashing hero during active dash duration.
    */
   public spawnClassDashTrailStep(
     heroClass: HeroClassId,
@@ -1608,38 +1608,75 @@ export class ParticleManager {
     angle: number,
     now: number = performance.now()
   ): void {
+    if (heroClass === 'vanguard') {
+      // Heavy armored knight: kicked-up stone dust at boots & crisp steel/crimson motion streaks (no floating hexagons)
+      this.acquireParticle({
+        x: x - Math.cos(angle) * 6 + (Math.random() - 0.5) * 6,
+        y: y + 8 + (Math.random() - 0.5) * 3,
+        vx: -Math.cos(angle) * 18 + (Math.random() - 0.5) * 10,
+        vy: -Math.sin(angle) * 14 - 4,
+        color: '#64748B',
+        colorEnd: '#334155',
+        size: 3.0,
+        startScale: 0.75,
+        endScale: 1.35,
+        bornAt: now,
+        maxAgeMs: 240,
+        friction: 0.9,
+        shape: 'smoke',
+        alphaStart: 0.48,
+        alphaEnd: 0,
+        alphaCurve: 'easeOut',
+        glow: false,
+        priority: 'normal',
+      });
+      this.acquireParticle({
+        x: x - Math.cos(angle) * 5 + (Math.random() - 0.5) * 8,
+        y: y - Math.sin(angle) * 5 + (Math.random() - 0.5) * 8,
+        vx: -Math.cos(angle) * 42,
+        vy: -Math.sin(angle) * 42,
+        color: Math.random() > 0.3 ? '#CBD5E1' : '#DC2626',
+        colorEnd: '#475569',
+        size: 1.7,
+        bornAt: now,
+        maxAgeMs: 180,
+        friction: 0.89,
+        rotation: angle,
+        stretchWithVelocity: true,
+        stretchFactor: 0.008,
+        shape: 'streak',
+        alphaStart: 0.65,
+        alphaEnd: 0,
+        glow: false,
+        priority: 'normal',
+      });
+      return;
+    }
+
     const primary =
-      heroClass === 'vanguard'
-        ? '#F59E0B'
-        : heroClass === 'ranger'
-          ? '#34D399'
-          : heroClass === 'arcanist'
-            ? '#A855F7'
-            : '#FDE047';
+      heroClass === 'ranger'
+        ? '#34D399'
+        : heroClass === 'arcanist'
+          ? '#A855F7'
+          : '#FDE047';
     const secondary =
-      heroClass === 'vanguard'
-        ? '#CBD5E1'
-        : heroClass === 'ranger'
-          ? '#A7F3D0'
-          : heroClass === 'arcanist'
-            ? '#38BDF8'
-            : '#FEF9C3';
+      heroClass === 'ranger'
+        ? '#A7F3D0'
+        : heroClass === 'arcanist'
+          ? '#38BDF8'
+          : '#FEF9C3';
     const fadeEnd =
-      heroClass === 'vanguard'
-        ? '#334155'
-        : heroClass === 'ranger'
-          ? '#065F46'
-          : heroClass === 'arcanist'
-            ? '#312E81'
-            : '#B45309';
+      heroClass === 'ranger'
+        ? '#065F46'
+        : heroClass === 'arcanist'
+          ? '#312E81'
+          : '#B45309';
     const bodyShape: ParticleShape =
-      heroClass === 'vanguard'
-        ? 'hexagon'
-        : heroClass === 'ranger'
-          ? 'triangle'
-          : heroClass === 'arcanist'
-            ? 'rune'
-            : 'cross';
+      heroClass === 'ranger'
+        ? 'triangle'
+        : heroClass === 'arcanist'
+          ? 'rune'
+          : 'cross';
 
     // Lingering spectral body echo
     this.acquireParticle({
@@ -1691,7 +1728,8 @@ export class ParticleManager {
   /**
    * Universal class-themed procedural dash burst:
    * 1) Inward-attracting suction vortex at starting position.
-   * 2) Lingering spectral particle ghosting & slipstream wake across the dash path.
+   * 2) Class-authentic wake along the dash path (heavy steel dust/slipstream for Vanguard;
+   *    spectral afterimages/runes for Ranger, Arcanist, Cleric).
    */
   public spawnClassDashEffect(
     heroClass: HeroClassId,
@@ -1705,32 +1743,78 @@ export class ParticleManager {
     // 1. Starting-position inward-attracting suction vortex for all classes
     this.spawnDashInwardSuction(heroClass, fromX, fromY, now);
 
+    if (heroClass === 'vanguard') {
+      // Heavy steel rush: kicked-up ground dust + crisp kinetic steel/crimson blade-wind streaks
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        const gx = fromX + (toX - fromX) * t;
+        const gy = fromY + (toY - fromY) * t;
+        const delay = Math.round(t * 45);
+        this.acquireParticle({
+          x: gx + (Math.random() - 0.5) * 6,
+          y: gy + 8 + (Math.random() - 0.5) * 3,
+          vx: -Math.cos(angle) * 22 + (Math.random() - 0.5) * 10,
+          vy: -Math.sin(angle) * 18 - 6,
+          color: '#64748B',
+          colorEnd: '#1E293B',
+          size: 3.4,
+          startScale: 0.8,
+          endScale: 1.45,
+          bornAt: now + delay,
+          maxAgeMs: 250,
+          friction: 0.9,
+          shape: 'smoke',
+          alphaStart: 0.45,
+          alphaEnd: 0,
+          priority: 'normal',
+        });
+      }
+      for (let i = 0; i < 6; i++) {
+        const t = i / 5;
+        this.acquireParticle({
+          x: fromX + (toX - fromX) * t + (Math.random() - 0.5) * 5,
+          y: fromY + (toY - fromY) * t + (Math.random() - 0.5) * 5,
+          vx: -Math.cos(angle) * (46 + i * 6),
+          vy: -Math.sin(angle) * (46 + i * 6),
+          color: i % 3 === 0 ? '#DC2626' : '#CBD5E1',
+          colorEnd: '#475569',
+          size: 1.8,
+          bornAt: now,
+          maxAgeMs: 200,
+          friction: 0.89,
+          rotation: angle,
+          stretchWithVelocity: true,
+          stretchFactor: 0.009,
+          shape: 'streak',
+          alphaStart: 0.72,
+          alphaEnd: 0,
+          glow: false,
+          priority: 'high',
+        });
+      }
+      return;
+    }
+
     // 2. Lingering staggered spectral afterimage ghosts along the dash trajectory
     const ghostSteps = 7;
     const primary =
-      heroClass === 'vanguard'
-        ? '#CBD5E1'
-        : heroClass === 'ranger'
-          ? '#34D399'
-          : heroClass === 'arcanist'
-            ? '#A855F7'
-            : '#FDE047';
+      heroClass === 'ranger'
+        ? '#34D399'
+        : heroClass === 'arcanist'
+          ? '#A855F7'
+          : '#FDE047';
     const accent =
-      heroClass === 'vanguard'
-        ? '#F59E0B'
-        : heroClass === 'ranger'
-          ? '#86EFAC'
-          : heroClass === 'arcanist'
-            ? '#38BDF8'
-            : '#FEF9C3';
+      heroClass === 'ranger'
+        ? '#86EFAC'
+        : heroClass === 'arcanist'
+          ? '#38BDF8'
+          : '#FEF9C3';
     const ghostEnd =
-      heroClass === 'vanguard'
-        ? '#334155'
-        : heroClass === 'ranger'
-          ? '#065F46'
-          : heroClass === 'arcanist'
-            ? '#312E81'
-            : '#B45309';
+      heroClass === 'ranger'
+        ? '#065F46'
+        : heroClass === 'arcanist'
+          ? '#312E81'
+          : '#B45309';
 
     for (let i = 0; i < ghostSteps; i++) {
       const t = 0.08 + (i / (ghostSteps - 1)) * 0.84;
@@ -1757,13 +1841,11 @@ export class ParticleManager {
         rotation: heroClass === 'ranger' ? angle : 0,
         angularVelocity: heroClass === 'arcanist' ? 3.5 : 0,
         shape:
-          heroClass === 'vanguard'
-            ? 'hexagon'
-            : heroClass === 'ranger'
-              ? 'triangle'
-              : heroClass === 'arcanist'
-                ? 'rune'
-                : 'cross',
+          heroClass === 'ranger'
+            ? 'triangle'
+            : heroClass === 'arcanist'
+              ? 'rune'
+              : 'cross',
         alphaStart: fadeAlpha,
         alphaEnd: 0,
         alphaCurve: 'easeOut',
@@ -1815,29 +1897,7 @@ export class ParticleManager {
     }
 
     // 3. Class-specific motion streaks & arrival snap
-    if (heroClass === 'vanguard') {
-      for (let i = 0; i < 6; i++) {
-        const t = i / 5;
-        this.acquireParticle({
-          x: fromX + (toX - fromX) * t + (Math.random() - 0.5) * 6,
-          y: fromY + (toY - fromY) * t + (Math.random() - 0.5) * 6,
-          vx: -Math.cos(angle) * (44 + i * 8),
-          vy: -Math.sin(angle) * (44 + i * 8),
-          color: i % 2 === 0 ? '#F59E0B' : '#CBD5E1',
-          secondaryColor: '#FFFFFF',
-          size: 2.3,
-          bornAt: now,
-          maxAgeMs: 280,
-          friction: 0.89,
-          rotation: angle,
-          stretchWithVelocity: true,
-          stretchFactor: 0.009,
-          shape: i % 2 === 0 ? 'streak' : 'triangle',
-          glow: true,
-          priority: 'high',
-        });
-      }
-    } else if (heroClass === 'ranger') {
+    if (heroClass === 'ranger') {
       for (let i = 0; i < 7; i++) {
         const t = i / 6;
         const spread = angle + (Math.random() - 0.5) * 0.7;
@@ -2188,7 +2248,7 @@ export class ParticleManager {
   }
 
   /**
-   * VANGUARD: Shield granted shimmer around protected allies.
+   * VANGUARD: Shield granted shimmer around protected allies (crisp brace ring + steel sparks without lingering trail).
    */
   public spawnVanguardShieldGrant(
     x: number,
@@ -2202,11 +2262,11 @@ export class ParticleManager {
       vy: 0,
       color: '#93C5FD',
       size: 3,
-      ringRadius: 22,
+      ringRadius: 20,
       ringMaxRadius: 8,
       ringLineWidth: 1.8,
       bornAt: now,
-      maxAgeMs: 260,
+      maxAgeMs: 220,
       shape: 'ring',
       glow: true,
       priority: 'high',
@@ -2214,21 +2274,17 @@ export class ParticleManager {
     for (let i = 0; i < 4; i++) {
       const a = (i * Math.PI) / 2;
       this.acquireParticle({
-        x: x + Math.cos(a) * 18,
-        y: y + Math.sin(a) * 18,
-        vx: 0,
-        vy: 0,
-        color: i % 2 === 0 ? '#60A5FA' : '#FBBF24',
+        x: x + Math.cos(a) * 14,
+        y: y + Math.sin(a) * 14,
+        vx: Math.cos(a) * 26,
+        vy: Math.sin(a) * 26 - 18,
+        color: i % 2 === 0 ? '#93C5FD' : '#CBD5E1',
         secondaryColor: '#FFFFFF',
-        size: 2.4,
+        size: 2.0,
         bornAt: now,
-        maxAgeMs: 420,
-        orbitCenterX: x,
-        orbitCenterY: y,
-        orbitRadius: 18,
-        orbitSpeed: 4.0,
-        orbitAngle: a,
-        shape: 'hexagon',
+        maxAgeMs: 220,
+        friction: 0.9,
+        shape: 'spark',
         glow: true,
         priority: 'high',
       });

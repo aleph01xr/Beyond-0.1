@@ -28,6 +28,14 @@ import {
   type RoomSummary,
   type TrainingDummyState,
 } from '../shared/types.ts';
+import {
+  collidesCircle as sharedCollidesCircle,
+  computePlayerMoveSpeed,
+  hasLineOfSight as sharedHasLineOfSight,
+  isWallAtWorld as sharedIsWallAtWorld,
+  moveWithCollision as sharedMoveWithCollision,
+  normalizePlayerInputDirection,
+} from '../shared/playerMovement.ts';
 import { generateDungeonFloor, generateTavernFloor, makeEnemy } from './dungeonGenerator.ts';
 
 interface PlayerRuntime {
@@ -762,7 +770,7 @@ export class GameRoom {
     return this.pushChat('Sanctuary', text, true);
   }
 
-  public updateInput(playerId: string, input: PlayerInputState): void {
+  public updateInput(playerId: string, input: PlayerInputState, seq?: number): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
     pr.input = {
@@ -776,6 +784,9 @@ export class GameRoom {
       stickY: typeof input.stickY === 'number' ? input.stickY : undefined,
     };
     pr.state.aimAngle = pr.input.aimAngle;
+    if (typeof seq === 'number' && Number.isFinite(seq)) {
+      pr.state.lastInputSeq = seq;
+    }
   }
 
   public changeClass(playerId: string, heroClass: HeroClassId): void {
@@ -2094,58 +2105,16 @@ export class GameRoom {
       }
 
       const def = HERO_CLASSES[p.heroClass];
-      let moveSpeed = def.speed * (1 + (p.dexterity || 0) * 0.0035);
-      if (p.relics.includes('zephyr_greaves')) moveSpeed *= 1.15;
-      if (p.hasteMs > 0) moveSpeed *= 1.22;
-      const swiftStacks = this.getBlessingStacks(p, 'swiftness');
-      if (swiftStacks > 0) moveSpeed *= 1 + swiftStacks * 0.08;
-      if (p.speedBoost) moveSpeed *= 1.8;
-
-      // Floor 2: Frostbite - Reduces movement speed
-      if (p.statuses.some(s => s.type === 'frostbite')) {
-        moveSpeed *= 0.55;
-      }
-      // Floor 9: Impaled - Shard impalement reduces movement speed
-      if (p.statuses.some(s => s.type === 'impaled')) {
-        moveSpeed *= 0.75;
-      }
-
-      let mx = 0;
-      let my = 0;
-
-      // Check analog touch stick input first, otherwise fallback to digital WASD/arrows
-      if (
-        typeof pr.input.stickX === 'number' &&
-        typeof pr.input.stickY === 'number' &&
-        (Math.abs(pr.input.stickX) > 0.05 || Math.abs(pr.input.stickY) > 0.05)
-      ) {
-        const len = Math.hypot(pr.input.stickX, pr.input.stickY);
-        const clampedLen = Math.min(1, len);
-        mx = (pr.input.stickX / len) * clampedLen;
-        my = (pr.input.stickY / len) * clampedLen;
-      } else {
-        mx = (pr.input.right ? 1 : 0) - (pr.input.left ? 1 : 0);
-        my = (pr.input.down ? 1 : 0) - (pr.input.up ? 1 : 0);
-        if (mx !== 0 || my !== 0) {
-          const len = Math.hypot(mx, my);
-          mx /= len;
-          my /= len;
-        }
-      }
-
-      // Floor 5: Disoriented - Mild directional drift (aim jitter)
-      if (p.statuses.some(s => s.type === 'disoriented')) {
-        const drift = Date.now() * 0.003;
-        mx += Math.cos(drift) * 0.25;
-        my += Math.sin(drift * 0.8) * 0.25;
-      }
+      const moveSpeed = computePlayerMoveSpeed(p);
+      const isDisoriented = p.statuses.some((s) => s.type === 'disoriented');
+      const { mx, my } = normalizePlayerInputDirection(pr.input, isDisoriented, Date.now());
 
       // Floor 6: Charmed - Irresistible siren pull toward the boss (even when idle)
-      const charmed = p.statuses.find(s => s.type === 'charmed');
+      const charmed = p.statuses.find((s) => s.type === 'charmed');
       let charmVx = 0;
       let charmVy = 0;
       if (charmed) {
-        const boss = this.enemies.find(e => e.kind === 'boss');
+        const boss = this.enemies.find((e) => e.kind === 'boss');
         if (boss) {
           const dx = boss.x - p.x;
           const dy = boss.y - p.y;
@@ -2158,8 +2127,6 @@ export class GameRoom {
       }
 
       if (mx !== 0 || my !== 0) {
-        const inputLen = Math.hypot(mx, my);
-        if (inputLen > 1) { mx /= inputLen; my /= inputLen; }
         p.vx = mx * moveSpeed + charmVx;
         p.vy = my * moveSpeed + charmVy;
       } else {
@@ -4609,53 +4576,15 @@ export class GameRoom {
   }
 
   private hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const dist = Math.hypot(dx, dy);
-    if (dist <= TILE_SIZE) return true;
-    const steps = Math.ceil(dist / 14);
-    const stepX = dx / steps;
-    const stepY = dy / steps;
-    for (let i = 1; i < steps; i++) {
-      if (this.isWallAtWorld(x1 + stepX * i, y1 + stepY * i)) {
-        return false;
-      }
-    }
-    return true;
+    return sharedHasLineOfSight(this.map, this.props, x1, y1, x2, y2);
   }
 
   private isWallAtWorld(wx: number, wy: number): boolean {
-    const tx = Math.floor(wx / TILE_SIZE);
-    const ty = Math.floor(wy / TILE_SIZE);
-    if (tx < 0 || tx >= this.map.width || ty < 0 || ty >= this.map.height) {
-      return true;
-    }
-    const code = this.map.tiles[ty * this.map.width + tx];
-    if (code === 0 || code === 2 || code === 3) return true;
-
-    // Solid collision barrier for Warden's Gate landmark prop
-    for (const prop of this.props) {
-      if (prop.kind === 'warden_gate' && !prop.opened) {
-        if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+    return sharedIsWallAtWorld(this.map, this.props, wx, wy);
   }
 
   private collidesCircle(wx: number, wy: number, radius: number): boolean {
-    if (this.isWallAtWorld(wx, wy)) return true;
-    // 8 perimeter points for smooth circular collision sliding
-    const step = Math.PI / 4;
-    for (let i = 0; i < 8; i++) {
-      const a = i * step;
-      const cx = wx + Math.cos(a) * radius;
-      const cy = wy + Math.sin(a) * radius;
-      if (this.isWallAtWorld(cx, cy)) return true;
-    }
-    return false;
+    return sharedCollidesCircle(this.map, this.props, wx, wy, radius);
   }
 
   private moveWithCollision(
@@ -4664,50 +4593,7 @@ export class GameRoom {
     dy: number,
     radius: number
   ): void {
-    // 1. Stuck Recovery: If entity is currently overlapping or embedded in a wall tile,
-    // immediately probe surrounding directions and push out towards open floor
-    if (this.collidesCircle(entity.x, entity.y, radius * 0.75)) {
-      let escapeX = 0;
-      let escapeY = 0;
-      const probeDist = radius + 8;
-      for (let i = 0; i < 8; i++) {
-        const a = (i * Math.PI) / 4;
-        const testX = entity.x + Math.cos(a) * probeDist;
-        const testY = entity.y + Math.sin(a) * probeDist;
-        if (!this.isWallAtWorld(testX, testY)) {
-          escapeX += Math.cos(a);
-          escapeY += Math.sin(a);
-        }
-      }
-      if (escapeX !== 0 || escapeY !== 0) {
-        const len = Math.hypot(escapeX, escapeY);
-        entity.x += (escapeX / len) * 4;
-        entity.y += (escapeY / len) * 4;
-      }
-    }
-
-    // 2. Direct full step (verify path line of sight to prevent fast wall clipping)
-    const targetX = entity.x + dx;
-    const targetY = entity.y + dy;
-    if (this.hasLineOfSight(entity.x, entity.y, targetX, targetY) && !this.collidesCircle(targetX, targetY, radius)) {
-      entity.x = targetX;
-      entity.y = targetY;
-      return;
-    }
-
-    // 3. Wall Sliding: try X movement alone with half-step fallback
-    if (dx !== 0 && !this.collidesCircle(targetX, entity.y, radius)) {
-      entity.x = targetX;
-    } else if (dx !== 0 && !this.collidesCircle(entity.x + dx * 0.5, entity.y, radius)) {
-      entity.x += dx * 0.5;
-    }
-
-    // 4. Wall Sliding: try Y movement alone with half-step fallback
-    if (dy !== 0 && !this.collidesCircle(entity.x, targetY, radius)) {
-      entity.y = targetY;
-    } else if (dy !== 0 && !this.collidesCircle(entity.x, entity.y + dy * 0.5, radius)) {
-      entity.y += dy * 0.5;
-    }
+    sharedMoveWithCollision(this.map, this.props, entity, dx, dy, radius);
   }
 
   public getSummary(): RoomSummary {
@@ -4790,6 +4676,136 @@ export class GameRoom {
       trainingDummies: this.trainingDummies,
       events,
       roomClearedFlags,
+    };
+  }
+
+  /**
+   * Produces a bandwidth-trimmed projection of the authoritative room state for
+   * high-frequency `room:tick` broadcasts:
+   * - Quantizes kinematic floats (0.1px position/velocity, 0.01rad angle)
+   * - Omits enemy resistances on non-boss enemies (only boss resistances render on HUD)
+   * - Omits static dialogue text/options on silent NPCs
+   * - Omits server-internal projectile tracking fields (hitEntityIds, targetEnemyId)
+   * - Filters already-collected ephemeral props (crate, coin, potion)
+   */
+  public buildNetworkSnapshot(): GameSnapshot {
+    const base = this.buildSnapshot();
+    const r1 = (n: number): number => Math.round(n * 10) / 10;
+    const r2 = (n: number): number => Math.round(n * 100) / 100;
+
+    const netPlayers: PlayerState[] = base.players.map((p) => ({
+      ...p,
+      x: r1(p.x),
+      y: r1(p.y),
+      vx: r1(p.vx),
+      vy: r1(p.vy),
+      aimAngle: r2(p.aimAngle),
+      reviveProgress: r2(p.reviveProgress),
+    }));
+
+    const netEnemies: EnemyState[] = base.enemies.map((e) => {
+      const projected: EnemyState = {
+        id: e.id,
+        kind: e.kind,
+        name: e.name,
+        roomId: e.roomId,
+        x: r1(e.x),
+        y: r1(e.y),
+        vx: r1(e.vx),
+        vy: r1(e.vy),
+        hp: e.hp,
+        maxHp: e.maxHp,
+        radius: e.radius,
+        state: e.state,
+        windupMs: e.windupMs,
+        targetX: r1(e.targetX),
+        targetY: r1(e.targetY),
+        markedMs: e.markedMs,
+        slowedMs: e.slowedMs,
+        stunnedMs: e.stunnedMs,
+        burnedMs: e.burnedMs,
+        frozenMs: e.frozenMs,
+        shockedMs: e.shockedMs,
+        poisonedMs: e.poisonedMs,
+        bleedingMs: e.bleedingMs,
+        silencedMs: e.silencedMs,
+        elite: e.elite,
+      };
+      if (e.kind === 'boss' && e.resistances) projected.resistances = e.resistances;
+      if (e.enraged) projected.enraged = true;
+      if (e.charging) projected.charging = true;
+      if (e.chargeAngle !== undefined) projected.chargeAngle = r2(e.chargeAngle);
+      if (e.chargeTimerMs) projected.chargeTimerMs = e.chargeTimerMs;
+      if (e.summonWave) projected.summonWave = e.summonWave;
+      if (e.shieldWallMs) projected.shieldWallMs = e.shieldWallMs;
+      if (e.abilityCdMs) projected.abilityCdMs = e.abilityCdMs;
+      return projected;
+    });
+
+    const netProjectiles: ProjectileState[] = base.projectiles.map((pr) => {
+      const projected: ProjectileState = {
+        id: pr.id,
+        ownerType: pr.ownerType,
+        ownerId: pr.ownerId,
+        style: pr.style,
+        x: r1(pr.x),
+        y: r1(pr.y),
+        vx: r1(pr.vx),
+        vy: r1(pr.vy),
+        angle: r2(pr.angle),
+        radius: pr.radius,
+        damage: pr.damage,
+        pierce: pr.pierce,
+        ttlMs: pr.ttlMs,
+      };
+      if (pr.slowOnHit) projected.slowOnHit = true;
+      if (pr.statusOnHit) projected.statusOnHit = pr.statusOnHit;
+      if (pr.statusDurationMs) projected.statusDurationMs = pr.statusDurationMs;
+      if (pr.crit) projected.crit = true;
+      return projected;
+    });
+
+    const netProps: PropState[] = [];
+    for (let i = 0; i < base.props.length; i++) {
+      const prop = base.props[i];
+      if (prop.opened && (prop.kind === 'crate' || prop.kind === 'coin' || prop.kind === 'potion')) {
+        continue;
+      }
+      netProps.push(prop);
+    }
+
+    const netZones: FieldZoneState[] = base.zones.map((z) => {
+      const projected: FieldZoneState = {
+        ...z,
+        x: r1(z.x),
+        y: r1(z.y),
+      };
+      if (z.angle !== undefined) projected.angle = r2(z.angle);
+      return projected;
+    });
+
+    const netNpcs: NpcState[] = base.npcs.map((n) =>
+      (n.speakingMs ?? 0) > 0
+        ? n
+        : {
+            id: n.id,
+            name: n.name,
+            x: n.x,
+            y: n.y,
+            dialogue: '',
+            spriteKind: n.spriteKind,
+            speakingMs: 0,
+          }
+    );
+
+    return {
+      ...base,
+      players: netPlayers,
+      enemies: netEnemies,
+      projectiles: netProjectiles,
+      props: netProps,
+      zones: netZones,
+      npcs: netNpcs,
     };
   }
 }

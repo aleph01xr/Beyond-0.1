@@ -476,6 +476,7 @@ export interface PlayerState {
   attributePoints: number;
   statuses: PlayerStatusEffect[];
   floorBlessings?: FloorBlessingId[];
+  lastInputSeq?: number;
 }
 
 export type PlayerStatusType =
@@ -544,7 +545,7 @@ export interface EnemyState {
   silencedMs: number;
   
   elite: boolean;
-  resistances: EnemyResistances;
+  resistances?: EnemyResistances;
   enraged?: boolean;
   charging?: boolean;
   chargeAngle?: number;
@@ -754,7 +755,7 @@ export type ClientMessage =
       heroClass: HeroClassId;
     }
   | { type: 'room:leave' }
-  | { type: 'player:input'; input: PlayerInputState }
+  | { type: 'player:input'; input: PlayerInputState; seq?: number }
   | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash'; aimAngle: number }
   | { type: 'player:select_relic'; relicId: string }
   | { type: 'player:unequip_relic'; relicId: string }
@@ -800,4 +801,4 @@ export type ServerMessage =
   | { type: 'chat:message'; message: ChatMessage }
   | { type: 'room:left' }
   | { type: 'error'; message: string }
-  | { type: 'pong'; t: number };
+  | { type: 'pong'; t: number; tickMs?: number };

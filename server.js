@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import pg from "pg";
@@ -271,6 +272,161 @@ var FLOOR_BLESSINGS = {
     shortTag: "+DEF"
   }
 };
+
+// src/shared/playerMovement.ts
+function isWallAtWorld(map, props, wx, wy) {
+  const tx = Math.floor(wx / TILE_SIZE);
+  const ty = Math.floor(wy / TILE_SIZE);
+  if (tx < 0 || tx >= map.width || ty < 0 || ty >= map.height) {
+    return true;
+  }
+  const code = map.tiles[ty * map.width + tx];
+  if (code === 0 || code === 2 || code === 3) return true;
+  for (let i = 0; i < props.length; i++) {
+    const prop = props[i];
+    if (prop.kind === "warden_gate" && !prop.opened) {
+      if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+function hasLineOfSight(map, props, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= TILE_SIZE) return true;
+  const steps = Math.ceil(dist / 14);
+  const stepX = dx / steps;
+  const stepY = dy / steps;
+  for (let i = 1; i < steps; i++) {
+    if (isWallAtWorld(map, props, x1 + stepX * i, y1 + stepY * i)) {
+      return false;
+    }
+  }
+  return true;
+}
+var COLLISION_COS = [
+  1,
+  Math.SQRT1_2,
+  0,
+  -Math.SQRT1_2,
+  -1,
+  -Math.SQRT1_2,
+  0,
+  Math.SQRT1_2
+];
+var COLLISION_SIN = [
+  0,
+  Math.SQRT1_2,
+  1,
+  Math.SQRT1_2,
+  0,
+  -Math.SQRT1_2,
+  -1,
+  -Math.SQRT1_2
+];
+function collidesCircle(map, props, wx, wy, radius) {
+  if (isWallAtWorld(map, props, wx, wy)) return true;
+  for (let i = 0; i < 8; i++) {
+    const cx = wx + COLLISION_COS[i] * radius;
+    const cy = wy + COLLISION_SIN[i] * radius;
+    if (isWallAtWorld(map, props, cx, cy)) return true;
+  }
+  return false;
+}
+function moveWithCollision(map, props, entity, dx, dy, radius) {
+  if (collidesCircle(map, props, entity.x, entity.y, radius * 0.75)) {
+    let escapeX = 0;
+    let escapeY = 0;
+    const probeDist = radius + 8;
+    for (let i = 0; i < 8; i++) {
+      const testX = entity.x + COLLISION_COS[i] * probeDist;
+      const testY = entity.y + COLLISION_SIN[i] * probeDist;
+      if (!isWallAtWorld(map, props, testX, testY)) {
+        escapeX += COLLISION_COS[i];
+        escapeY += COLLISION_SIN[i];
+      }
+    }
+    if (escapeX !== 0 || escapeY !== 0) {
+      const len = Math.hypot(escapeX, escapeY);
+      entity.x += escapeX / len * 4;
+      entity.y += escapeY / len * 4;
+    }
+  }
+  const targetX = entity.x + dx;
+  const targetY = entity.y + dy;
+  if (hasLineOfSight(map, props, entity.x, entity.y, targetX, targetY) && !collidesCircle(map, props, targetX, targetY, radius)) {
+    entity.x = targetX;
+    entity.y = targetY;
+    return;
+  }
+  if (dx !== 0 && !collidesCircle(map, props, targetX, entity.y, radius)) {
+    entity.x = targetX;
+  } else if (dx !== 0 && !collidesCircle(map, props, entity.x + dx * 0.5, entity.y, radius)) {
+    entity.x += dx * 0.5;
+  }
+  if (dy !== 0 && !collidesCircle(map, props, entity.x, targetY, radius)) {
+    entity.y = targetY;
+  } else if (dy !== 0 && !collidesCircle(map, props, entity.x, entity.y + dy * 0.5, radius)) {
+    entity.y += dy * 0.5;
+  }
+}
+function computePlayerMoveSpeed(player) {
+  const def = HERO_CLASSES[player.heroClass];
+  let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 35e-4);
+  if (player.relics.includes("zephyr_greaves")) moveSpeed *= 1.15;
+  if ((player.hasteMs || 0) > 0) moveSpeed *= 1.22;
+  if (player.floorBlessings && player.floorBlessings.length > 0) {
+    let swiftStacks = 0;
+    for (let i = 0; i < player.floorBlessings.length; i++) {
+      if (player.floorBlessings[i] === "swiftness") swiftStacks++;
+    }
+    if (swiftStacks > 0) moveSpeed *= 1 + swiftStacks * 0.08;
+  }
+  if (player.speedBoost) moveSpeed *= 1.8;
+  if (player.statuses && player.statuses.length > 0) {
+    if (player.statuses.some((s) => s.type === "frostbite")) {
+      moveSpeed *= 0.55;
+    }
+    if (player.statuses.some((s) => s.type === "impaled")) {
+      moveSpeed *= 0.75;
+    }
+  }
+  return moveSpeed;
+}
+function normalizePlayerInputDirection(input, disoriented = false, timeMs = 0) {
+  let mx = 0;
+  let my = 0;
+  if (typeof input.stickX === "number" && typeof input.stickY === "number" && (Math.abs(input.stickX) > 0.05 || Math.abs(input.stickY) > 0.05)) {
+    const len = Math.hypot(input.stickX, input.stickY);
+    const clampedLen = Math.min(1, len);
+    mx = input.stickX / len * clampedLen;
+    my = input.stickY / len * clampedLen;
+  } else {
+    mx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    my = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (mx !== 0 || my !== 0) {
+      const len = Math.hypot(mx, my);
+      mx /= len;
+      my /= len;
+    }
+  }
+  if (disoriented) {
+    const drift = timeMs * 3e-3;
+    mx += Math.cos(drift) * 0.25;
+    my += Math.sin(drift * 0.8) * 0.25;
+  }
+  if (mx !== 0 || my !== 0) {
+    const inputLen = Math.hypot(mx, my);
+    if (inputLen > 1) {
+      mx /= inputLen;
+      my /= inputLen;
+    }
+  }
+  return { mx, my };
+}
 
 // src/server/dungeonGenerator.ts
 function mulberry32(seed) {
@@ -1905,7 +2061,7 @@ var GameRoom = class _GameRoom {
   pushSystemChat(text) {
     return this.pushChat("Sanctuary", text, true);
   }
-  updateInput(playerId, input) {
+  updateInput(playerId, input, seq) {
     const pr = this.players.get(playerId);
     if (!pr) return;
     pr.input = {
@@ -1919,6 +2075,9 @@ var GameRoom = class _GameRoom {
       stickY: typeof input.stickY === "number" ? input.stickY : void 0
     };
     pr.state.aimAngle = pr.input.aimAngle;
+    if (typeof seq === "number" && Number.isFinite(seq)) {
+      pr.state.lastInputSeq = seq;
+    }
   }
   changeClass(playerId, heroClass) {
     const pr = this.players.get(playerId);
@@ -3073,39 +3232,9 @@ var GameRoom = class _GameRoom {
         continue;
       }
       const def = HERO_CLASSES[p.heroClass];
-      let moveSpeed = def.speed * (1 + (p.dexterity || 0) * 35e-4);
-      if (p.relics.includes("zephyr_greaves")) moveSpeed *= 1.15;
-      if (p.hasteMs > 0) moveSpeed *= 1.22;
-      const swiftStacks = this.getBlessingStacks(p, "swiftness");
-      if (swiftStacks > 0) moveSpeed *= 1 + swiftStacks * 0.08;
-      if (p.speedBoost) moveSpeed *= 1.8;
-      if (p.statuses.some((s) => s.type === "frostbite")) {
-        moveSpeed *= 0.55;
-      }
-      if (p.statuses.some((s) => s.type === "impaled")) {
-        moveSpeed *= 0.75;
-      }
-      let mx = 0;
-      let my = 0;
-      if (typeof pr.input.stickX === "number" && typeof pr.input.stickY === "number" && (Math.abs(pr.input.stickX) > 0.05 || Math.abs(pr.input.stickY) > 0.05)) {
-        const len = Math.hypot(pr.input.stickX, pr.input.stickY);
-        const clampedLen = Math.min(1, len);
-        mx = pr.input.stickX / len * clampedLen;
-        my = pr.input.stickY / len * clampedLen;
-      } else {
-        mx = (pr.input.right ? 1 : 0) - (pr.input.left ? 1 : 0);
-        my = (pr.input.down ? 1 : 0) - (pr.input.up ? 1 : 0);
-        if (mx !== 0 || my !== 0) {
-          const len = Math.hypot(mx, my);
-          mx /= len;
-          my /= len;
-        }
-      }
-      if (p.statuses.some((s) => s.type === "disoriented")) {
-        const drift = Date.now() * 3e-3;
-        mx += Math.cos(drift) * 0.25;
-        my += Math.sin(drift * 0.8) * 0.25;
-      }
+      const moveSpeed = computePlayerMoveSpeed(p);
+      const isDisoriented = p.statuses.some((s) => s.type === "disoriented");
+      const { mx, my } = normalizePlayerInputDirection(pr.input, isDisoriented, Date.now());
       const charmed = p.statuses.find((s) => s.type === "charmed");
       let charmVx = 0;
       let charmVy = 0;
@@ -3122,11 +3251,6 @@ var GameRoom = class _GameRoom {
         }
       }
       if (mx !== 0 || my !== 0) {
-        const inputLen = Math.hypot(mx, my);
-        if (inputLen > 1) {
-          mx /= inputLen;
-          my /= inputLen;
-        }
         p.vx = mx * moveSpeed + charmVx;
         p.vy = my * moveSpeed + charmVy;
       } else {
@@ -5257,85 +5381,16 @@ var GameRoom = class _GameRoom {
     );
   }
   hasLineOfSight(x1, y1, x2, y2) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const dist = Math.hypot(dx, dy);
-    if (dist <= TILE_SIZE) return true;
-    const steps = Math.ceil(dist / 14);
-    const stepX = dx / steps;
-    const stepY = dy / steps;
-    for (let i = 1; i < steps; i++) {
-      if (this.isWallAtWorld(x1 + stepX * i, y1 + stepY * i)) {
-        return false;
-      }
-    }
-    return true;
+    return hasLineOfSight(this.map, this.props, x1, y1, x2, y2);
   }
   isWallAtWorld(wx, wy) {
-    const tx = Math.floor(wx / TILE_SIZE);
-    const ty = Math.floor(wy / TILE_SIZE);
-    if (tx < 0 || tx >= this.map.width || ty < 0 || ty >= this.map.height) {
-      return true;
-    }
-    const code = this.map.tiles[ty * this.map.width + tx];
-    if (code === 0 || code === 2 || code === 3) return true;
-    for (const prop of this.props) {
-      if (prop.kind === "warden_gate" && !prop.opened) {
-        if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return isWallAtWorld(this.map, this.props, wx, wy);
   }
   collidesCircle(wx, wy, radius) {
-    if (this.isWallAtWorld(wx, wy)) return true;
-    const step = Math.PI / 4;
-    for (let i = 0; i < 8; i++) {
-      const a = i * step;
-      const cx = wx + Math.cos(a) * radius;
-      const cy = wy + Math.sin(a) * radius;
-      if (this.isWallAtWorld(cx, cy)) return true;
-    }
-    return false;
+    return collidesCircle(this.map, this.props, wx, wy, radius);
   }
   moveWithCollision(entity, dx, dy, radius) {
-    if (this.collidesCircle(entity.x, entity.y, radius * 0.75)) {
-      let escapeX = 0;
-      let escapeY = 0;
-      const probeDist = radius + 8;
-      for (let i = 0; i < 8; i++) {
-        const a = i * Math.PI / 4;
-        const testX = entity.x + Math.cos(a) * probeDist;
-        const testY = entity.y + Math.sin(a) * probeDist;
-        if (!this.isWallAtWorld(testX, testY)) {
-          escapeX += Math.cos(a);
-          escapeY += Math.sin(a);
-        }
-      }
-      if (escapeX !== 0 || escapeY !== 0) {
-        const len = Math.hypot(escapeX, escapeY);
-        entity.x += escapeX / len * 4;
-        entity.y += escapeY / len * 4;
-      }
-    }
-    const targetX = entity.x + dx;
-    const targetY = entity.y + dy;
-    if (this.hasLineOfSight(entity.x, entity.y, targetX, targetY) && !this.collidesCircle(targetX, targetY, radius)) {
-      entity.x = targetX;
-      entity.y = targetY;
-      return;
-    }
-    if (dx !== 0 && !this.collidesCircle(targetX, entity.y, radius)) {
-      entity.x = targetX;
-    } else if (dx !== 0 && !this.collidesCircle(entity.x + dx * 0.5, entity.y, radius)) {
-      entity.x += dx * 0.5;
-    }
-    if (dy !== 0 && !this.collidesCircle(entity.x, targetY, radius)) {
-      entity.y = targetY;
-    } else if (dy !== 0 && !this.collidesCircle(entity.x, entity.y + dy * 0.5, radius)) {
-      entity.y += dy * 0.5;
-    }
+    moveWithCollision(this.map, this.props, entity, dx, dy, radius);
   }
   getSummary() {
     return {
@@ -5407,6 +5462,126 @@ var GameRoom = class _GameRoom {
       trainingDummies: this.trainingDummies,
       events,
       roomClearedFlags
+    };
+  }
+  /**
+   * Produces a bandwidth-trimmed projection of the authoritative room state for
+   * high-frequency `room:tick` broadcasts:
+   * - Quantizes kinematic floats (0.1px position/velocity, 0.01rad angle)
+   * - Omits enemy resistances on non-boss enemies (only boss resistances render on HUD)
+   * - Omits static dialogue text/options on silent NPCs
+   * - Omits server-internal projectile tracking fields (hitEntityIds, targetEnemyId)
+   * - Filters already-collected ephemeral props (crate, coin, potion)
+   */
+  buildNetworkSnapshot() {
+    const base = this.buildSnapshot();
+    const r1 = (n) => Math.round(n * 10) / 10;
+    const r2 = (n) => Math.round(n * 100) / 100;
+    const netPlayers = base.players.map((p) => ({
+      ...p,
+      x: r1(p.x),
+      y: r1(p.y),
+      vx: r1(p.vx),
+      vy: r1(p.vy),
+      aimAngle: r2(p.aimAngle),
+      reviveProgress: r2(p.reviveProgress)
+    }));
+    const netEnemies = base.enemies.map((e) => {
+      const projected = {
+        id: e.id,
+        kind: e.kind,
+        name: e.name,
+        roomId: e.roomId,
+        x: r1(e.x),
+        y: r1(e.y),
+        vx: r1(e.vx),
+        vy: r1(e.vy),
+        hp: e.hp,
+        maxHp: e.maxHp,
+        radius: e.radius,
+        state: e.state,
+        windupMs: e.windupMs,
+        targetX: r1(e.targetX),
+        targetY: r1(e.targetY),
+        markedMs: e.markedMs,
+        slowedMs: e.slowedMs,
+        stunnedMs: e.stunnedMs,
+        burnedMs: e.burnedMs,
+        frozenMs: e.frozenMs,
+        shockedMs: e.shockedMs,
+        poisonedMs: e.poisonedMs,
+        bleedingMs: e.bleedingMs,
+        silencedMs: e.silencedMs,
+        elite: e.elite
+      };
+      if (e.kind === "boss" && e.resistances) projected.resistances = e.resistances;
+      if (e.enraged) projected.enraged = true;
+      if (e.charging) projected.charging = true;
+      if (e.chargeAngle !== void 0) projected.chargeAngle = r2(e.chargeAngle);
+      if (e.chargeTimerMs) projected.chargeTimerMs = e.chargeTimerMs;
+      if (e.summonWave) projected.summonWave = e.summonWave;
+      if (e.shieldWallMs) projected.shieldWallMs = e.shieldWallMs;
+      if (e.abilityCdMs) projected.abilityCdMs = e.abilityCdMs;
+      return projected;
+    });
+    const netProjectiles = base.projectiles.map((pr) => {
+      const projected = {
+        id: pr.id,
+        ownerType: pr.ownerType,
+        ownerId: pr.ownerId,
+        style: pr.style,
+        x: r1(pr.x),
+        y: r1(pr.y),
+        vx: r1(pr.vx),
+        vy: r1(pr.vy),
+        angle: r2(pr.angle),
+        radius: pr.radius,
+        damage: pr.damage,
+        pierce: pr.pierce,
+        ttlMs: pr.ttlMs
+      };
+      if (pr.slowOnHit) projected.slowOnHit = true;
+      if (pr.statusOnHit) projected.statusOnHit = pr.statusOnHit;
+      if (pr.statusDurationMs) projected.statusDurationMs = pr.statusDurationMs;
+      if (pr.crit) projected.crit = true;
+      return projected;
+    });
+    const netProps = [];
+    for (let i = 0; i < base.props.length; i++) {
+      const prop = base.props[i];
+      if (prop.opened && (prop.kind === "crate" || prop.kind === "coin" || prop.kind === "potion")) {
+        continue;
+      }
+      netProps.push(prop);
+    }
+    const netZones = base.zones.map((z) => {
+      const projected = {
+        ...z,
+        x: r1(z.x),
+        y: r1(z.y)
+      };
+      if (z.angle !== void 0) projected.angle = r2(z.angle);
+      return projected;
+    });
+    const netNpcs = base.npcs.map(
+      (n) => (n.speakingMs ?? 0) > 0 ? n : {
+        id: n.id,
+        name: n.name,
+        x: n.x,
+        y: n.y,
+        dialogue: "",
+        spriteKind: n.spriteKind,
+        speakingMs: 0
+      }
+    );
+    return {
+      ...base,
+      players: netPlayers,
+      enemies: netEnemies,
+      projectiles: netProjectiles,
+      props: netProps,
+      zones: netZones,
+      npcs: netNpcs
     };
   }
 };
@@ -6324,12 +6499,14 @@ async function startServer() {
     });
   });
   const server = http.createServer(app);
+  let lastTickDurationMs = 0;
   const wss = new WebSocketServer({
     server,
     path: "/ws",
     maxPayload: 64 * 1024
   });
   wss.on("connection", (ws, req) => {
+    req.socket?.setNoDelay?.(true);
     const origin = req.headers.origin;
     const originAllowed = isOriginAllowed(origin, req.headers.host);
     if (!originAllowed) {
@@ -6364,7 +6541,7 @@ async function startServer() {
         return;
       }
       if (msg.type === "ping") {
-        sendJson(ws, { type: "pong", t: msg.t });
+        sendJson(ws, { type: "pong", t: msg.t, tickMs: lastTickDurationMs });
         return;
       }
       if (msg.type === "lobby:subscribe") {
@@ -6476,7 +6653,7 @@ async function startServer() {
       const room = rooms.get(client.roomId);
       if (!room) return;
       if (msg.type === "player:input") {
-        room.updateInput(acc.id, msg.input);
+        room.updateInput(acc.id, msg.input, msg.seq);
       } else if (msg.type === "player:action") {
         const res = room.performAction(acc.id, msg.action, msg.aimAngle);
         if (res.floorChanged) {
@@ -6773,6 +6950,7 @@ async function startServer() {
   });
   const TICK_MS = 50;
   setInterval(() => {
+    const tickStart = performance.now();
     for (const [roomId, room] of rooms.entries()) {
       if (room.getPlayerCount() === 0) {
         if (roomId !== "TAVERN-HUB") {
@@ -6783,13 +6961,14 @@ async function startServer() {
       const prevStatus = room.status;
       room.tick(TICK_MS);
       if (roomClientIndex.getRoomClientCount(roomId) > 0) {
-        const snapshot = room.buildSnapshot();
+        const snapshot = room.buildNetworkSnapshot();
         broadcastToRoom(roomId, { type: "room:tick", snapshot }, { droppable: true });
       }
       if (room.status !== prevStatus) {
         broadcastRoomList();
       }
     }
+    lastTickDurationMs = Math.round((performance.now() - tickStart) * 10) / 10;
   }, TICK_MS);
   const distPath = path.resolve(__dirname, "dist");
   const isProd = process.env.NODE_ENV === "production" && fs.existsSync(path.join(distPath, "index.html"));
