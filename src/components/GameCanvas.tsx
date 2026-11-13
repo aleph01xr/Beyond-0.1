@@ -1,4 +1,10 @@
 import React, { useEffect, useRef } from 'react';
+import {
+  computeCameraZoom,
+  computeWorldAimAngle,
+  getWorldViewBounds,
+  stepCameraFollow,
+} from '../client/camera.ts';
 import { drawEnhancedProjectile, ParticleManager } from '../client/canvasEffects.ts';
 import {
   drawDungeonPortal,
@@ -26,15 +32,19 @@ import {
 } from '../client/enemySprites.ts';
 import { drawHumanoidBoss } from '../client/npcSprites.ts';
 import { drawFallenAndGhostPlayer } from '../client/fallenPlayerSprite.ts';
+import { drawHeroSprite, type HeroSwingKind } from '../client/heroSprites.ts';
 import { sfx, soundManager } from '../client/sound.ts';
 import {
   HERO_CLASSES,
   TILE_SIZE,
   type DungeonMap,
   type EnemyKind,
+  type FieldZoneState,
   type FloatingEvent,
   type GameSnapshot,
+  type HeroClassId,
   type PlayerInputState,
+  type ProjectileState,
 } from '../shared/types.ts';
 
 interface GameCanvasProps {
@@ -66,7 +76,7 @@ interface SmoothedPos {
   y: number;
 }
 
-export const GameCanvas: React.FC<GameCanvasProps> = ({
+const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   playerId,
   map,
   latestSnapshotRef,
@@ -87,9 +97,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   });
   const mouseScreenRef = useRef({ x: 0, y: 0 });
   const aimAngleRef = useRef(0);
-  const cameraRef = useRef({ x: 300, y: 300 });
+  const localSwingTriggerRef = useRef<{
+    bornAt: number;
+    durationMs: number;
+    kind: HeroSwingKind;
+  } | null>(null);
+  const startRoom = map.rooms.find((r) => r.type === 'start') ?? map.rooms[0];
+  const initialCamX = startRoom ? startRoom.cx * TILE_SIZE + TILE_SIZE / 2 : 300;
+  const initialCamY = startRoom ? startRoom.cy * TILE_SIZE + TILE_SIZE / 2 : 300;
+  const cameraRef = useRef({ x: initialCamX, y: initialCamY });
+  const cameraZoomRef = useRef<number | null>(null);
+  const cameraSnappedRef = useRef(false);
   const chatFocusedRef = useRef(chatFocused);
   chatFocusedRef.current = chatFocused;
+  const onSendKeyboardInputRef = useRef(onSendKeyboardInput);
+  onSendKeyboardInputRef.current = onSendKeyboardInput;
+  const onTriggerActionRef = useRef(onTriggerAction);
+  onTriggerActionRef.current = onTriggerAction;
+  const onSendPingRef = useRef(onSendPing);
+  onSendPingRef.current = onSendPing;
+
+  const triggerLocalSwing = (kind: HeroSwingKind) => {
+    const now = performance.now();
+    const cur = localSwingTriggerRef.current;
+    if (cur && now - cur.bornAt < 130 && cur.kind === kind) return;
+    const snap = latestSnapshotRef.current;
+    const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+    if (me) {
+      if (me.downed) return;
+      if (kind === 'primary' && me.attackAnimMs > 120) return;
+      if (kind === 'tactical' && me.skillCooldownMs > 45) return;
+      if (kind === 'ult' && me.ultCooldownMs > 45) return;
+    }
+    const durationMs = kind === 'ult' ? 320 : kind === 'tactical' ? 280 : 220;
+    localSwingTriggerRef.current = { bornAt: now, durationMs, kind };
+  };
 
   // Pre-render dungeon floor & walls
   useEffect(() => {
@@ -397,7 +439,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Keyboard Event Handlers (Only fires when keys change - NEVER on an arbitrary interval!)
   useEffect(() => {
     const emitKeys = () => {
-      onSendKeyboardInput({
+      onSendKeyboardInputRef.current({
         ...keysRef.current,
         aimAngle: aimAngleRef.current,
       });
@@ -465,28 +507,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (!keysRef.current.attack) {
           keysRef.current.attack = true;
           changed = true;
+          triggerLocalSwing('primary');
         }
       } else if (k === 'q') {
         sfx.playSkill('tactical');
-        onTriggerAction('tactical', aimAngleRef.current);
+        triggerLocalSwing('tactical');
+        onTriggerActionRef.current('tactical', aimAngleRef.current);
       } else if (k === 'r' || e.key === 'Shift') {
         sfx.playSkill('ult');
-        onTriggerAction('ult', aimAngleRef.current);
+        triggerLocalSwing('ult');
+        onTriggerActionRef.current('ult', aimAngleRef.current);
       } else if (k === 'c' || k === 'f' || k === 'v') {
         sfx.playDash();
-        onTriggerAction('dash', aimAngleRef.current);
+        onTriggerActionRef.current('dash', aimAngleRef.current);
       } else if (k === 'h' || k === '1') {
         sfx.playHeal();
-        onTriggerAction('potion', aimAngleRef.current);
+        onTriggerActionRef.current('potion', aimAngleRef.current);
       } else if (k === 'e') {
         sfx.playUiClick();
-        onTriggerAction('interact', aimAngleRef.current);
+        onTriggerActionRef.current('interact', aimAngleRef.current);
       } else if (k === 'g') {
         const snap = latestSnapshotRef.current;
         const me = snap?.players.find((p) => p.id === playerId);
         if (me) {
           sfx.playUiClick();
-          onSendPing('Rally Here', me.x, me.y - 18);
+          onSendPingRef.current('Rally Here', me.x, me.y - 18);
         }
       }
 
@@ -542,7 +587,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [latestSnapshotRef, onSendKeyboardInput, onSendPing, onTriggerAction, playerId]);
+  }, [latestSnapshotRef, playerId]);
 
   // 60 FPS Render Loop with Delta-Time Velocity Extrapolation
   useEffect(() => {
@@ -554,6 +599,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const smoothedPlayers = new Map<string, SmoothedPos>();
     const smoothedEnemies = new Map<string, SmoothedPos>();
     const prevEnemiesMap = new Map<string, { hp: number; kind: EnemyKind; x: number; y: number }>();
+    const prevPlayersMap = new Map<
+      string,
+      {
+        x: number;
+        y: number;
+        heroClass: HeroClassId;
+        skillCooldownMs: number;
+        ultCooldownMs: number;
+        dashCooldownMs: number;
+        shield: number;
+      }
+    >();
+    const prevProjectilesMap = new Map<string, ProjectileState>();
+    const prevZonesMap = new Map<string, FieldZoneState>();
+    const prevMarkedEnemyIds = new Set<string>();
+    let prevBossState: { id: string; x: number; y: number } | null = null;
+    const activeDashTrails = new Map<
+      string,
+      { until: number; lastEmit: number; heroClass: HeroClassId; angle: number }
+    >();
+    const prevAttackAnimMap = new Map<string, number>();
+    const playerWeaponSwings = new Map<
+      string,
+      { bornAt: number; durationMs: number; kind: HeroSwingKind }
+    >();
+    let hasInitWorldEffects = false;
+    cameraSnappedRef.current = false;
+    const entryRoom = map.rooms.find((r) => r.type === 'start') ?? map.rooms[0];
+    if (entryRoom) {
+      cameraRef.current = {
+        x: entryRoom.cx * TILE_SIZE + TILE_SIZE / 2,
+        y: entryRoom.cy * TILE_SIZE + TILE_SIZE / 2,
+      };
+    }
     const floatingTexts: ActiveFloatingText[] = [];
     const seenEventIds = new Set<string>();
     const particleManager = new ParticleManager();
@@ -578,6 +657,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       const cw = canvas.width;
       const ch = canvas.height;
+      const targetZoom = computeCameraZoom(cw, ch);
+      if (cameraZoomRef.current === null) {
+        cameraZoomRef.current = targetZoom;
+      } else {
+        cameraZoomRef.current += (targetZoom - cameraZoomRef.current) * Math.min(1, dtSec * 10);
+      }
+      const zoom = cameraZoomRef.current;
+
       ctx.imageSmoothingEnabled = false;
 
       ctx.fillStyle = '#111219';
@@ -589,59 +676,193 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         return;
       }
 
+      const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
+      let bossAimAngle = 0;
+      if (activeBoss) {
+        let bestPlayerDist = Infinity;
+        for (const pr of snap.players) {
+          if (pr.downed) continue;
+          const dist = Math.hypot(pr.x - activeBoss.x, pr.y - activeBoss.y);
+          if (dist < bestPlayerDist) {
+            bestPlayerDist = dist;
+            bossAimAngle = Math.atan2(pr.y - activeBoss.y, pr.x - activeBoss.x);
+          }
+        }
+      }
+
+      let didVoidStepStatus = false;
       for (const ev of snap.events) {
         if (!seenEventIds.has(ev.id)) {
           seenEventIds.add(ev.id);
           floatingTexts.push({ ...ev, bornAt: now });
           if (ev.kind === 'gold') sfx.playCoin();
-          else if (ev.kind === 'heal') sfx.playHeal();
-          else if (ev.kind === 'damage') {
-            sfx.playEnemyHit(false);
-            particleManager.spawnHitSparks(ev.x, ev.y, ev.color || '#EF4444', 6, now, false);
-            screenShake = Math.min(5, screenShake + 1.2);
+          else if (ev.kind === 'heal') {
+            sfx.playHeal();
+            particleManager.spawnClericHealBurst(ev.x, ev.y, now);
+          } else if (ev.kind === 'damage') {
+            if (ev.text.toUpperCase().includes('SOUL SIPHON')) {
+              sfx.playBossAbility('vaelor', 'soul_siphon_tether');
+              particleManager.spawnVaelorSoulSiphonTether(
+                ev.x,
+                ev.y + 14,
+                activeBoss ? activeBoss.x : ev.x,
+                activeBoss ? activeBoss.y : ev.y,
+                now
+              );
+            } else {
+              sfx.playEnemyHit(false);
+              particleManager.spawnHitSparks(ev.x, ev.y, ev.color || '#EF4444', 6, now, false);
+              particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 4, now);
+              screenShake = Math.min(5, screenShake + 1.2);
+            }
           } else if (ev.kind === 'crit') {
             sfx.playEnemyHit(true);
             particleManager.spawnHitSparks(ev.x, ev.y, '#FBBF24', 12, now, true);
+            particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 8, now);
             screenShake = Math.min(8, screenShake + 3.0);
           } else if (ev.text.includes('Relic')) {
             sfx.playRelicChime();
           } else if (ev.kind === 'status') {
             const txt = ev.text.trim().toUpperCase();
-            if (txt.includes('SHIELD WALL')) sfx.playBossAbility('malakor', 'iron_bulwark');
-            else if (txt.includes('CLEAVE')) sfx.playBossAbility('malakor', 'triple_cleave');
-            else if (txt.includes('GROUND SLAM')) sfx.playBossAbility('malakor', 'bastion_ground_slam');
-            else if (txt.includes('WAR CHARGE')) sfx.playBossAbility('malakor', 'war_charge');
-            else if (txt.includes('FROST NOVA')) sfx.playBossAbility('vaelor', 'glacial_frost_nova');
-            else if (txt.includes('SOUL SIPHON')) sfx.playBossAbility('vaelor', 'soul_siphon_tether');
-            else if (txt.includes('SOUL HAIL')) sfx.playBossAbility('vaelor', 'seeking_soul_hail');
-            else if (txt.includes('DEATH RING')) sfx.playBossAbility('vaelor', 'necrotic_death_ring');
-            else if (txt.includes('MAGMA')) sfx.playBossAbility('ignis', 'magma_eruptions');
-            else if (txt.includes('FISSURE WAVE')) sfx.playBossAbility('ignis', 'molten_fissure_wave');
-            else if (txt.includes('CINDER SPIRAL')) sfx.playBossAbility('ignis', 'cinder_ember_spiral');
-            else if (txt.includes('CORE DETONATION')) sfx.playBossAbility('ignis', 'volcanic_core_detonation');
-            else if (txt.includes('SINGULARITY')) sfx.playBossAbility('malice', 'gravitational_singularity');
-            else if (txt.includes('TENDRIL FLURRY')) sfx.playBossAbility('malice', 'void_tendril_flurry');
-            else if (txt.includes('VOID STEP')) sfx.playBossAbility('malice', 'void_step');
-            else if (txt.includes('ABYSSAL NOVA')) sfx.playBossAbility('malice', 'abyssal_nova_spread');
-            else if (txt.includes('SUPERNOVA')) sfx.playBossAbility('archon', 'celestial_supernova_ring');
-            else if (txt.includes('STARBEAM')) sfx.playBossAbility('archon', 'orbital_starlight_beams');
-            else if (txt.includes('COSMIC VOLLEY')) sfx.playBossAbility('archon', 'cosmic_shard_volley');
-            else if (txt.includes('RESONANT CRESCENDO')) sfx.playBossAbility('elyndor', 'resonant_crescendo');
-            else if (txt.includes('LAMENT')) sfx.playBossAbility('elyndor', 'lament_of_the_forgotten');
-            else if (txt.includes('DIVINE CHORUS')) sfx.playBossAbility('elyndor', 'divine_chorus_beams');
-            else if (txt.includes('ASHEN PROCESSION')) sfx.playBossAbility('zadkiel', 'ashen_procession');
-            else if (txt.includes('CHAIN OF THE DEPARTED')) sfx.playBossAbility('zadkiel', 'chain_of_the_departed');
-            else if (txt.includes('RELIQUARY AWAKENING')) sfx.playBossAbility('zadkiel', 'reliquary_awakening');
-            else if (txt.includes('SCRIPTURE OF BINDING')) sfx.playBossAbility('sariel', 'scripture_of_binding');
-            else if (txt.includes('FORBIDDEN VERSES')) sfx.playBossAbility('sariel', 'forbidden_verses');
-            else if (txt.includes('SEAL OF SILENCE')) sfx.playBossAbility('sariel', 'seal_of_silence');
-            else if (txt.includes('HERETICAL VOLLEY')) sfx.playBossAbility('sariel', 'heretical_volley');
-            else if (txt.includes("HEAVEN'S PIERCING LINE")) sfx.playBossAbility('seraphel', 'heavens_piercing_line');
-            else if (txt.includes('LANCEFALL')) sfx.playBossAbility('seraphel', 'lancefall_sequence');
-            else if (txt.includes('AERIAL JUDGMENT')) sfx.playBossAbility('seraphel', 'aerial_judgment');
-            else if (txt.includes("WARDEN'S EDICT")) sfx.playBossAbility('oriphiel', 'wardens_edict');
-            else if (txt.includes('UNBROKEN JUDGMENT')) sfx.playBossAbility('oriphiel', 'unbroken_judgment');
-            else if (txt.includes('FINAL VERDICT')) sfx.playBossAbility('oriphiel', 'the_final_verdict_combo');
+            const bx = activeBoss ? activeBoss.x : ev.x;
+            const by = activeBoss ? activeBoss.y : ev.y + 38;
+            if (txt.includes('SHIELD WALL')) {
+              sfx.playBossAbility('malakor', 'iron_bulwark');
+              particleManager.spawnMalakorBulwarkCast(bx, by, now);
+            } else if (txt.includes('CLEAVE')) {
+              sfx.playBossAbility('malakor', 'triple_cleave');
+              particleManager.spawnMalakorTripleCleave(bx, by, bossAimAngle, now);
+            } else if (txt.includes('GROUND SLAM')) {
+              sfx.playBossAbility('malakor', 'bastion_ground_slam');
+              particleManager.spawnImpactRing(bx, by, 35, now);
+            } else if (txt.includes('WAR CHARGE')) {
+              sfx.playBossAbility('malakor', 'war_charge');
+              particleManager.spawnMalakorWarCharge(bx, by, activeBoss?.chargeAngle ?? bossAimAngle, now);
+            } else if (txt.includes('FROST NOVA')) {
+              sfx.playBossAbility('vaelor', 'glacial_frost_nova');
+              particleManager.spawnFrostRing(bx, by, 36, now);
+            } else if (txt.includes('SOUL SIPHON')) {
+              sfx.playBossAbility('vaelor', 'soul_siphon_tether');
+              particleManager.spawnVaelorSoulSiphonTether(ev.x, ev.y + 14, bx, by, now);
+            } else if (txt.includes('SOUL HAIL')) {
+              sfx.playBossAbility('vaelor', 'seeking_soul_hail');
+              particleManager.spawnVaelorSoulHail(bx, by, bossAimAngle, now);
+            } else if (txt.includes('DEATH RING')) {
+              sfx.playBossAbility('vaelor', 'necrotic_death_ring');
+              particleManager.spawnVaelorDeathRing(bx, by, now);
+            } else if (txt.includes('MAGMA')) {
+              sfx.playBossAbility('ignis', 'magma_eruptions');
+              particleManager.spawnIgnisMagmaEruption(bx, by, 40, now);
+            } else if (txt.includes('FISSURE WAVE')) {
+              sfx.playBossAbility('ignis', 'molten_fissure_wave');
+              particleManager.spawnIgnisFissureWave(bx, by, bossAimAngle, now);
+            } else if (txt.includes('CINDER SPIRAL')) {
+              sfx.playBossAbility('ignis', 'cinder_ember_spiral');
+              particleManager.spawnIgnisCinderSpiral(bx, by, now);
+            } else if (txt.includes('CORE DETONATION')) {
+              sfx.playBossAbility('ignis', 'volcanic_core_detonation');
+              particleManager.spawnIgnisCoreDetonation(bx, by, 110, now);
+            } else if (txt.includes('SINGULARITY')) {
+              sfx.playBossAbility('malice', 'gravitational_singularity');
+              particleManager.spawnMaliceSingularityImplosion(bx, by, 45, now);
+            } else if (txt.includes('TENDRIL FLURRY')) {
+              sfx.playBossAbility('malice', 'void_tendril_flurry');
+              particleManager.spawnMaliceTendrilFlurry(bx, by, bossAimAngle, now);
+            } else if (txt.includes('VOID STEP')) {
+              sfx.playBossAbility('malice', 'void_step');
+              didVoidStepStatus = true;
+              const fromX = prevBossState && activeBoss && prevBossState.id === activeBoss.id ? prevBossState.x : bx;
+              const fromY = prevBossState && activeBoss && prevBossState.id === activeBoss.id ? prevBossState.y : by;
+              particleManager.spawnMaliceVoidStep(fromX, fromY, bx, by, now);
+            } else if (txt.includes('ABYSSAL NOVA')) {
+              sfx.playBossAbility('malice', 'abyssal_nova_spread');
+              particleManager.spawnMaliceAbyssalNova(bx, by, now);
+            } else if (txt.includes('SUPERNOVA')) {
+              sfx.playBossAbility('archon', 'celestial_supernova_ring');
+              particleManager.spawnArchonSupernovaBurst(bx, by, 80, now);
+            } else if (txt.includes('STARBEAM')) {
+              sfx.playBossAbility('archon', 'orbital_starlight_beams');
+              particleManager.spawnArchonStarbeamStrike(bx, by, 50, now);
+            } else if (txt.includes('COSMIC VOLLEY')) {
+              sfx.playBossAbility('archon', 'cosmic_shard_volley');
+              particleManager.spawnArchonCosmicVolley(bx, by, bossAimAngle, now);
+            } else if (txt.includes('RESONANT CRESCENDO')) {
+              sfx.playBossAbility('elyndor', 'resonant_crescendo');
+              particleManager.spawnElyndorResonantCrescendo(bx, by, bossAimAngle, now);
+            } else if (txt.includes('LAMENT')) {
+              sfx.playBossAbility('elyndor', 'lament_of_the_forgotten');
+              particleManager.spawnElyndorLamentBurst(bx, by, 55, now);
+            } else if (txt.includes('DIVINE CHORUS')) {
+              sfx.playBossAbility('elyndor', 'divine_chorus_beams');
+              particleManager.spawnElyndorDivineChorus(bx, by, bossAimAngle, now);
+            } else if (txt.includes('CHORUS OF REMEMBRANCE')) {
+              sfx.playBossAbility('elyndor', 'resonant_crescendo');
+              particleManager.spawnElyndorChorusRemembrance(bx, by, now);
+            } else if (txt.includes('ASHEN PROCESSION')) {
+              sfx.playBossAbility('zadkiel', 'ashen_procession');
+              particleManager.spawnZadkielAshenCloudMotes(bx, by, 60, now);
+            } else if (txt.includes('CHAIN OF THE DEPARTED')) {
+              sfx.playBossAbility('zadkiel', 'chain_of_the_departed');
+              particleManager.spawnZadkielCenserSweepSparks(bx, by, bossAimAngle, 155, 0.25, now);
+            } else if (txt.includes('RELIQUARY AWAKENING')) {
+              sfx.playBossAbility('zadkiel', 'reliquary_awakening');
+              particleManager.spawnZadkielReliquaryAwakening(bx, by, now);
+            } else if (txt.includes('JUDGMENT OF THE DEPARTED')) {
+              sfx.playBossAbility('zadkiel', 'reliquary_awakening');
+              particleManager.spawnZadkielJudgmentCast(bx, by, bossAimAngle, now);
+            } else if (txt.includes('SCRIPTURE OF BINDING')) {
+              sfx.playBossAbility('sariel', 'scripture_of_binding');
+              particleManager.spawnSarielScriptureBinding(bx, by, bossAimAngle, now);
+            } else if (txt.includes('FORBIDDEN VERSES')) {
+              sfx.playBossAbility('sariel', 'forbidden_verses');
+              particleManager.spawnSarielForbiddenPageBurst(bx, by, 55, now);
+            } else if (txt.includes('SEAL OF SILENCE')) {
+              sfx.playBossAbility('sariel', 'seal_of_silence');
+              particleManager.spawnSarielSilenceDetonation(bx, by, 55, now);
+            } else if (txt.includes('HERETICAL VOLLEY')) {
+              sfx.playBossAbility('sariel', 'heretical_volley');
+              particleManager.spawnSarielHereticalVolley(bx, by, now);
+            } else if (txt.includes("HEAVEN'S PIERCING LINE")) {
+              sfx.playBossAbility('seraphel', 'heavens_piercing_line');
+              particleManager.spawnSeraphelPiercingLine(bx, by, bossAimAngle, 380, now);
+            } else if (txt.includes('LANCEFALL')) {
+              sfx.playBossAbility('seraphel', 'lancefall_sequence');
+              particleManager.spawnSeraphelLancefallImpact(bx, by, 50, now);
+            } else if (txt.includes('AERIAL JUDGMENT')) {
+              sfx.playBossAbility('seraphel', 'aerial_judgment');
+              particleManager.spawnSeraphelAerialJudgment(bx, by, bossAimAngle, now);
+            } else if (txt.includes('SENTINEL SPEARFALL CASCADE')) {
+              sfx.playBossAbility('seraphel', 'lancefall_sequence');
+              particleManager.spawnSeraphelSpearfallCascade(bx, by, now);
+            } else if (txt.includes("WARDEN'S EDICT")) {
+              sfx.playBossAbility('oriphiel', 'wardens_edict');
+              particleManager.spawnOriphielWardenEdictCast(bx, by, now);
+            } else if (txt.includes('REFLECTED')) {
+              sfx.playBossAbility('oriphiel', 'unbroken_judgment');
+              particleManager.spawnOriphielParryReflectBurst(bx, by, now);
+            } else if (txt.includes('UNBROKEN JUDGMENT')) {
+              sfx.playBossAbility('oriphiel', 'unbroken_judgment');
+              particleManager.spawnOriphielParryStance(bx, by, now);
+            } else if (txt.includes('FINAL VERDICT')) {
+              sfx.playBossAbility('oriphiel', 'the_final_verdict_combo');
+              particleManager.spawnOriphielVerdictStage(bx, by, 75, 2, now);
+            } else if (txt.includes('BASTION GROUND SHATTER')) {
+              sfx.playBossAbility('oriphiel', 'the_final_verdict_combo');
+              particleManager.spawnOriphielBastionShatter(bx, by, 140, now);
+            } else if (txt.includes('GUARDIAN DEFEATED')) {
+              sfx.playRelicChime();
+              particleManager.spawnRoomClearBlessing(ev.x, ev.y + 24, true, now);
+              screenShake = Math.min(8, screenShake + 2.5);
+            } else if (txt.includes('ROOM CLEARED')) {
+              sfx.playRelicChime();
+              particleManager.spawnRoomClearBlessing(ev.x, ev.y + 24, false, now);
+            } else if (txt.includes('WARD SHATTERED') || txt.includes('ALL WARDS SHATTERED')) {
+              particleManager.spawnBossWardShatter(bx, by, snap.bossWards ?? 0, now);
+              screenShake = Math.min(8, screenShake + 2.2);
+            } else if (txt.includes('FLOOR CLEARED') || txt.includes('PORTAL UNLOCKED')) {
+              sfx.playRelicChime();
+              particleManager.spawnRoomClearBlessing(ev.x, ev.y + 34, true, now);
+            }
           }
         }
       }
@@ -649,11 +870,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         seenEventIds.clear();
       }
 
-      // Check for defeated enemies to spawn death dissipation bursts
+      // Check for defeated enemies & newly marked Hunter Quarry targets
       for (const en of snap.enemies) {
         const prev = prevEnemiesMap.get(en.id);
         if (prev && prev.hp > 0 && en.hp <= 0) {
           particleManager.spawnEnemyDeathBurst(en.x, en.y, en.kind, now);
+        }
+        if (en.markedMs > 0 && !prevMarkedEnemyIds.has(en.id)) {
+          particleManager.spawnRangerQuarryMark(en.x, en.y, now);
         }
       }
       for (const [id, prev] of prevEnemiesMap.entries()) {
@@ -662,9 +886,292 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
       prevEnemiesMap.clear();
+      prevMarkedEnemyIds.clear();
       for (const en of snap.enemies) {
         prevEnemiesMap.set(en.id, { hp: en.hp, kind: en.kind, x: en.x, y: en.y });
+        if (en.markedMs > 0) {
+          prevMarkedEnemyIds.add(en.id);
+        }
       }
+
+      // Track class ability activations (dash, tactical, ult, primary weapon swings, shield changes) for all players
+      for (const p of snap.players) {
+        const prev = prevPlayersMap.get(p.id);
+        const prevAtkAnim = prevAttackAnimMap.get(p.id) ?? 0;
+        let detectedSwingKind: HeroSwingKind | null = null;
+        let detectedSwingDur = 220;
+
+        if (prev) {
+          if (p.dashCooldownMs > prev.dashCooldownMs + 300) {
+            const dx = p.x - prev.x;
+            const dy = p.y - prev.y;
+            const dashMoveAngle = Math.hypot(dx, dy) > 4 ? Math.atan2(dy, dx) : p.aimAngle;
+            particleManager.spawnClassDashEffect(p.heroClass, prev.x, prev.y, p.x, p.y, dashMoveAngle, now);
+            activeDashTrails.set(p.id, {
+              until: now + 420,
+              lastEmit: now,
+              heroClass: p.heroClass,
+              angle: dashMoveAngle,
+            });
+          }
+          if (p.skillCooldownMs > prev.skillCooldownMs + 400) {
+            detectedSwingKind = 'tactical';
+            detectedSwingDur = 280;
+            if (p.heroClass === 'vanguard') {
+              particleManager.spawnVanguardBulwarkDash(prev.x, prev.y, p.x, p.y, p.aimAngle, now);
+            } else if (p.heroClass === 'ranger') {
+              particleManager.spawnRangerFrostVolleyCast(p.x, p.y, p.aimAngle, now);
+            } else if (p.heroClass === 'arcanist') {
+              particleManager.spawnArcanistNovaCast(p.x, p.y, now);
+            } else if (p.heroClass === 'cleric') {
+              particleManager.spawnClericSanctifiedPulse(p.x, p.y, now);
+            }
+          }
+          if (p.ultCooldownMs > prev.ultCooldownMs + 400) {
+            detectedSwingKind = 'ult';
+            detectedSwingDur = 320;
+            if (p.heroClass === 'ranger') {
+              particleManager.spawnRangerQuarryCast(p.x, p.y, now);
+            }
+          }
+          if (p.shield > prev.shield) {
+            particleManager.spawnVanguardShieldGrant(p.x, p.y, now);
+          } else if (prev.shield > 0 && p.shield === 0) {
+            particleManager.spawnVanguardShieldBreak(p.x, p.y, now);
+          }
+        }
+
+        if (!detectedSwingKind && ((p.attackAnimMs > 0 && prevAtkAnim === 0) || p.attackAnimMs > prevAtkAnim + 35)) {
+          detectedSwingKind = p.attackAnimMs > 245 ? 'ult' : p.attackAnimMs > 195 ? 'tactical' : 'primary';
+          detectedSwingDur = p.attackAnimMs > 245 ? 320 : p.attackAnimMs > 195 ? 280 : 220;
+        }
+
+        if (detectedSwingKind) {
+          const existingSwing = playerWeaponSwings.get(p.id);
+          const triggeredLocally =
+            p.id === playerId && existingSwing && now - existingSwing.bornAt < 130;
+          if (!triggeredLocally) {
+            playerWeaponSwings.set(p.id, {
+              bornAt: now,
+              durationMs: detectedSwingDur,
+              kind: detectedSwingKind,
+            });
+          }
+        }
+
+        if (p.id === playerId && localSwingTriggerRef.current) {
+          const trig = localSwingTriggerRef.current;
+          const curSwing = playerWeaponSwings.get(p.id);
+          if (!curSwing || trig.bornAt > curSwing.bornAt) {
+            playerWeaponSwings.set(p.id, {
+              bornAt: trig.bornAt,
+              durationMs: trig.durationMs,
+              kind: trig.kind,
+            });
+          }
+          localSwingTriggerRef.current = null;
+        }
+      }
+      prevPlayersMap.clear();
+      prevAttackAnimMap.clear();
+      for (const p of snap.players) {
+        prevPlayersMap.set(p.id, {
+          x: p.x,
+          y: p.y,
+          heroClass: p.heroClass,
+          skillCooldownMs: p.skillCooldownMs,
+          ultCooldownMs: p.ultCooldownMs,
+          dashCooldownMs: p.dashCooldownMs,
+          shield: p.shield,
+        });
+        prevAttackAnimMap.set(p.id, p.attackAnimMs);
+
+        const activeSwing = playerWeaponSwings.get(p.id);
+        if (activeSwing && (now - activeSwing.bornAt >= activeSwing.durationMs || p.downed)) {
+          playerWeaponSwings.delete(p.id);
+        }
+
+        const dashTrail = activeDashTrails.get(p.id);
+        if (dashTrail) {
+          if (now >= dashTrail.until || p.downed) {
+            activeDashTrails.delete(p.id);
+          } else if (now - dashTrail.lastEmit >= 42) {
+            const livePos = smoothedPlayers.get(p.id) || { x: p.x, y: p.y };
+            const liveAngle = Math.hypot(p.vx, p.vy) > 15 ? Math.atan2(p.vy, p.vx) : dashTrail.angle;
+            particleManager.spawnClassDashTrailStep(p.heroClass, livePos.x, livePos.y, liveAngle, now);
+            dashTrail.lastEmit = now;
+          }
+        }
+      }
+      for (const id of activeDashTrails.keys()) {
+        if (!prevPlayersMap.has(id)) {
+          activeDashTrails.delete(id);
+        }
+      }
+      for (const id of playerWeaponSwings.keys()) {
+        if (!prevPlayersMap.has(id)) {
+          playerWeaponSwings.delete(id);
+        }
+      }
+
+      // Track newly spawned class field zones and expiring boss hazard detonations
+      const currentZoneIds = new Set<string>();
+      for (const z of snap.zones) {
+        currentZoneIds.add(z.id);
+      }
+      if (hasInitWorldEffects) {
+        for (const z of snap.zones) {
+          if (!prevZonesMap.has(z.id)) {
+            if (z.kind === 'aegis_dome') {
+              particleManager.spawnVanguardAegisCast(z.x, z.y, z.radius, now);
+            } else if (z.kind === 'chrono_well') {
+              particleManager.spawnArcanistChronoWellCast(z.x, z.y, z.radius, now);
+            } else if (z.kind === 'solar_beacon') {
+              particleManager.spawnClericSolarBeaconCast(z.x, z.y, z.radius, now);
+            } else if (z.kind === 'star_rift') {
+              particleManager.spawnArcanistBoltHit(z.x, z.y, now);
+            }
+          }
+        }
+        if (activeBoss) {
+          for (const [id, prevZ] of prevZonesMap.entries()) {
+            if (!currentZoneIds.has(id) && prevZ.ttlMs <= 220) {
+              if (prevZ.kind === 'boss_slam') {
+                if (map.biome === 'catacombs' || map.floor === 2) {
+                  particleManager.spawnVaelorFrostNovaBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else if (map.biome === 'ember' || map.floor === 3) {
+                  particleManager.spawnIgnisCoreDetonation(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else if (map.biome === 'void' || map.floor === 4) {
+                  particleManager.spawnMaliceSingularityImplosion(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else if (map.biome === 'astral' || map.floor === 5) {
+                  particleManager.spawnArchonSupernovaBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else {
+                  particleManager.spawnMalakorGroundSlamImpact(prevZ.x, prevZ.y, prevZ.radius, now);
+                }
+              } else if (prevZ.kind === 'frost_nova') {
+                particleManager.spawnVaelorFrostNovaBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'magma_pillar') {
+                if (prevZ.radius >= 100) {
+                  particleManager.spawnIgnisCoreDetonation(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else {
+                  particleManager.spawnIgnisMagmaEruption(prevZ.x, prevZ.y, prevZ.radius, now);
+                }
+              } else if (prevZ.kind === 'singularity') {
+                particleManager.spawnMaliceSingularityImplosion(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'supernova') {
+                particleManager.spawnArchonSupernovaBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'starlight_beam') {
+                particleManager.spawnArchonStarbeamStrike(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'lament_mark') {
+                if (map.biome === 'reliquary' || map.floor === 7) {
+                  particleManager.spawnZadkielRelicDetonation(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else {
+                  particleManager.spawnElyndorLamentBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+                }
+              } else if (prevZ.kind === 'scripture_line') {
+                particleManager.spawnSarielScriptureDetonation(
+                  prevZ.x,
+                  prevZ.y,
+                  prevZ.width || 420,
+                  prevZ.angle || 0,
+                  now
+                );
+              } else if (prevZ.kind === 'silence_seal') {
+                particleManager.spawnSarielSilenceDetonation(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'lance_thrust') {
+                particleManager.spawnSeraphelPiercingLine(
+                  prevZ.x,
+                  prevZ.y,
+                  prevZ.angle || 0,
+                  prevZ.width || 380,
+                  now
+                );
+              } else if (prevZ.kind === 'lancefall_mark') {
+                if (map.biome === 'scripture' || map.floor === 8) {
+                  particleManager.spawnSarielForbiddenPageBurst(prevZ.x, prevZ.y, prevZ.radius, now);
+                } else {
+                  particleManager.spawnSeraphelLancefallImpact(prevZ.x, prevZ.y, prevZ.radius, now);
+                }
+              } else if (prevZ.kind === 'warden_edict') {
+                particleManager.spawnOriphielEdictExecution(
+                  prevZ.x,
+                  prevZ.y,
+                  prevZ.radius,
+                  prevZ.quadrant ?? 0,
+                  now
+                );
+              } else if (prevZ.kind === 'verdict_combo') {
+                particleManager.spawnOriphielVerdictStage(prevZ.x, prevZ.y, prevZ.radius, prevZ.stage || 1, now);
+              } else if (prevZ.kind === 'warden_shatter') {
+                particleManager.spawnOriphielBastionShatter(prevZ.x, prevZ.y, prevZ.radius, now);
+              }
+            }
+          }
+        }
+      }
+      prevZonesMap.clear();
+      for (const z of snap.zones) {
+        prevZonesMap.set(z.id, z);
+      }
+
+      // Detect silent boss Void Step teleport if no status event was matched yet
+      if (
+        !didVoidStepStatus &&
+        hasInitWorldEffects &&
+        activeBoss &&
+        prevBossState &&
+        prevBossState.id === activeBoss.id &&
+        (map.biome === 'void' || map.floor === 4) &&
+        Math.hypot(activeBoss.x - prevBossState.x, activeBoss.y - prevBossState.y) > 50
+      ) {
+        particleManager.spawnMaliceVoidStep(prevBossState.x, prevBossState.y, activeBoss.x, activeBoss.y, now);
+      }
+
+      // Track newly fired melee cleave arcs, silent boss nova spreads & projectile impacts
+      const currentProjIds = new Set<string>();
+      let newBossProjCount = 0;
+      for (const proj of snap.projectiles) {
+        currentProjIds.add(proj.id);
+        if (!prevProjectilesMap.has(proj.id)) {
+          if (proj.ownerType === 'player' && proj.style === 'slash') {
+            particleManager.spawnVanguardCleave(proj.x, proj.y, proj.angle, Boolean(proj.crit), now);
+          } else if (proj.ownerType === 'enemy' && activeBoss && proj.ownerId === activeBoss.id) {
+            newBossProjCount++;
+          }
+        }
+      }
+      if (hasInitWorldEffects && activeBoss && newBossProjCount >= 10) {
+        if (map.biome === 'catacombs' || map.floor === 2) {
+          particleManager.spawnVaelorDeathRing(activeBoss.x, activeBoss.y, now);
+        } else if (map.biome === 'void' || map.floor === 4) {
+          particleManager.spawnMaliceAbyssalNova(activeBoss.x, activeBoss.y, now);
+        } else if (map.biome === 'astral' || map.floor === 5) {
+          particleManager.spawnArchonConstellationSpiral(activeBoss.x, activeBoss.y, now);
+        }
+      }
+      if (hasInitWorldEffects) {
+        for (const [id, prevProj] of prevProjectilesMap.entries()) {
+          if (!currentProjIds.has(id) && prevProj.ownerType === 'player' && prevProj.ttlMs > 90) {
+            if (prevProj.style === 'arrow') {
+              if (prevProj.slowOnHit) {
+                particleManager.spawnRangerFrostArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+              } else {
+                particleManager.spawnRangerArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+              }
+            } else if (prevProj.style === 'arcane') {
+              particleManager.spawnArcanistBoltHit(prevProj.x, prevProj.y, now);
+            } else if (prevProj.style === 'radiant') {
+              particleManager.spawnClericSmiteHit(prevProj.x, prevProj.y, Boolean(prevProj.crit), now);
+            }
+          }
+        }
+      }
+      prevProjectilesMap.clear();
+      for (const proj of snap.projectiles) {
+        prevProjectilesMap.set(proj.id, proj);
+      }
+      prevBossState = activeBoss ? { id: activeBoss.id, x: activeBoss.x, y: activeBoss.y } : null;
+      hasInitWorldEffects = true;
 
       // Smooth & Predict Players (Extrapolate along velocity + gently pull toward authoritative server pos)
       for (const p of snap.players) {
@@ -723,15 +1230,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         lastPlayerDowned = me.downed;
 
         const mySmooth = smoothedPlayers.get(me.id) || { x: me.x, y: me.y };
-        cameraRef.current.x += (mySmooth.x - cameraRef.current.x) * 0.22;
-        cameraRef.current.y += (mySmooth.y - cameraRef.current.y) * 0.22;
+        if (!cameraSnappedRef.current) {
+          cameraRef.current.x = mySmooth.x;
+          cameraRef.current.y = mySmooth.y;
+          cameraSnappedRef.current = true;
+        } else {
+          stepCameraFollow(cameraRef.current, mySmooth.x, mySmooth.y, dtSec);
+        }
 
         if (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0) {
-          const screenPlayerX = cw / 2 + (mySmooth.x - cameraRef.current.x);
-          const screenPlayerY = ch / 2 + (mySmooth.y - cameraRef.current.y);
-          aimAngleRef.current = Math.atan2(
-            mouseScreenRef.current.y - screenPlayerY,
-            mouseScreenRef.current.x - screenPlayerX
+          aimAngleRef.current = computeWorldAimAngle(
+            mouseScreenRef.current.x,
+            mouseScreenRef.current.y,
+            cw,
+            ch,
+            mySmooth.x,
+            mySmooth.y,
+            cameraRef.current.x,
+            cameraRef.current.y,
+            zoom
           );
 
           if (me.statuses && me.statuses.some(s => s.type === 'disoriented')) {
@@ -740,38 +1257,48 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      let camX = Math.round(cameraRef.current.x - cw / 2);
-      let camY = Math.round(cameraRef.current.y - ch / 2);
       soundManager.setListenerPosition(cameraRef.current.x, cameraRef.current.y);
 
+      let shakeX = 0;
+      let shakeY = 0;
       if (screenShake > 0.05) {
         const shakeAngle = Math.random() * Math.PI * 2;
-        camX += Math.round(Math.cos(shakeAngle) * screenShake);
-        camY += Math.round(Math.sin(shakeAngle) * screenShake);
+        shakeX = (Math.cos(shakeAngle) * screenShake) / zoom;
+        shakeY = (Math.sin(shakeAngle) * screenShake) / zoom;
         screenShake *= Math.pow(0.84, dtSec * 60);
       } else {
         screenShake = 0;
       }
 
+      const snappedCamX = Math.round((cameraRef.current.x + shakeX) * zoom) / zoom;
+      const snappedCamY = Math.round((cameraRef.current.y + shakeY) * zoom) / zoom;
+      const worldView = getWorldViewBounds(snappedCamX, snappedCamY, cw, ch, zoom);
+
       ctx.save();
-      ctx.translate(-camX, -camY);
+      ctx.translate(cw / 2, ch / 2);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-snappedCamX, -snappedCamY);
 
       if (mapLayerRef.current) {
         ctx.drawImage(mapLayerRef.current, 0, 0);
       }
 
       // Grand Descent Portal
-      drawDungeonPortal(ctx, map.portalPos.x, map.portalPos.y, snap.bossDefeated, now, map.biome, snap.floor);
+      const portalSealText =
+        snap.bossRoomCleared && (snap.guardiansRemaining ?? 0) > 0
+          ? `SEALED · GUARDIANS (${snap.guardiansRemaining})`
+          : 'SEALED · BOSS AWAKE';
+      drawDungeonPortal(ctx, map.portalPos.x, map.portalPos.y, snap.bossDefeated, now, map.biome, snap.floor, portalSealText);
       particleManager.spawnPortalWisps(map.portalPos.x, map.portalPos.y, snap.bossDefeated, now);
 
       // Torches
       const flicker = 0.88 + Math.sin(now * 0.009) * 0.12;
       for (const t of map.torches) {
         if (
-          t.x < camX - 90 ||
-          t.x > camX + cw + 90 ||
-          t.y < camY - 90 ||
-          t.y > camY + ch + 90
+          t.x < worldView.left - 90 ||
+          t.x > worldView.right + 90 ||
+          t.y < worldView.top - 90 ||
+          t.y > worldView.bottom + 90
         ) {
           continue;
         }
@@ -794,29 +1321,117 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Field Zones
       for (const z of snap.zones) {
         if (z.kind === 'aegis_dome') {
-          ctx.fillStyle = 'rgba(96, 165, 250, 0.14)';
-          ctx.strokeStyle = 'rgba(147, 197, 253, 0.75)';
+          const rot = now * 0.0012;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Outer bastion barrier ring
+          ctx.strokeStyle = 'rgba(147, 197, 253, 0.78)';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
+
+          // Rotating golden-blue hexagonal sanctuary lattice
+          ctx.rotate(rot);
+          ctx.strokeStyle = 'rgba(251, 191, 36, 0.42)';
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          const hexR = z.radius * 0.86;
+          for (let i = 0; i < 6; i++) {
+            const ha = (i * Math.PI) / 3;
+            const hxPos = Math.cos(ha) * hexR;
+            const hyPos = Math.sin(ha) * hexR;
+            if (i === 0) ctx.moveTo(hxPos, hyPos);
+            else ctx.lineTo(hxPos, hyPos);
+          }
+          ctx.closePath();
+          ctx.stroke();
+
+          // Inner bastion emblem
+          ctx.rotate(-rot * 2);
+          ctx.strokeStyle = 'rgba(191, 219, 254, 0.5)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.36, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+          particleManager.spawnVanguardAegisMotes(z.x, z.y, z.radius, now);
         } else if (z.kind === 'solar_beacon') {
-          ctx.fillStyle = 'rgba(250, 204, 21, 0.14)';
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.8)';
+          const rot = now * 0.0018;
+          const pulse = 0.85 + Math.sin(now * 0.007) * 0.15;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = 'rgba(250, 204, 21, 0.12)';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = `rgba(253, 224, 71, ${0.78 * pulse})`;
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
+
+          // Inner consecration ring & rotating 4-point solar cross
+          ctx.rotate(rot);
+          ctx.strokeStyle = 'rgba(254, 249, 195, 0.55)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.62, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = 'rgba(253, 224, 71, 0.35)';
+          for (let r = 0; r < 4; r++) {
+            const ra = (r * Math.PI) / 2;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(ra) * (z.radius * 0.25), Math.sin(ra) * (z.radius * 0.25));
+            ctx.lineTo(Math.cos(ra + 0.16) * (z.radius * 0.42), Math.sin(ra + 0.16) * (z.radius * 0.42));
+            ctx.lineTo(Math.cos(ra) * (z.radius * 0.92), Math.sin(ra) * (z.radius * 0.92));
+            ctx.lineTo(Math.cos(ra - 0.16) * (z.radius * 0.42), Math.sin(ra - 0.16) * (z.radius * 0.42));
+            ctx.closePath();
+            ctx.fill();
+          }
+          ctx.restore();
+          particleManager.spawnClericBeaconMotes(z.x, z.y, z.radius, now);
         } else if (z.kind === 'chrono_well') {
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+          const rot = now * 0.0028;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
           ctx.strokeStyle = 'rgba(125, 211, 252, 0.78)';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
+
+          // Counter-rotating cosmic clockwork arcs
+          ctx.rotate(rot);
+          ctx.strokeStyle = 'rgba(192, 132, 252, 0.72)';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.72, 0, Math.PI * 0.85);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.72, Math.PI, Math.PI * 1.85);
+          ctx.stroke();
+
+          ctx.rotate(-rot * 2.1);
+          ctx.strokeStyle = 'rgba(224, 242, 254, 0.75)';
+          ctx.lineWidth = 1.3;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.42, 0, Math.PI * 1.35);
+          ctx.stroke();
+          ctx.restore();
+          particleManager.spawnArcanistChronoMotes(z.x, z.y, z.radius, now);
         } else if (z.kind === 'star_rift') {
           // Arcanist Star Rift Zone: Spinning cosmic nebula portal
           const rotAngle = now * 0.003;
@@ -843,6 +1458,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.stroke();
 
           ctx.restore();
+          particleManager.spawnArcanistStarRiftWisps(z.x, z.y, z.radius, now);
         } else if (z.kind === 'boss_slam') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const isCatacombs = map.biome === 'catacombs' || map.floor === 2;
@@ -1475,6 +2091,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           ctx.restore();
+          particleManager.spawnElyndorHarpLaneMotes(z.x, z.y, w, h, ang, now);
         } else if (z.kind === 'lament_mark') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const isReliquary = map.biome === 'reliquary' || map.floor === 7;
@@ -1591,8 +2208,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.lineWidth = 1.5;
           ctx.strokeRect(-12, -12, 24, 24);
 
-          // Rising embers particle motes
-          particleManager.spawnMagmaEmbers(z.x, z.y, z.radius * 0.6, now);
+          // Rising sacred ash & gold reliquary motes
+          particleManager.spawnZadkielAshenCloudMotes(z.x, z.y, z.radius, now);
 
           ctx.restore();
         } else if (z.kind === 'censer_sweep') {
@@ -1667,6 +2284,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fill();
 
           ctx.restore();
+          particleManager.spawnZadkielCenserSweepSparks(z.x, z.y, ang, z.radius, progress, now);
         } else if (z.kind === 'scripture_line') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const w = z.width || 420;
@@ -1784,6 +2402,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.stroke();
 
           ctx.restore();
+          particleManager.spawnSarielSilenceSealMotes(z.x, z.y, z.radius, now);
         } else if (z.kind === 'lance_thrust') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const w = z.width || 380;
@@ -2021,6 +2640,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillRect(-4, -4, 8, 8);
 
           ctx.restore();
+          particleManager.spawnOriphielParryStance(z.x, z.y, now);
         } else if (z.kind === 'verdict_combo') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           const stage = z.stage || 1;
@@ -2218,6 +2838,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const isEmber = map.biome === 'ember' || map.floor === 3;
           const isVoid = map.biome === 'void' || map.floor === 4;
           const isAstral = map.biome === 'astral' || map.floor === 5;
+          const isHymns = map.biome === 'hymns' || map.floor === 6;
+          const isReliquary = map.biome === 'reliquary' || map.floor === 7;
+          const isScripture = map.biome === 'scripture' || map.floor === 8;
+          const isNave = map.biome === 'nave' || map.floor === 9;
+          const isWardenGate = map.biome === 'wardengate' || map.floor === 10;
 
           // ==============================================================
           // BOSS CHARGE RUNWAY TRAJECTORY TELEGRAPH
@@ -2286,7 +2911,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   ? '#E879F9'
                   : isAstral
                     ? '#38BDF8'
-                    : '#F59E0B';
+                    : isHymns
+                      ? '#FBBF24'
+                      : isReliquary
+                        ? '#D9AA52'
+                        : isScripture
+                          ? '#E879F9'
+                          : isNave
+                            ? '#FDE047'
+                            : isWardenGate
+                              ? '#EF4444'
+                              : '#F59E0B';
 
             // Pulsing elemental ground circle
             ctx.fillStyle = isCatacombs
@@ -2297,7 +2932,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   ? 'rgba(232, 121, 249, 0.25)'
                   : isAstral
                     ? 'rgba(56, 189, 248, 0.22)'
-                    : 'rgba(245, 158, 11, 0.22)';
+                    : isHymns
+                      ? 'rgba(251, 191, 36, 0.22)'
+                      : isReliquary
+                        ? 'rgba(217, 170, 82, 0.22)'
+                        : isScripture
+                          ? 'rgba(232, 121, 249, 0.24)'
+                          : isNave
+                            ? 'rgba(253, 224, 71, 0.24)'
+                            : isWardenGate
+                              ? 'rgba(239, 68, 68, 0.24)'
+                              : 'rgba(245, 158, 11, 0.22)';
             ctx.beginPath();
             ctx.arc(ex, ey + 10, auraR, 0, Math.PI * 2);
             ctx.fill();
@@ -2983,14 +3628,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         if (en.markedMs > 0) {
+          const markPulse = 1 + Math.sin(now * 0.012) * 1.5;
+          const mr = en.radius + 5 + markPulse;
+          const tick = 5;
+          ctx.save();
           ctx.strokeStyle = '#FBBF24';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(
-            ex - en.radius - 3,
-            ey - en.radius - 3,
-            (en.radius + 3) * 2,
-            (en.radius + 3) * 2
-          );
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          // Top-left corner bracket
+          ctx.moveTo(ex - mr, ey - mr + tick);
+          ctx.lineTo(ex - mr, ey - mr);
+          ctx.lineTo(ex - mr + tick, ey - mr);
+          // Top-right corner bracket
+          ctx.moveTo(ex + mr - tick, ey - mr);
+          ctx.lineTo(ex + mr, ey - mr);
+          ctx.lineTo(ex + mr, ey - mr + tick);
+          // Bottom-right corner bracket
+          ctx.moveTo(ex + mr, ey + mr - tick);
+          ctx.lineTo(ex + mr, ey + mr);
+          ctx.lineTo(ex + mr - tick, ey + mr);
+          // Bottom-left corner bracket
+          ctx.moveTo(ex - mr + tick, ey + mr);
+          ctx.lineTo(ex - mr, ey + mr);
+          ctx.lineTo(ex - mr, ey + mr - tick);
+          ctx.stroke();
+
+          // Emerald-gold Hunter Quarry apex diamond above target
+          const crestY = ey - en.radius - 23;
+          ctx.fillStyle = '#34D399';
+          ctx.beginPath();
+          ctx.moveTo(ex, crestY - 4);
+          ctx.lineTo(ex + 3.5, crestY);
+          ctx.lineTo(ex, crestY + 4);
+          ctx.lineTo(ex - 3.5, crestY);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
         }
 
         const barW = en.kind === 'boss' ? 76 : 30;
@@ -3089,6 +3762,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.lineTo(ex, ey);
             ctx.stroke();
             ctx.restore();
+            particleManager.spawnMalakorChargeTrail(ex, ey, cAng, now);
           }
         }
 
@@ -3330,11 +4004,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.beginPath();
             ctx.ellipse(hx, hy + 11, 18 + shieldPulse, 7, 0, 0, Math.PI * 2);
             ctx.fill();
+            particleManager.spawnVanguardAegisMotes(hx, hy, 20, now);
           }
         } else if (p.heroClass === 'ranger') {
           // Ranger: Eagle Keenness Emerald Swiftness Aura & Wind Motion Trail
           const swiftPulse = Math.sin(now * 0.008 + hx) * 2;
-          const isSwift = p.hasteMs > 0;
+          const isSwift = p.hasteMs > 0 || moving;
           ctx.strokeStyle = isSwift ? 'rgba(74, 222, 128, 0.85)' : 'rgba(52, 211, 153, 0.45)';
           ctx.lineWidth = isSwift ? 2.5 : 1.5;
           ctx.beginPath();
@@ -3351,19 +4026,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             ctx.moveTo(hx + windOffX, hy + windOffY);
             ctx.lineTo(hx + windOffX * 1.8, hy + windOffY * 1.8);
             ctx.stroke();
+            if (p.hasteMs > 0) {
+              particleManager.spawnRangerSwiftnessTrail(hx, hy, p.aimAngle, now);
+            }
           }
         } else if (p.heroClass === 'arcanist') {
-          // Arcanist: Astral Resonance 3 Orbiting Celestial Starlight Orbs
+          // Arcanist: Astral Resonance 3 Orbiting Celestial Starlight Diamonds
           const orbAngleBase = now * 0.003 + hx;
           for (let orbIdx = 0; orbIdx < 3; orbIdx++) {
             const a = orbAngleBase + (orbIdx * Math.PI * 2) / 3;
             const ox = hx + Math.cos(a) * 20;
             const oy = hy + 4 + Math.sin(a) * 8;
-            ctx.fillStyle = '#60A5FA';
+            ctx.fillStyle = '#38BDF8';
             ctx.beginPath();
-            ctx.arc(ox, oy, 2.5, 0, Math.PI * 2);
+            ctx.moveTo(ox, oy - 3.5);
+            ctx.lineTo(ox + 2.8, oy);
+            ctx.lineTo(ox, oy + 3.5);
+            ctx.lineTo(ox - 2.8, oy);
+            ctx.closePath();
             ctx.fill();
-            ctx.fillStyle = '#93C5FD';
+            ctx.fillStyle = '#E0F2FE';
             ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
           }
           ctx.strokeStyle = 'rgba(129, 140, 248, 0.45)';
@@ -3391,6 +4073,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.beginPath();
           ctx.ellipse(hx, hy + 11, 18 + auraPulse * 0.5, 7, 0, 0, Math.PI * 2);
           ctx.stroke();
+
+          particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
         }
         // Floor Status Effects Visual Feedback
         if (p.statuses && p.statuses.length > 0) {
@@ -3451,271 +4135,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
 
-        // Aim angle & facing direction
+        // Aim angle & articulated pixel hero sprite with 60 FPS smooth weapon swing transitions
         const ang = p.id === playerId ? aimAngleRef.current : p.aimAngle;
-        const facingLeft = Math.cos(ang) < 0;
-
-        ctx.save();
-        ctx.translate(hx, hy);
-        ctx.scale(facingLeft ? -1 : 1, 1);
-
-        const swingOffset = p.attackAnimMs > 0 ? Math.sin(p.attackAnimMs * 0.04) * 0.8 : 0;
-
-        if (p.heroClass === 'vanguard') {
-          // ==========================================
-          // VANGUARD: Ironcrest Bastion (Heavy Knight)
-          // ==========================================
-          // Crimson battle cape fluttering behind
-          ctx.fillStyle = '#7F1D1D';
-          ctx.fillRect(-10, -5 + bob, 14, 15);
-          ctx.fillStyle = '#991B1B';
-          ctx.fillRect(-9, -4 + bob, 12, 13);
-
-          // Steel plate legs & sabatons
-          ctx.fillStyle = '#334155';
-          ctx.fillRect(-7, 7 + bob, 5, 5);
-          ctx.fillRect(1, 7 + bob, 5, 5);
-          ctx.fillStyle = '#1E293B';
-          ctx.fillRect(-8, 10, 6, 2);
-          ctx.fillRect(1, 10, 6, 2);
-
-          // Polished Steel Cuirass & Golden Bastion Cross
-          ctx.fillStyle = '#475569';
-          ctx.fillRect(-8, -6 + bob, 16, 14);
-          ctx.fillStyle = '#64748B';
-          ctx.fillRect(-7, -5 + bob, 14, 12);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-2, -4 + bob, 4, 10);
-          ctx.fillRect(-5, -2 + bob, 10, 3);
-
-          // Heavy Winged Pauldrons
-          ctx.fillStyle = '#94A3B8';
-          ctx.fillRect(-10, -8 + bob, 4, 5);
-          ctx.fillRect(6, -8 + bob, 4, 5);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-10, -9 + bob, 4, 1);
-          ctx.fillRect(6, -9 + bob, 4, 1);
-
-          // Steel Greathelm with cyan visor slit & waving red plume
-          ctx.fillStyle = '#475569';
-          ctx.fillRect(-7, -19 + bob, 14, 12);
-          ctx.fillStyle = '#64748B';
-          ctx.fillRect(-6, -18 + bob, 12, 10);
-          ctx.fillStyle = '#0F172A';
-          ctx.fillRect(-3, -14 + bob, 9, 3);
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-1, -14 + bob, 6, 2);
-          const plumeBob = Math.sin(now * 0.01) * 2;
-          ctx.fillStyle = '#DC2626';
-          ctx.fillRect(-3, -24 + bob, 4, 5);
-          ctx.fillRect(-5 + plumeBob, -22 + bob, 3, 3);
-
-          // Left Hand: Tower Kite Shield
-          ctx.fillStyle = '#1E293B';
-          ctx.fillRect(-13, -7 + bob, 5, 16);
-          ctx.fillStyle = '#475569';
-          ctx.fillRect(-12, -6 + bob, 3, 14);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-12, -2 + bob, 3, 6);
-
-          // Right Hand: Sunforged Claymore
-          ctx.save();
-          ctx.translate(6, 2 + bob);
-          ctx.rotate(0.3 + swingOffset);
-          ctx.fillStyle = '#CBD5E1';
-          ctx.fillRect(0, -18, 3, 20);
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, -17, 1, 18);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-3, 0, 9, 2);
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(0, 2, 3, 4);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(0, 6, 3, 3);
-          ctx.restore();
-
-        } else if (p.heroClass === 'ranger') {
-          // ==========================================
-          // RANGER: Thornwood Marksman (Swift Scout)
-          // ==========================================
-          // Forest leaf-cut cloak
-          ctx.fillStyle = '#142E1F';
-          ctx.fillRect(-9, -5 + bob, 15, 15);
-          ctx.fillStyle = '#1E3A29';
-          ctx.fillRect(-8, -4 + bob, 13, 13);
-
-          // Quiver with feather-fletched arrows on back
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(-11, -12 + bob, 4, 13);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(-12, -16 + bob, 3, 4);
-          ctx.fillRect(-10, -17 + bob, 3, 5);
-
-          // Leather boots & legs
-          ctx.fillStyle = '#271E15';
-          ctx.fillRect(-6, 7 + bob, 5, 5);
-          ctx.fillRect(1, 7 + bob, 5, 5);
-
-          // Forest Green Brigandine & Bronze Buckles
-          ctx.fillStyle = '#2D5A3C';
-          ctx.fillRect(-7, -6 + bob, 14, 14);
-          ctx.fillStyle = '#3F7A52';
-          ctx.fillRect(-6, -5 + bob, 12, 11);
-          ctx.fillStyle = '#D97706';
-          ctx.fillRect(-6, -1 + bob, 12, 2);
-          ctx.fillStyle = '#34D399';
-          ctx.fillRect(-1, -3 + bob, 3, 3);
-
-          // Deep Archer Hood & Keen Emerald Eyes
-          ctx.fillStyle = '#1E3A29';
-          ctx.fillRect(-7, -19 + bob, 14, 12);
-          ctx.fillStyle = '#2D5A3C';
-          ctx.fillRect(-6, -18 + bob, 12, 10);
-          ctx.fillRect(-2, -21 + bob, 4, 3);
-          ctx.fillStyle = '#0F172A';
-          ctx.fillRect(-4, -13 + bob, 9, 4);
-          ctx.fillStyle = '#34D399';
-          ctx.fillRect(0, -13 + bob, 3, 2);
-          ctx.fillRect(4, -13 + bob, 2, 2);
-
-          // Ashwood Recurve Bow in hand
-          ctx.save();
-          ctx.translate(8, 0 + bob);
-          ctx.rotate(swingOffset);
-          ctx.fillStyle = '#92400E';
-          ctx.fillRect(2, -14, 3, 26);
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(5, -12, 1, 22);
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(-6, -1, 10, 2);
-          ctx.fillStyle = '#34D399';
-          ctx.fillRect(3, -2, 3, 3);
-          ctx.restore();
-
-        } else if (p.heroClass === 'arcanist') {
-          // ==========================================
-          // ARCANIST: Astral Conduit (Cosmic Caster)
-          // ==========================================
-          // Midnight indigo layered robes & cyan trim
-          ctx.fillStyle = '#1E1B4B';
-          ctx.fillRect(-9, -5 + bob, 18, 17);
-          ctx.fillStyle = '#312E81';
-          ctx.fillRect(-8, -4 + bob, 16, 15);
-          ctx.fillStyle = '#4338CA';
-          ctx.fillRect(-6, -3 + bob, 12, 13);
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-8, 9 + bob, 16, 2);
-          ctx.fillRect(-2, 0 + bob, 4, 3);
-
-          // Pointed Mystic Wizard Hat with curling tip
-          ctx.fillStyle = '#1E1B4B';
-          ctx.fillRect(-11, -14 + bob, 22, 3);
-          ctx.fillStyle = '#312E81';
-          ctx.fillRect(-7, -20 + bob, 14, 7);
-          ctx.fillStyle = '#4338CA';
-          ctx.fillRect(-4, -25 + bob, 8, 6);
-          ctx.fillStyle = '#818CF8';
-          ctx.fillRect(-2, -28 + bob, 4, 4);
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-7, -16 + bob, 14, 2);
-
-          // Mystic Face & Star Eyes
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(-5, -12 + bob, 10, 5);
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-2, -11 + bob, 2, 2);
-          ctx.fillRect(2, -11 + bob, 2, 2);
-
-          // Runebound Spire Staff
-          ctx.save();
-          ctx.translate(9, -2 + bob);
-          ctx.rotate(swingOffset);
-          ctx.fillStyle = '#581C87';
-          ctx.fillRect(0, -16, 3, 30);
-          const crystalSpark = Math.sin(now * 0.01) * 2;
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(-1, -21 + crystalSpark, 5, 5);
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, -20 + crystalSpark, 3, 3);
-          ctx.restore();
-
-          // Orbiting Astral Orb
-          const orbAngle = now * 0.005;
-          const ox = Math.cos(orbAngle) * 15;
-          const oy = Math.sin(orbAngle) * 7 + bob;
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
-          ctx.fillRect(ox - 2, oy - 2, 5, 5);
-          ctx.fillStyle = '#38BDF8';
-          ctx.fillRect(ox - 1, oy - 1, 3, 3);
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(ox, oy, 1, 1);
-
-        } else {
-          // ==========================================
-          // CLERIC: Sunbrand Prelate (Radiant Healer)
-          // ==========================================
-          // Floating Sunburst Halo behind head
-          const haloPulse = Math.sin(now * 0.006) * 1.5;
-          ctx.fillStyle = 'rgba(253, 224, 71, 0.35)';
-          ctx.fillRect(-11, -29 + bob + haloPulse, 22, 14);
-          ctx.fillStyle = '#FACC15';
-          ctx.fillRect(-9, -28 + bob + haloPulse, 18, 2);
-          ctx.fillRect(-11, -26 + bob + haloPulse, 2, 10);
-          ctx.fillRect(9, -26 + bob + haloPulse, 2, 10);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(-1, -31 + bob + haloPulse, 3, 3);
-          ctx.fillRect(-12, -28 + bob + haloPulse, 3, 3);
-          ctx.fillRect(10, -28 + bob + haloPulse, 3, 3);
-
-          // Ivory Ceremonial Tabard & Golden Sun Embroidery
-          ctx.fillStyle = '#F8FAFC';
-          ctx.fillRect(-8, -6 + bob, 16, 17);
-          ctx.fillStyle = '#F1F5F9';
-          ctx.fillRect(-7, -5 + bob, 14, 15);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-3, -2 + bob, 6, 6);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(-2, -1 + bob, 4, 4);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-7, 8 + bob, 14, 2);
-
-          // Amber Ceremonial Cloak
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(-9, -6 + bob, 3, 14);
-          ctx.fillRect(6, -6 + bob, 3, 14);
-
-          // Winged Sun Mitre / Cowl
-          ctx.fillStyle = '#F8FAFC';
-          ctx.fillRect(-7, -19 + bob, 14, 12);
-          ctx.fillStyle = '#FDE047';
-          ctx.fillRect(-8, -19 + bob, 16, 3);
-          ctx.fillRect(-2, -21 + bob, 4, 3);
-
-          // Face
-          ctx.fillStyle = '#FCD34D';
-          ctx.fillRect(-5, -13 + bob, 10, 5);
-          ctx.fillStyle = '#78350F';
-          ctx.fillRect(-2, -12 + bob, 2, 2);
-          ctx.fillRect(2, -12 + bob, 2, 2);
-
-          // Dawnstar Flanged War Mace
-          ctx.save();
-          ctx.translate(9, 0 + bob);
-          ctx.rotate(0.2 + swingOffset);
-          ctx.fillStyle = '#64748B';
-          ctx.fillRect(0, -12, 3, 24);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(-3, -19, 9, 8);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillRect(-2, -18, 7, 6);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(0, -21, 3, 3);
-          ctx.fillRect(-5, -17, 3, 3);
-          ctx.fillRect(5, -17, 3, 3);
-          ctx.restore();
-        }
-
-        ctx.restore();
+        const swingState = playerWeaponSwings.get(p.id);
+        const swingProgress = swingState
+          ? Math.max(0, Math.min(1, (now - swingState.bornAt) / swingState.durationMs))
+          : undefined;
+        drawHeroSprite(ctx, p, hx, hy, {
+          aimAngle: ang,
+          bob,
+          moving,
+          now,
+          swingProgress,
+          swingKind: swingState?.kind,
+        });
 
         // Protective Shield Bubble
         if (p.shield > 0) {
@@ -3769,10 +4202,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Enhanced Projectiles & Combat Trails
+      const activeProjIds = new Set<string>();
       for (const proj of snap.projectiles) {
+        activeProjIds.add(proj.id);
         drawEnhancedProjectile(ctx, proj, now);
         particleManager.spawnProjectileWake(proj, now);
       }
+      particleManager.cleanupInactiveProjectiles(activeProjIds);
 
       // Floating Numbers, Critical Hit Animations & Speech Bubbles
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
@@ -3932,6 +4368,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const flags = flagMap.get(room.id);
         const discovered = flags ? flags.discovered : room.discovered;
         const cleared = flags ? flags.cleared : room.cleared;
+        const isGuardian = Boolean(room.guardian || flags?.guardian);
 
         if (!discovered && room.type !== 'boss') continue;
 
@@ -3947,6 +4384,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = '#78350F';
         } else if (room.type === 'shrine') {
           ctx.fillStyle = '#064E3B';
+        } else if (isGuardian && !cleared) {
+          ctx.fillStyle = '#78350F';
         } else if (cleared) {
           ctx.fillStyle = '#1E293B';
         } else {
@@ -3962,10 +4401,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ? '#F59E0B'
               : room.type === 'shrine'
                 ? '#10B981'
-                : cleared
-                  ? '#475569'
-                  : '#64748B';
-        ctx.lineWidth = room.type === 'boss' ? 1.5 : 1;
+                : isGuardian
+                  ? cleared
+                    ? '#10B981'
+                    : '#F59E0B'
+                  : cleared
+                    ? '#475569'
+                    : '#64748B';
+        ctx.lineWidth = room.type === 'boss' || (isGuardian && !cleared) ? 1.5 : 1;
         ctx.strokeRect(rx, ry, rw, rh);
 
         // Room Badge Text
@@ -3983,6 +4426,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else if (room.type === 'shrine') {
           ctx.fillStyle = '#6EE7B7';
           ctx.fillText('[S]', cx, cy);
+        } else if (isGuardian) {
+          ctx.fillStyle = cleared ? '#6EE7B7' : '#FCD34D';
+          ctx.fillText(cleared ? 'G' : '[G]', cx, cy);
         } else if (room.type === 'start') {
           ctx.fillStyle = '#94A3B8';
           ctx.fillText('[ST]', cx, cy);
@@ -3994,7 +4440,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const px = mmX + Math.floor(map.portalPos.x / TILE_SIZE) * mmScale;
         const py = mmY + Math.floor(map.portalPos.y / TILE_SIZE) * mmScale;
         const portalPulse = Math.sin(now / 200) * 1.5 + 3.5;
-        ctx.fillStyle = snap.bossDefeated ? '#34D399' : '#38BDF8';
+        ctx.fillStyle = snap.bossDefeated ? '#34D399' : snap.bossRoomCleared ? '#F59E0B' : '#38BDF8';
         ctx.beginPath();
         ctx.arc(px, py, Math.max(2, portalPulse), 0, Math.PI * 2);
         ctx.fill();
@@ -4059,11 +4505,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [latestSnapshotRef, map, playerId]);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    mouseScreenRef.current = { x: e.clientX, y: e.clientY };
+    const rect = e.currentTarget.getBoundingClientRect();
+    mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    mouseScreenRef.current = { x: e.clientX, y: e.clientY };
+    const rect = e.currentTarget.getBoundingClientRect();
+    mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     if (e.button === 0) {
       keysRef.current.attack = true;
       const snap = latestSnapshotRef.current;
@@ -4089,10 +4537,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
       }
+      triggerLocalSwing('primary');
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     } else if (e.button === 2) {
       e.preventDefault();
       sfx.playSkill('tactical');
+      triggerLocalSwing('tactical');
       onTriggerAction('tactical', aimAngleRef.current);
     }
   };
@@ -4115,3 +4565,5 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     />
   );
 };
+
+export const GameCanvas = React.memo(GameCanvasComponent);

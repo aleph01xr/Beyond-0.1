@@ -86,6 +86,49 @@ export const CATEGORY_ORDER: ChangelogCategory[] = [
 
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
+    version: 'v1.5.0',
+    releaseDate: 'November 12, 2026',
+    title: 'Procedural Visual Effects Library Expansion',
+    description:
+      'Massive procedural visual effects library expansion adding 12 new pixel-art particle shapes, advanced motion patterns (spirals, orbits, waves, inward attraction), visual stretching and lifetime curves, and 16 reusable elemental building blocks across Fire, Ice, Lightning, Arcane, Holy, Void, Poison, and Physical impacts.',
+    categories: {
+      'NEW FEATURES': [
+        '12 New Procedural Particle Shapes: Added Diamond, Triangle, Shard, Ring, Crescent, Cross, Rune, Hexagon, Starburst, Streak, Smoke, and Flame with crisp Canvas-based pixel alignment and zero external PNG dependencies.',
+        '16 Reusable Elemental Building Blocks: Comprehensive procedural styles for Fire (bursts & flame puffs), Ice (shatters & frost rings), Lightning (discharge arcs & shock bursts), Arcane (spirals & rune bursts), Holy (radiance & cross gleams), Void (collapses & motes), Poison (clouds & caustic bubbles), and Physical impacts (shrapnel & shockwave rings).',
+        'Complex Motion Patterns: Built-in physics support for inward gravitational attraction, lateral curve drift, spiral velocity, transverse wave oscillation, wandering drift, orbiting centers, and expanding/contracting rings.',
+        'Enhanced Visual Properties: Velocity stretch alignment, custom scale and alpha curves (easeIn, easeOut, pulse), fade-in ratios, and localized flickering.',
+      ],
+      IMPROVEMENTS: [
+        'Combat Readability & Feedback: Integrated physical impacts, shockwave rings, and distinct elemental responses into GameCanvas hit and boss ability handling.',
+        'Zero-Asset Overhead: Every new shape and particle style is procedurally synthesized directly through Canvas without asset loading latency.',
+        'High-Performance Mobile Compatibility: Preserved integer pixel snapping, capped glow blurs, object pool recycling, and priority-budget shedding.',
+      ],
+    },
+  },
+  {
+    version: 'v1.4.0',
+    releaseDate: 'November 12, 2026',
+    title: 'Phase 1: Particle Engine Upgrade',
+    description:
+      'Major procedural particle engine upgrade featuring high-performance object pooling, priority-based particle budgeting, time-based projectile wake emission, and extended physics and visual properties while preserving backward compatibility and pixel-art alignment.',
+    categories: {
+      'NEW FEATURES': [
+        'Particle Object Pooling: High-throughput memory pool reuses expired particles with complete property resets, eliminating GC spikes during intense boss fights and mob swarms.',
+        'Priority Particle Budget: Dynamic 4-tier budget (Low, Normal, High, Critical) protecting critical combat feedback, boss telegraphs, and death bursts under heavy load while automatically shedding ambient motes.',
+        'Extended Particle Dynamics: Support for rotation, angular velocity, initial/final scaling, acceleration, drag, custom alpha curves, color transitions, and configurable blend modes.',
+      ],
+      IMPROVEMENTS: [
+        'Time-Based Projectile Trails: Rate-limited projectile wake emission (28ms cadence) replacing random frame-based chances for rock-solid trail density across 30 FPS, 60 FPS, and high-refresh-rate monitors.',
+        'Inactive Projectile Cleanup: Stale projectile tracking is automatically pruned upon projectile destruction to prevent memory leakage.',
+        'Zero-Allocation Canvas Render Loop: In-place array compaction during particle updates completely removes splice and array reallocations.',
+        'Pixel Alignment & Capped Glow: Integer pixel coordinates and capped shadowBlur preserve crisp retro pixel-art visuals with minimal GPU overhead.',
+      ],
+      'BUG FIXES': [
+        'Trailing Memory Cleanup: Fixed potential memory leaks in projectile trails by providing active projectile id synchronization.',
+      ],
+    },
+  },
+  {
     version: 'v1.3.0',
     releaseDate: 'November 11, 2026',
     title: 'Status Effects & Engine Integrity Overhaul',

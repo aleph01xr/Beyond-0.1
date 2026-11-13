@@ -48,6 +48,7 @@ import {
   type RoomSummary,
 } from '../shared/types.ts';
 import { getStatusEffectMeta } from '../shared/statusEffects.ts';
+import type { PingDiagnostics } from '../client/networkStats.ts';
 
 interface DungeonRunViewProps {
   playerId: string;
@@ -68,6 +69,7 @@ interface DungeonRunViewProps {
   onLeaveRoom: () => void;
   onSendAdminCommand?: (msg: ClientMessage) => void;
   pingMs?: number;
+  pingDiagnostics?: PingDiagnostics;
   onCreateRoom?: (opts: {
     name: string;
     difficulty: DifficultyTier;
@@ -95,6 +97,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onLeaveRoom,
   onSendAdminCommand,
   pingMs = 18,
+  pingDiagnostics,
   onCreateRoom,
   onJoinRoom,
   onReturnToTavern,
@@ -271,17 +274,25 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           Math.hypot(map.portalPos.x - me.x, map.portalPos.y - me.y) <= 68))
   );
 
-  const handleTriggerActionWithPortal = (
-    action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-    aimAngle: number
-  ) => {
-    if (action === 'interact' && isTavern && nearPortal) {
-      sfx.playUiClick();
-      setExpeditionGateOpen(true);
-      return;
-    }
-    onTriggerAction(action, aimAngle);
-  };
+  const isTavernRef = useRef(isTavern);
+  isTavernRef.current = isTavern;
+  const nearPortalRef = useRef(nearPortal);
+  nearPortalRef.current = nearPortal;
+
+  const handleTriggerActionWithPortal = useCallback(
+    (
+      action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
+      aimAngle: number
+    ) => {
+      if (action === 'interact' && isTavernRef.current && nearPortalRef.current) {
+        sfx.playUiClick();
+        setExpeditionGateOpen(true);
+        return;
+      }
+      onTriggerAction(action, aimAngle);
+    },
+    [onTriggerAction]
+  );
 
   const handleCopyCode = () => {
     sfx.playUiClick();
@@ -348,29 +359,32 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   };
 
   // Keyboard input handler from GameCanvas
-  const handleKeyboardInput = (keys: {
-    up: boolean;
-    down: boolean;
-    left: boolean;
-    right: boolean;
-    attack: boolean;
-    aimAngle: number;
-  }) => {
-    const cur = unifiedInputRef.current;
-    const stickMagnitude = Math.hypot(cur.stickX || 0, cur.stickY || 0);
-    // If touch joystick is not currently held, keyboard controls the movement
-    if (stickMagnitude < 0.1) {
-      cur.up = keys.up;
-      cur.down = keys.down;
-      cur.left = keys.left;
-      cur.right = keys.right;
-      cur.stickX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-      cur.stickY = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
-    }
-    cur.attack = keys.attack;
-    cur.aimAngle = keys.aimAngle;
-    onSendInput({ ...cur });
-  };
+  const handleKeyboardInput = useCallback(
+    (keys: {
+      up: boolean;
+      down: boolean;
+      left: boolean;
+      right: boolean;
+      attack: boolean;
+      aimAngle: number;
+    }) => {
+      const cur = unifiedInputRef.current;
+      const stickMagnitude = Math.hypot(cur.stickX || 0, cur.stickY || 0);
+      // If touch joystick is not currently held, keyboard controls the movement
+      if (stickMagnitude < 0.1) {
+        cur.up = keys.up;
+        cur.down = keys.down;
+        cur.left = keys.left;
+        cur.right = keys.right;
+        cur.stickX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+        cur.stickY = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
+      }
+      cur.attack = keys.attack;
+      cur.aimAngle = keys.aimAngle;
+      onSendInput({ ...cur });
+    },
+    [onSendInput]
+  );
 
   return (
     <div className="relative w-screen h-screen h-[100dvh] overflow-hidden select-none bg-[#111219] touch-none pt-safe pb-safe pl-safe pr-safe">
@@ -415,7 +429,47 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               <span aria-hidden="true" className="hidden sm:inline text-[#78768A]">·</span>
               <span className="hidden sm:inline">{snapshot.difficulty}</span>
               <span aria-hidden="true" className="text-[#78768A]">·</span>
-              <span>{formatTime(snapshot.elapsedSec)}</span>
+              <span className="tabular-nums">{formatTime(snapshot.elapsedSec)}</span>
+              {(snapshot.combatRoomsTotal ?? 0) > 0 && (
+                <>
+                  <span aria-hidden="true" className="hidden md:inline text-[#78768A]">·</span>
+                  <span
+                    className={`hidden md:inline font-mono tabular-nums ${
+                      (snapshot.combatRoomsCleared ?? 0) >= (snapshot.combatRoomsTotal ?? 0)
+                        ? 'text-emerald-400 font-semibold'
+                        : 'text-[#BDBACF]'
+                    }`}
+                  >
+                    Rooms {snapshot.combatRoomsCleared ?? 0}/{snapshot.combatRoomsTotal ?? 0}
+                  </span>
+                </>
+              )}
+              {(snapshot.guardiansRemaining ?? 0) > 0 && (
+                <>
+                  <span aria-hidden="true" className="hidden md:inline text-[#78768A]">·</span>
+                  <span className="hidden md:inline font-mono tabular-nums text-amber-400 font-semibold">
+                    Guardians {snapshot.guardiansRemaining}
+                  </span>
+                </>
+              )}
+              {(me?.floorBlessings?.length ?? 0) > 0 && (() => {
+                const counts: Record<string, number> = {};
+                for (const b of me.floorBlessings!) {
+                  counts[b] = (counts[b] || 0) + 1;
+                }
+                const parts: string[] = [];
+                if (counts.fury) parts.push(`Fury${counts.fury > 1 ? ` x${counts.fury}` : ''}`);
+                if (counts.swiftness) parts.push(`Swift${counts.swiftness > 1 ? ` x${counts.swiftness}` : ''}`);
+                if (counts.bastion) parts.push(`Bastion${counts.bastion > 1 ? ` x${counts.bastion}` : ''}`);
+                return (
+                  <>
+                    <span aria-hidden="true" className="hidden lg:inline text-[#78768A]">·</span>
+                    <span className="hidden lg:inline font-mono text-[#93C5FD]">
+                      {parts.join(' / ')}
+                    </span>
+                  </>
+                );
+              })()}
             </>
           )}
         </div>
@@ -511,7 +565,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             {/* Latency / Ping Monitor */}
             <div
               className="hidden sm:flex items-center gap-1 px-2 py-1 bg-[#1E1E2A] border border-[#353442] text-[10px] text-[#E6E4EE]"
-              title="Connection Latency (Ping)"
+              title={
+                pingDiagnostics && pingDiagnostics.samples > 0
+                  ? `RTT: ${pingMs}ms · Avg: ${pingDiagnostics.avgRttMs}ms · Jitter: ${pingDiagnostics.jitterMs}ms (${pingDiagnostics.minRttMs}-${pingDiagnostics.maxRttMs}ms) · ${pingDiagnostics.quality.toUpperCase()}`
+                  : 'Connection Latency (Ping)'
+              }
             >
               <span
                 className={`w-2 h-2 rounded-full ${
@@ -522,7 +580,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       : 'bg-rose-500 animate-pulse'
                 }`}
               />
-              <span>{pingMs}ms</span>
+              <span className="tabular-nums">
+                {pingMs}ms
+                {pingDiagnostics && pingDiagnostics.jitterMs >= 15
+                  ? ` ±${pingDiagnostics.jitterMs}`
+                  : ''}
+              </span>
             </div>
 
             <button
@@ -722,11 +785,17 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 className={`h-full ${theme.barFill} transition-all duration-150`}
               />
             </div>
-            {/* Boss Resistances & Tenacity */}
-            <div className="flex items-center justify-between text-[8px] sm:text-[9px] font-mono text-[#D4D2E0] mt-0.5 sm:mt-1 pt-0.5 border-t border-white/10">
+            {/* Boss Resistances, Tenacity & Sanctum Wards */}
+            <div className="flex items-center justify-between text-[8px] sm:text-[9px] font-mono text-[#D4D2E0] mt-0.5 sm:mt-1 pt-0.5 border-t border-white/10 tabular-nums">
               <span className="text-[#C084FC]">Tenacity {Math.round((boss.resistances?.tenacity ?? 0.55) * 100)}%</span>
               <span className="text-[#CBD5E1]">Armor {Math.round((boss.resistances?.physical ?? 0.25) * 100)}%</span>
-              <span className="text-[#FBBF24]">Floor {snapshot.floor} Guardian</span>
+              {(snapshot.bossWards ?? 0) > 0 ? (
+                <span className="text-[#38BDF8] font-semibold">
+                  Sanctum Wards: {snapshot.bossWards} (-{Math.min(48, (snapshot.bossWards ?? 0) * 12)}% DMG)
+                </span>
+              ) : (
+                <span className="text-[#34D399]">Wards Shattered</span>
+              )}
             </div>
           </div>
         );
@@ -798,6 +867,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         <TouchControls
           player={me}
           enemies={snapshot.enemies}
+          latestSnapshotRef={latestSnapshotRef}
           nearInteractable={nearInteractable}
           onStickMove={handleStickMove}
           onAttackPress={handleAttackPress}

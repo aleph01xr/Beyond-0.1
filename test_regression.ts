@@ -20,6 +20,29 @@ import {
   drawGenericEnemySprite,
 } from './src/client/enemySprites.ts';
 import { drawFallenAndGhostPlayer } from './src/client/fallenPlayerSprite.ts';
+import {
+  ParticleManager,
+  DEFAULT_PARTICLE_BUDGET,
+  applySpiralMovement,
+  applyOrbitMovement,
+  applyInwardAttraction,
+  applyParticleMovement,
+  drawDiamondShape,
+  drawTriangleShape,
+  drawShardShape,
+  drawRingShape,
+  drawCrescentShape,
+  drawCrossShape,
+  drawRuneShape,
+  drawHexagonShape,
+  drawStarburstShape,
+  drawStreakShape,
+  drawSmokeShape,
+  drawFlameShape,
+  drawParticleShape,
+  drawEnhancedProjectile,
+  type CombatParticle,
+} from './src/client/canvasEffects.ts';
 import { CHANGELOG_DATA, CATEGORY_ORDER } from './src/data/changelog.ts';
 
 async function runRegressionTests() {
@@ -2100,7 +2123,9 @@ async function runRegressionTests() {
       const spawnedZoneKinds = new Set<string>();
 
       // Run boss ticks to collect zone kinds spawned by boss AI
-      for (let t = 0; t < 80; t++) {
+      for (let t = 0; t < 150; t++) {
+        player.downed = false;
+        player.hp = player.maxHp;
         boss.windupMs = 0;
         room.tick(100);
         for (const z of room.zones) {
@@ -2760,6 +2785,1284 @@ async function runRegressionTests() {
 
     const chest = room.props.find(pr => pr.kind === 'relic_chest');
     assert.ok(chest, 'Relic Vault chest prop must spawn upon boss defeat');
+  });
+
+  // --- Test 63: Phase 1 — Particle Engine API & 13 Spawn Methods Backward Compatibility ---
+  await test('63. Particle Engine: All 13 spawn methods callable and maintain backward compatibility', async () => {
+    const pm = new ParticleManager();
+    const now = 1000;
+
+    // Call all 13 methods
+    pm.spawnHitSparks(100, 100, '#EF4444', 8, now, false);
+    pm.spawnHitSparks(100, 100, '#F59E0B', 12, now, true); // Crit
+    pm.spawnEnemyDeathBurst(120, 120, 'slime', now);
+    pm.spawnEnemyDeathBurst(120, 120, 'boss', now);
+    pm.spawnPortalWisps(200, 200, true, now);
+    pm.spawnShrineMotes(300, 300, true, now);
+    pm.spawnBossShieldSparks(400, 400, now);
+    pm.spawnFrostNovaMotes(500, 500, 40, now);
+    pm.spawnMagmaEmbers(600, 600, 50, now);
+    pm.spawnSingularityInwardWisps(700, 700, 60, now);
+    pm.spawnSupernovaGlints(800, 800, 70, now);
+    pm.spawnBossEnrageBurst(900, 900, now);
+    pm.spawnCleaveShockwaveSparks(150, 150, 0.5, now);
+    pm.spawnVaultGleam(250, 250, true, now);
+
+    const testProj = {
+      id: 'proj_test_1',
+      x: 100,
+      y: 100,
+      vx: 200,
+      vy: 0,
+      radius: 6,
+      damage: 25,
+      fromPlayer: true,
+      style: 'arcane' as const,
+      rangeLeft: 500,
+      angle: 0,
+      ownerType: 'player' as const,
+      ownerId: 'pid_1',
+      pierce: 1,
+      ttlMs: 2000,
+    };
+    pm.spawnProjectileWake(testProj, now);
+
+    assert.ok(pm.count > 50, `Particle count should be healthy after spawns, got ${pm.count}`);
+    assert.strictEqual(pm.poolSize, 0, 'Pool starts empty until particles expire');
+  });
+
+  // --- Test 64: Phase 1 — Object Pooling, Lifecycle Recycling & Property Reset Verification ---
+  await test('64. Particle Engine: Object pooling recycles expired particles with complete property resets', async () => {
+    const pm = new ParticleManager();
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      beginPath: () => {},
+      arc: () => {},
+      fill: () => {},
+      fillRect: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+    } as unknown as CanvasRenderingContext2D;
+
+    // Spawn critical hit sparks with high rotation, scale and colorEnd
+    pm.spawnHitSparks(100, 100, '#EF4444', 6, 1000, true);
+    const initialCount = pm.count;
+    assert.ok(initialCount > 0, 'Sparks spawned');
+
+    // Age particles beyond maxAgeMs (e.g. at now = 3000ms)
+    pm.updateAndDraw(mockCtx, 3000, 0.016);
+
+    // All expired particles must be recycled to the pool
+    assert.strictEqual(pm.count, 0, 'Active particles must be 0 after expiration');
+    assert.strictEqual(pm.poolSize, initialCount, 'All expired particles must enter pool');
+
+    // Spawn simple non-crit particles which re-acquire from the pool
+    pm.spawnHitSparks(200, 200, '#38BDF8', 4, 3000, false);
+    assert.ok(pm.count > 0, 'New particles acquired from pool');
+    assert.ok(pm.poolSize < initialCount, 'Pool size decreased upon reuse');
+
+    // Verify properties of active particles do not bleed from the previous crit particles
+    // Standard sparks have shape='spark', not 'star', and isCrit=false means glow is false
+    const rawList = (pm as any).particles;
+    for (const p of rawList) {
+      assert.strictEqual(p.color, '#38BDF8', 'Color must be reset to new particle color');
+      assert.strictEqual(p.glow, false, 'Non-crit sparks must have glow=false');
+      assert.strictEqual(p.priority, 'high', 'Non-crit hit sparks have high priority');
+    }
+  });
+
+  // --- Test 65: Phase 1 — Particle Budget Enforcement & Priority Shedding ---
+  await test('65. Particle Engine: Configurable budget prioritizes critical combat over low motes', async () => {
+    // Create tight budget: max 20, reserve 10 for high, 5 for critical
+    const pm = new ParticleManager({
+      maxParticles: 20,
+      reserveForHigh: 10,
+      reserveForCritical: 5,
+    });
+
+    const now = 1000;
+
+    // Fill up to the low-priority ceiling (20 - 10 = 10 particles)
+    for (let i = 0; i < 20; i++) {
+      (pm as any).acquireParticle({
+        x: 10,
+        y: 10,
+        vx: 0,
+        vy: 0,
+        color: '#FFFFFF',
+        size: 2,
+        bornAt: now,
+        maxAgeMs: 500,
+        priority: 'low',
+      });
+    }
+
+    // Low priority particles must stop spawning once currentCount >= max - reserveForHigh (10)
+    assert.strictEqual(pm.count, 10, 'Low-priority particles must be capped at 10');
+
+    // High priority can continue spawning past the low limit up to max (20)
+    for (let i = 0; i < 15; i++) {
+      (pm as any).acquireParticle({
+        x: 10,
+        y: 10,
+        vx: 0,
+        vy: 0,
+        color: '#EF4444',
+        size: 2,
+        bornAt: now,
+        maxAgeMs: 500,
+        priority: 'high',
+      });
+    }
+
+    assert.ok(pm.count <= 20, `High priority particles should respect max limit of 20, got ${pm.count}`);
+
+    // Critical priority particles can reclaim lower priority particles even when budget is full
+    const criticalAcquired = (pm as any).acquireParticle({
+      x: 50,
+      y: 50,
+      vx: 0,
+      vy: 0,
+      color: '#FDE047',
+      size: 4,
+      bornAt: now,
+      maxAgeMs: 500,
+      priority: 'critical',
+    });
+
+    assert.strictEqual(criticalAcquired, true, 'Critical particle must be acquired');
+  });
+
+  // --- Test 66: Phase 1 — Time-based Projectile Wake Emission & Cleanup ---
+  await test('66. Particle Engine: Time-based projectile wake rate limiting and inactive cleanup', async () => {
+    const pm = new ParticleManager();
+    const projA = {
+      id: 'proj_speed_a',
+      x: 100,
+      y: 100,
+      vx: 400,
+      vy: 0,
+      radius: 6,
+      damage: 10,
+      fromPlayer: true,
+      style: 'fireball' as const,
+      rangeLeft: 500,
+      angle: 0,
+      ownerType: 'player' as const,
+      ownerId: 'pid_1',
+      pierce: 1,
+      ttlMs: 2000,
+    };
+
+    const startTime = 1000;
+    pm.spawnProjectileWake(projA, startTime);
+    const countAfterFirst = pm.count;
+    assert.strictEqual(countAfterFirst, 1, 'First wake particle should spawn');
+
+    // Simulate high-refresh rate frame at +5ms (under the 28ms threshold)
+    pm.spawnProjectileWake(projA, startTime + 5);
+    assert.strictEqual(pm.count, 1, 'Sub-28ms frame must not spawn redundant projectile wake');
+
+    // Simulate frame at +30ms (exceeds the 28ms threshold)
+    pm.spawnProjectileWake(projA, startTime + 30);
+    assert.strictEqual(pm.count, 2, 'Frame after 28ms must spawn next wake particle');
+
+    // Verify cleanup of inactive projectiles
+    const activeSet = new Set<string>();
+    // projA is not in activeSet
+    pm.cleanupInactiveProjectiles(activeSet);
+    const internalMap = (pm as any).projectileLastSpawn as Map<string, number>;
+    assert.strictEqual(internalMap.has(projA.id), false, 'Inactive projectile id must be pruned from map');
+  });
+
+  // --- Test 67: Procedural Visual Effects — All 16 Particle Shapes Render Properly ---
+  await test('67. Procedural Effects: All 16 shapes render without errors in Canvas pipeline', async () => {
+    const pm = new ParticleManager();
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      scale: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arc: () => {},
+      quadraticCurveTo: () => {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    const allShapes = [
+      'square',
+      'circle',
+      'spark',
+      'star',
+      'diamond',
+      'triangle',
+      'shard',
+      'ring',
+      'crescent',
+      'cross',
+      'rune',
+      'hexagon',
+      'starburst',
+      'streak',
+      'smoke',
+      'flame',
+    ] as const;
+
+    const now = 1000;
+
+    for (const shape of allShapes) {
+      (pm as any).acquireParticle({
+        x: 100,
+        y: 100,
+        vx: 30,
+        vy: -20,
+        color: '#F59E0B',
+        secondaryColor: '#FFFFFF',
+        size: 3,
+        bornAt: now,
+        maxAgeMs: 500,
+        shape,
+        rotation: 0.5,
+        angularVelocity: 2,
+        stretchWithVelocity: shape === 'streak' || shape === 'triangle',
+        glow: true,
+      });
+    }
+
+    assert.strictEqual(pm.count, 16, 'All 16 shapes must be spawned');
+
+    // Run updateAndDraw tick at now = 1050ms
+    pm.updateAndDraw(mockCtx, 1050, 0.016);
+    assert.strictEqual(pm.count, 16, 'All 16 shapes must survive within lifetime');
+
+    // Direct shape function invocation tests
+    assert.doesNotThrow(() => drawDiamondShape(mockCtx, 4), 'drawDiamondShape executes without errors');
+    assert.doesNotThrow(() => drawTriangleShape(mockCtx, 4), 'drawTriangleShape executes without errors');
+    assert.doesNotThrow(() => drawShardShape(mockCtx, 4, '#FFFFFF'), 'drawShardShape executes without errors');
+    assert.doesNotThrow(() => drawRingShape(mockCtx, 8, '#F59E0B', 1.5), 'drawRingShape executes without errors');
+    assert.doesNotThrow(() => drawCrescentShape(mockCtx, 4), 'drawCrescentShape executes without errors');
+    assert.doesNotThrow(() => drawCrossShape(mockCtx, 4, '#FFFFFF'), 'drawCrossShape executes without errors');
+    assert.doesNotThrow(() => drawRuneShape(mockCtx, 4, 1000), 'drawRuneShape executes without errors');
+    assert.doesNotThrow(() => drawHexagonShape(mockCtx, 4, '#FFFFFF'), 'drawHexagonShape executes without errors');
+    assert.doesNotThrow(() => drawStarburstShape(mockCtx, 4, '#FFFFFF'), 'drawStarburstShape executes without errors');
+    assert.doesNotThrow(() => drawStreakShape(mockCtx, 4), 'drawStreakShape executes without errors');
+    assert.doesNotThrow(() => drawSmokeShape(mockCtx, 4), 'drawSmokeShape executes without errors');
+    assert.doesNotThrow(() => drawFlameShape(mockCtx, 4, 1050, 1000, '#FEF08A'), 'drawFlameShape executes without errors');
+    assert.doesNotThrow(
+      () =>
+        drawParticleShape(
+          mockCtx,
+          'flame',
+          4,
+          '#F97316',
+          { x: 0, y: 0, vx: 0, vy: 0, color: '#F97316', size: 4, bornAt: 1000, maxAgeMs: 500 },
+          1050
+        ),
+      'drawParticleShape dispatcher executes without errors'
+    );
+
+    // Expire all particles and check pool
+    pm.updateAndDraw(mockCtx, 2000, 0.016);
+    assert.strictEqual(pm.count, 0, 'All particles must expire cleanly');
+    assert.strictEqual(pm.poolSize, 16, 'All 16 particles returned to pool');
+  });
+
+  // --- Test 68: Reusable Elemental Effect Styles & Advanced Motion Dynamics ---
+  await test('68. Procedural Effects: 16 elemental helper methods and advanced motion dynamics', async () => {
+    const pm = new ParticleManager();
+    const now = 1000;
+
+    // Test calling all 16 elemental building blocks
+    pm.spawnFireBurst(100, 100, 10, now);
+    pm.spawnFlamePuff(100, 100, 0, -30, now);
+    pm.spawnIceShatter(200, 200, 10, now);
+    pm.spawnFrostRing(200, 200, 24, now);
+    pm.spawnLightningArc(100, 100, 200, 200, now);
+    pm.spawnShockBurst(300, 300, 10, now);
+    pm.spawnArcaneSpiral(400, 400, now);
+    pm.spawnArcaneRuneBurst(400, 400, 8, now);
+    pm.spawnHolyRadiance(500, 500, 8, now);
+    pm.spawnHolyCrossGleam(500, 500, now);
+    pm.spawnVoidCollapse(600, 600, 30, now);
+    pm.spawnVoidMotes(600, 600, 8, now);
+    pm.spawnPoisonCloud(700, 700, 20, 8, now);
+    pm.spawnToxicBubbles(700, 700, now);
+    pm.spawnPhysicalImpact(800, 800, 0.5, 8, now);
+    pm.spawnImpactRing(800, 800, 20, now);
+
+    assert.ok(pm.count > 60, `Comprehensive elemental spawns should produce rich particle count, got ${pm.count}`);
+
+    // Verify motion patterns integration: test inward attraction and wave drift update
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      scale: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arc: () => {},
+      quadraticCurveTo: () => {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    // Simulate 5 frame updates with dt = 16ms
+    for (let frame = 1; frame <= 5; frame++) {
+      pm.updateAndDraw(mockCtx, now + frame * 16, 0.016);
+    }
+
+    assert.ok(pm.count > 0, 'Active particles successfully simulate physics without crashing');
+  });
+
+  // --- Test 69: Reusable Movement Functions (Spiral, Orbit & Inward Attraction) ---
+  await test('69. Reusable Movement Functions: Spiral, Orbit & Inward Attraction Integration', async () => {
+    const pm = new ParticleManager();
+    const now = 2000;
+    const dt = 0.016; // 16ms delta
+
+    // 1. Direct applySpiralMovement validation
+    const spiralParticle: CombatParticle = {
+      x: 100,
+      y: 100,
+      vx: 0,
+      vy: 0,
+      color: '#A855F7',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+      spiralSpeed: 3.0,
+      spiralTangentialVelocity: 60,
+      spiralRadialVelocity: 20,
+    };
+
+    const initialVx = spiralParticle.vx;
+    const initialVy = spiralParticle.vy;
+    applySpiralMovement(spiralParticle, dt, 50);
+    assert.ok(
+      spiralParticle.vx !== initialVx || spiralParticle.vy !== initialVy,
+      'applySpiralMovement should modulate particle velocity tangentially and radially'
+    );
+
+    // Test with SpiralMovementOptions overrides
+    const spiralWithOpts: CombatParticle = {
+      x: 100,
+      y: 100,
+      vx: 0,
+      vy: 0,
+      color: '#A855F7',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+    };
+    applySpiralMovement(spiralWithOpts, dt, 50, {
+      speed: 4.0,
+      tangentialVelocity: 80,
+      radialVelocity: 30,
+      decayRate: 0.8,
+    });
+    assert.ok(
+      Math.hypot(spiralWithOpts.vx, spiralWithOpts.vy) > 0,
+      'applySpiralMovement should accept and apply SpiralMovementOptions overrides'
+    );
+
+    // 2. Direct applyOrbitMovement validation
+    const orbitParticle: CombatParticle = {
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      color: '#38BDF8',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+      orbitCenterX: 200,
+      orbitCenterY: 150,
+      orbitRadius: 30,
+      orbitSpeed: 2.0,
+      orbitAngle: 0,
+      orbitEccentricity: 1.5,
+    };
+
+    applyOrbitMovement(orbitParticle, dt);
+    assert.ok(orbitParticle.orbitAngle! > 0, 'applyOrbitMovement should increment orbitAngle by speed * dt');
+    const expectedX = 200 + Math.cos(orbitParticle.orbitAngle!) * 30;
+    const expectedY = 150 + Math.sin(orbitParticle.orbitAngle!) * 30 * 1.5;
+    assert.strictEqual(
+      Math.abs(orbitParticle.x - expectedX) < 0.0001,
+      true,
+      `Orbit X should match elliptical orbit equation, got ${orbitParticle.x} vs expected ${expectedX}`
+    );
+    assert.strictEqual(
+      Math.abs(orbitParticle.y - expectedY) < 0.0001,
+      true,
+      `Orbit Y should match elliptical eccentricity equation, got ${orbitParticle.y} vs expected ${expectedY}`
+    );
+
+    // 3. Direct applyInwardAttraction validation
+    const attractParticle: CombatParticle = {
+      x: 100,
+      y: 100,
+      vx: 0,
+      vy: 0,
+      color: '#C084FC',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+      attractX: 150,
+      attractY: 100,
+      attractStrength: 200,
+      attractMinDist: 5,
+      attractSpiralBias: 0.5,
+    };
+
+    applyInwardAttraction(attractParticle, dt);
+    // Attractor is directly to the right (dx = 50, dy = 0)
+    // vx should be positive due to attraction toward target
+    // vy should be positive due to spiralBias * normX (perpendicular vortex swirl)
+    assert.ok(attractParticle.vx > 0, 'Inward attraction pulls particle toward target along X');
+    assert.ok(attractParticle.vy > 0, 'Inward attraction applies tangential swirl vortex bias along Y');
+
+    // Test minDistance and maxDistance clamping
+    const tooCloseParticle: CombatParticle = {
+      x: 151,
+      y: 100,
+      vx: 0,
+      vy: 0,
+      color: '#C084FC',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+      attractX: 150,
+      attractY: 100,
+      attractStrength: 200,
+      attractMinDist: 5,
+    };
+    applyInwardAttraction(tooCloseParticle, dt);
+    assert.strictEqual(tooCloseParticle.vx, 0, 'Particle closer than minDist should not experience attraction singularity');
+
+    // 4. Composite applyParticleMovement validation
+    const compositeParticle: CombatParticle = {
+      x: 50,
+      y: 50,
+      vx: 10,
+      vy: 10,
+      color: '#E0F2FE',
+      size: 2,
+      bornAt: now,
+      maxAgeMs: 500,
+      attractX: 100,
+      attractY: 100,
+      attractStrength: 100,
+      spiralSpeed: 2.0,
+    };
+    applyParticleMovement(compositeParticle, dt, 100);
+    assert.ok(compositeParticle.x !== 50 || compositeParticle.y !== 50, 'applyParticleMovement should integrate particle movement');
+
+    // 5. ParticleManager delegation methods validation
+    assert.strictEqual(typeof pm.applySpiralMovement, 'function', 'ParticleManager exposes applySpiralMovement method');
+    assert.strictEqual(typeof pm.applyOrbitMovement, 'function', 'ParticleManager exposes applyOrbitMovement method');
+    assert.strictEqual(typeof pm.applyInwardAttraction, 'function', 'ParticleManager exposes applyInwardAttraction method');
+    assert.strictEqual(typeof pm.applyParticleMovement, 'function', 'ParticleManager exposes applyParticleMovement method');
+
+    // 6. Integration across existing effect methods:
+    // Singularity, Portal, Boss Shield, Frost Nova, Supernova, Void Collapse, Arcane Spiral, Frost Ring
+    pm.clear();
+    pm.spawnSingularityInwardWisps(300, 300, 40, now);
+    pm.spawnPortalWisps(400, 400, true, now);
+    pm.spawnBossShieldSparks(500, 500, now);
+    pm.spawnFrostNovaMotes(600, 600, 50, now);
+    pm.spawnSupernovaGlints(700, 700, 60, now);
+    pm.spawnVoidCollapse(800, 800, 40, now);
+    pm.spawnArcaneSpiral(900, 900, now);
+    pm.spawnFrostRing(1000, 1000, 30, now);
+
+    assert.ok(pm.count >= 8, `Spawn methods should populate particles, got ${pm.count}`);
+
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      scale: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arc: () => {},
+      quadraticCurveTo: () => {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    // Simulate 10 frames of movement updates
+    for (let frame = 1; frame <= 10; frame++) {
+      pm.updateAndDraw(mockCtx, now + frame * 16, 0.016);
+    }
+
+    assert.ok(pm.count > 0, 'Active particles with spiral, orbit, and inward attraction simulate cleanly across frames');
+  });
+
+  // --- Test 70: Hero Class Visual Effects Upgrade (Vanguard, Ranger, Arcanist, Cleric) ---
+  await test('70. Hero Class Visual Effects Upgrade: All Class-Specific Spawn Methods Callable and Performant', async () => {
+    const pm = new ParticleManager({
+      maxParticles: 600,
+      reserveForCritical: 150,
+      reserveForHigh: 80,
+    });
+    const now = 3000;
+
+    // Class Dashes (Inward suction + lingering spectral ghosting + active dash trail steps)
+    for (const [idx, cls] of (['vanguard', 'ranger', 'arcanist', 'cleric'] as const).entries()) {
+      const y = 100 + idx * 50;
+      pm.spawnDashInwardSuction(cls, 100, y, now);
+      pm.spawnClassDashEffect(cls, 100, y, 210, y, 0, now);
+      pm.spawnClassDashTrailStep(cls, 210, y, 0, now + 45);
+    }
+
+    // Vanguard Effects (Cleave, Bulwark Dash, Aegis Cast, Shield Grant/Break, Aegis Motes)
+    pm.spawnVanguardCleave(100, 100, 0.5, true, now);
+    pm.spawnVanguardBulwarkDash(100, 100, 192, 100, 0, now);
+    pm.spawnVanguardAegisCast(100, 100, 105, now);
+    pm.spawnVanguardShieldGrant(100, 100, now);
+    pm.spawnVanguardShieldBreak(100, 100, now);
+    pm.spawnVanguardAegisMotes(100, 100, 25, now);
+
+    // Ranger Effects (Arrow Hit, Frost Volley Cast & Hit, Quarry Cast & Mark, Swiftness Trail)
+    pm.spawnRangerArrowHit(200, 200, 1.2, true, now);
+    pm.spawnRangerFrostVolleyCast(200, 200, 0.4, now);
+    pm.spawnRangerFrostArrowHit(220, 220, 0.4, true, now);
+    pm.spawnRangerQuarryCast(200, 200, now);
+    pm.spawnRangerQuarryMark(240, 240, now);
+    pm.spawnRangerSwiftnessTrail(200, 200, 0.8, now);
+
+    // Arcanist Effects (Bolt Hit, Astral Nova, Teleport, Star Rift, Chrono Well Cast & Motes + Alias)
+    pm.spawnArcanistBoltHit(300, 300, now);
+    pm.spawnArcanistNovaCast(300, 300, now);
+    pm.spawnArcanistTeleportBurst(300, 300, now);
+    pm.spawnArcanistStarRiftWisps(300, 300, 40, now);
+    pm.spawnArcanistChronoWellCast(340, 340, 100, now);
+    pm.spawnArcanistChronoMotes(340, 340, 100, now);
+    pm.spawnRangerChronoMotes(200, 200, 30, now);
+
+    // Cleric Effects (Smite Hit, Sanctified Pulse, Solar Beacon Cast, Heal Burst, Beacon Motes)
+    pm.spawnClericSmiteHit(400, 400, true, now);
+    pm.spawnClericSanctifiedPulse(400, 400, now);
+    pm.spawnClericSolarBeaconCast(400, 400, 115, now);
+    pm.spawnClericHealBurst(400, 400, now);
+    pm.spawnClericBeaconMotes(400, 400, 35, now);
+
+    assert.ok(pm.count > 100, `Calling all class effect methods should populate particles, got ${pm.count}`);
+
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      scale: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arc: () => {},
+      ellipse: () => {},
+      quadraticCurveTo: () => {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    // Exercise class projectile wake emission and procedural rendering
+    const classProjectiles = [
+      { id: 'p_slash', ownerType: 'player' as const, ownerId: 'p1', style: 'slash' as const, x: 100, y: 100, vx: 300, vy: 0, angle: 0, radius: 34, damage: 25, pierce: 4, crit: true, ttlMs: 140 },
+      { id: 'p_frost', ownerType: 'player' as const, ownerId: 'p2', style: 'arrow' as const, x: 150, y: 150, vx: 520, vy: 0, angle: 0, radius: 6, damage: 20, pierce: 1, slowOnHit: true, ttlMs: 800 },
+      { id: 'p_arcane', ownerType: 'player' as const, ownerId: 'p3', style: 'arcane' as const, x: 200, y: 200, vx: 400, vy: 0, angle: 0, radius: 8, damage: 24, pierce: 2, ttlMs: 800 },
+      { id: 'p_radiant', ownerType: 'player' as const, ownerId: 'p4', style: 'radiant' as const, x: 250, y: 250, vx: 380, vy: 0, angle: 0, radius: 7, damage: 18, pierce: 1, ttlMs: 800 },
+    ];
+    for (const proj of classProjectiles) {
+      drawEnhancedProjectile(mockCtx, proj, now);
+      pm.spawnProjectileWake(proj, now + 40);
+    }
+
+    for (let frame = 1; frame <= 5; frame++) {
+      pm.updateAndDraw(mockCtx, now + frame * 16, 0.016);
+    }
+
+    assert.ok(pm.count > 0, 'Class particles update and render cleanly across frames');
+  });
+
+  // --- Test 71: Boss Skill Visual Effects (Floors 1-10) ---
+  await test('71. Boss Skill Visual Effects: All 10 Floor Bosses Spawn Identity-Accurate Procedural Effects', async () => {
+    const pm = new ParticleManager({
+      maxParticles: 900,
+      reserveForCritical: 250,
+      reserveForHigh: 150,
+    });
+    const now = 5000;
+
+    // Floor 1: Warden Malakor
+    pm.spawnMalakorBulwarkCast(100, 100, now);
+    pm.spawnMalakorTripleCleave(100, 100, 0.2, now);
+    pm.spawnMalakorGroundSlamImpact(150, 100, 88, now);
+    pm.spawnMalakorWarCharge(100, 100, 0.4, now);
+    pm.spawnMalakorChargeTrail(120, 108, 0.4, now);
+
+    // Floor 2: Archlich Vaelor
+    pm.spawnVaelorFrostNovaBurst(200, 100, 72, now);
+    pm.spawnVaelorSoulSiphonTether(240, 120, 200, 100, now);
+    pm.spawnVaelorSoulHail(200, 100, 0.5, now);
+    pm.spawnVaelorDeathRing(200, 100, now);
+
+    // Floor 3: Ignis, Cinder Sovereign
+    pm.spawnIgnisMagmaEruption(300, 100, 84, now);
+    pm.spawnIgnisFissureWave(300, 100, 0.8, now);
+    pm.spawnIgnisCinderSpiral(300, 100, now);
+    pm.spawnIgnisCoreDetonation(340, 100, 110, now);
+
+    // Floor 4: Void-Eater Malice
+    pm.spawnMaliceSingularityImplosion(400, 100, 115, now);
+    pm.spawnMaliceTendrilFlurry(400, 100, 1.0, now);
+    pm.spawnMaliceVoidStep(400, 100, 490, 140, now);
+    pm.spawnMaliceAbyssalNova(490, 140, now);
+
+    // Floor 5: Archon of Nothingness
+    pm.spawnArchonSupernovaBurst(500, 100, 140, now);
+    pm.spawnArchonStarbeamStrike(540, 130, 70, now);
+    pm.spawnArchonCosmicVolley(500, 100, 1.2, now);
+    pm.spawnArchonConstellationSpiral(500, 100, now);
+
+    // Floor 6: Elyndor, Keeper of the Last Hymn
+    pm.spawnElyndorResonantCrescendo(100, 300, 0.3, now);
+    pm.spawnElyndorHarpLaneMotes(150, 300, 340, 38, 0.3, now);
+    pm.spawnElyndorLamentBurst(140, 320, 65, now);
+    pm.spawnElyndorDivineChorus(100, 300, 0.3, now);
+    pm.spawnElyndorChorusRemembrance(100, 300, now);
+
+    // Floor 7: Zadkiel, Keeper of the Ashen Reliquary
+    pm.spawnZadkielAshenCloudMotes(200, 300, 85, now);
+    pm.spawnZadkielCenserSweepSparks(200, 300, 0.6, 155, 0.5, now);
+    pm.spawnZadkielReliquaryAwakening(200, 300, now);
+    pm.spawnZadkielRelicDetonation(250, 300, 70, now);
+    pm.spawnZadkielJudgmentCast(200, 300, 0.6, now);
+
+    // Floor 8: Sariel, Warden of the Veiled Scripture
+    pm.spawnSarielScriptureBinding(300, 300, 0.1, now);
+    pm.spawnSarielScriptureDetonation(300, 300, 420, 0.1, now);
+    pm.spawnSarielForbiddenPageBurst(340, 320, 60, now);
+    pm.spawnSarielSilenceSealMotes(340, 320, 75, now);
+    pm.spawnSarielSilenceDetonation(340, 320, 75, now);
+    pm.spawnSarielHereticalVolley(300, 300, now);
+
+    // Floor 9: Seraphel, Sentinel of the Final Seal
+    pm.spawnSeraphelPiercingLine(400, 300, 0.0, 380, now);
+    pm.spawnSeraphelLancefallImpact(460, 300, 65, now);
+    pm.spawnSeraphelAerialJudgment(400, 300, 0.2, now);
+    pm.spawnSeraphelSpearfallCascade(400, 300, now);
+
+    // Floor 10: Oriphiel, The Last Warden
+    pm.spawnOriphielWardenEdictCast(500, 300, now);
+    pm.spawnOriphielEdictExecution(500, 300, 220, 1, now);
+    pm.spawnOriphielParryStance(500, 300, now);
+    pm.spawnOriphielParryReflectBurst(500, 300, now);
+    pm.spawnOriphielVerdictStage(520, 300, 105, 1, now);
+    pm.spawnOriphielVerdictStage(540, 300, 155, 3, now);
+    pm.spawnOriphielBastionShatter(500, 300, 190, now);
+
+    assert.ok(pm.count > 250, `All 10 floor boss VFX methods should populate particles cleanly, got ${pm.count}`);
+
+    const mockCtx = {
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      scale: () => {},
+      beginPath: () => {},
+      closePath: () => {},
+      moveTo: () => {},
+      lineTo: () => {},
+      arc: () => {},
+      ellipse: () => {},
+      quadraticCurveTo: () => {},
+      strokeRect: () => {},
+      fillRect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      shadowColor: '',
+      shadowBlur: 0,
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    for (let frame = 1; frame <= 8; frame++) {
+      pm.updateAndDraw(mockCtx, now + frame * 16, 0.016);
+    }
+
+    assert.ok(pm.count > 0, 'Boss skill particles animate and render across multiple frames without errors');
+  });
+
+  // --- Test 72: Side Monster Progression (Sanctum Wards, Guardian Seals, Locked Chests, Blessings, Mastery) ---
+  await test('72. Side monster progression: Sanctum Wards, Guardian seals, locked chests, blessings, and floor mastery', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_SIDE_PROGRESSION',
+      name: 'Side Monster Progression Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 4242,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    const pid = 'p_side_prog';
+    room.addOrReconnectPlayer(pid, 'Dungeoneer', 'vanguard', false, {
+      level: 5,
+      xp: 0,
+      strength: 5,
+      vitality: 5,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+    const player = room.getPlayerState(pid)!;
+
+    const combatRooms = room.map.rooms.filter((r) => r.type === 'combat');
+    const guardianRooms = combatRooms.filter((r) => Boolean(r.guardian));
+    assert.ok(combatRooms.length >= 2, 'Floor 1 must have at least 2 combat rooms');
+    assert.strictEqual(guardianRooms.length, 1, 'Floor 1 must designate exactly 1 Guardian chamber');
+
+    const gRoom = guardianRooms[0];
+    const gEnemies = room.enemies.filter((e) => e.roomId === gRoom.id);
+    assert.ok(gEnemies.length >= 4, 'Guardian chamber must contain at least 4 enemies');
+    assert.ok(gEnemies.some((e) => e.elite && e.name.startsWith('Guardian ')), 'Guardian chamber must contain a Guardian Elite enemy');
+
+    const gLockedChest = room.props.find((pr) => pr.roomId === gRoom.id && pr.kind === 'chest');
+    assert.ok(gLockedChest && gLockedChest.locked, 'Guardian chamber chest must start locked');
+
+    // Attempt to open locked chest while Guardian enemies remain alive
+    player.x = gLockedChest!.x;
+    player.y = gLockedChest!.y;
+    const goldBeforeLocked = player.gold;
+    room.performAction(pid, 'interact');
+    assert.strictEqual(gLockedChest!.opened, false, 'Locked chest must not open while room enemies are alive');
+    assert.strictEqual(player.gold, goldBeforeLocked, 'Gold must not change when chest is locked');
+
+    // Boss Sanctum Wards should reduce boss damage taken when side combat rooms are uncleared
+    const boss = room.enemies.find((e) => e.kind === 'boss')!;
+    const initSnap = room.buildSnapshot();
+    const initialWards = initSnap.bossWards ?? 0;
+    assert.strictEqual(initialWards, Math.min(4, combatRooms.length), 'Boss Sanctum Wards should match uncleared combat rooms (cap 4)');
+
+    const hpBeforeWardedHit = boss.hp;
+    room.damageEnemy(boss, 100, player, false, 'physical');
+    const wardedDamageTaken = hpBeforeWardedHit - boss.hp;
+
+    // Clear a non-guardian combat room and verify Ward shatter, Blessing, XP, and Gold
+    const regularRoom = combatRooms.find((r) => !r.guardian)!;
+    const prevGold = player.gold;
+    const prevXp = player.xp;
+    const prevLevel = player.level;
+    room.enemies = room.enemies.filter((e) => e.roomId !== regularRoom.id);
+    room.tick(50);
+
+    assert.strictEqual(regularRoom.cleared, true, 'Regular combat room should clear after its enemies are defeated');
+    assert.ok(player.gold > prevGold, 'Clearing a combat room should reward Gold');
+    assert.ok(player.xp !== prevXp || player.level > prevLevel, 'Clearing a combat room should reward XP');
+    assert.strictEqual((player.floorBlessings?.length ?? 0), 1, 'Clearing a combat room should grant 1 Floor Blessing');
+
+    const afterClearSnap = room.buildSnapshot();
+    if (combatRooms.length <= 4) {
+      assert.strictEqual(afterClearSnap.bossWards, initialWards - 1, 'Boss Sanctum Wards should drop after clearing a combat room');
+    }
+
+    // Slaying Boss while Guardian room is still active must NOT unlock portal
+    const bossRoom = room.map.rooms.find((r) => r.type === 'boss')!;
+    room.enemies = room.enemies.filter((e) => e.roomId !== bossRoom.id);
+    room.tick(50);
+    assert.strictEqual(bossRoom.cleared, true, 'Boss room should be marked cleared');
+    assert.strictEqual(room.map.portalActive, false, 'Exit Portal must remain sealed while Guardian room is uncleared');
+
+    // Now clear all remaining combat rooms (including Guardian room)
+    room.enemies = [];
+    const attrBeforeMastery = player.attributePoints;
+    const potionsBeforeMastery = player.potions;
+    room.tick(50);
+
+    assert.strictEqual(gRoom.cleared, true, 'Guardian room should now be cleared');
+    assert.strictEqual(gLockedChest!.locked, false, 'Guardian chamber chest must unlock when room clears');
+    assert.strictEqual(room.map.portalActive, true, 'Exit Portal must unlock once Boss AND all Guardians are defeated');
+
+    // Opening unlocked Guardian chest now succeeds
+    player.x = gLockedChest!.x;
+    player.y = gLockedChest!.y;
+    room.performAction(pid, 'interact');
+    assert.strictEqual(gLockedChest!.opened, true, 'Unlocked Guardian chest can now be opened');
+
+    // Full-Floor Mastery Bonus check
+    const finalSnap = room.buildSnapshot();
+    assert.strictEqual(finalSnap.floorMasteryAwarded, true, 'Full-floor mastery should be awarded when all combat rooms clear');
+    assert.strictEqual(finalSnap.bossWards, 0, 'Boss Sanctum Wards should be 0 when all combat rooms are cleared');
+    assert.ok(player.attributePoints >= attrBeforeMastery + 1, 'Full-floor mastery must grant +1 attribute point');
+    assert.ok(player.potions >= Math.min(5, potionsBeforeMastery + 1), 'Full-floor mastery must grant +1 potion');
+
+    // Verify Floor 5+ designates 2 Guardian rooms when >=3 combat rooms exist, and Sanctum Ward reduction worked earlier
+    assert.ok(wardedDamageTaken < 100, `Warded boss should take reduced damage (took ${wardedDamageTaken})`);
+    const floor5Room = new GameRoom({
+      roomId: 'R_TEST_SIDE_F5',
+      name: 'Floor 5 Guardian Check',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 4242,
+      initialFloor: 5,
+    });
+    const f5CombatCount = floor5Room.map.rooms.filter((r) => r.type === 'combat').length;
+    const f5GuardianCount = floor5Room.map.rooms.filter((r) => Boolean(r.guardian)).length;
+    if (f5CombatCount >= 3) {
+      assert.strictEqual(f5GuardianCount, 2, 'Floors 5+ with >=3 combat rooms should designate 2 Guardian chambers');
+    } else {
+      assert.strictEqual(f5GuardianCount, 1, 'Floors with <3 combat rooms should designate 1 Guardian chamber');
+    }
+  });
+
+  // --- Test 73: Camera Zoom, Smooth Following & World-Space Aim Alignment ---
+  await test('73. Camera zoom scales responsively across desktop/tablet/mobile while keeping player centered and aim accurate', async () => {
+    const {
+      computeCameraZoom,
+      computeWorldAimAngle,
+      getWorldViewBounds,
+      stepCameraFollow,
+    } = await import('./src/client/camera.ts');
+
+    // 1. Default zoom enlarges characters across all viewport sizes while keeping bounded visibility
+    const desktopZoom = computeCameraZoom(1920, 1080);
+    const laptopZoom = computeCameraZoom(1280, 720);
+    const tabletPortraitZoom = computeCameraZoom(768, 1024);
+    const tabletLandscapeZoom = computeCameraZoom(1024, 768);
+    const phonePortraitZoom = computeCameraZoom(390, 844);
+    const phoneLandscapeZoom = computeCameraZoom(844, 390);
+
+    assert.ok(desktopZoom >= 1.6 && desktopZoom <= 1.65, `Desktop zoom should enlarge sprites cleanly (got ${desktopZoom})`);
+    assert.ok(laptopZoom >= 1.5 && laptopZoom <= 1.65, `Laptop zoom should enlarge sprites cleanly (got ${laptopZoom})`);
+    assert.strictEqual(
+      tabletPortraitZoom,
+      tabletLandscapeZoom,
+      'Tablet zoom must be orientation-consistent between portrait and landscape'
+    );
+    assert.ok(tabletPortraitZoom > 1.35 && tabletPortraitZoom < desktopZoom, `Tablet zoom expected ~1.42, got ${tabletPortraitZoom}`);
+    assert.strictEqual(
+      phonePortraitZoom,
+      phoneLandscapeZoom,
+      'Mobile zoom must be orientation-consistent between portrait and landscape'
+    );
+    assert.ok(phonePortraitZoom >= 1.2 && phonePortraitZoom < tabletPortraitZoom, `Mobile zoom should enlarge sprites without cramping view (got ${phonePortraitZoom})`);
+
+    // 2. Surrounding environment visibility stays large enough for combat & navigation
+    const phoneView = getWorldViewBounds(500, 500, 390, 844, phonePortraitZoom);
+    assert.ok(phoneView.width >= 300 && phoneView.height >= 600, `Phone world viewport must remain navigable (${phoneView.width}x${phoneView.height})`);
+    assert.strictEqual(Math.round((phoneView.left + phoneView.right) / 2), 500, 'Camera horizontally centered on player');
+    assert.strictEqual(Math.round((phoneView.top + phoneView.bottom) / 2), 500, 'Camera vertically centered on player');
+
+    // 3. Smooth camera following converges steadily without snapping on small moves, snaps on teleports
+    const cam = { x: 500, y: 500 };
+    stepCameraFollow(cam, 620, 500, 0.016);
+    assert.ok(cam.x > 500 && cam.x < 620, `Camera should glide smoothly toward target (cam.x=${cam.x})`);
+    for (let i = 0; i < 40; i++) {
+      stepCameraFollow(cam, 620, 500, 0.016);
+    }
+    assert.ok(Math.abs(cam.x - 620) < 0.25, `Camera should settle cleanly on target (cam.x=${cam.x})`);
+
+    stepCameraFollow(cam, 2000, 2000, 0.016);
+    assert.strictEqual(cam.x, 2000, 'Camera should snap cleanly across floor transitions / teleports');
+    assert.strictEqual(cam.y, 2000, 'Camera Y should snap cleanly across floor transitions / teleports');
+
+    // 4. Screen-to-world aiming respects zoom factor when camera trails slightly behind player
+    // Canvas 1200x800, zoom 1.5, player at (510, 400), camera at (500, 400) -> player on screen at (615, 400).
+    // Cursor right above screen player at (615, 250) -> aim straight up (-Math.PI / 2).
+    const upAngle = computeWorldAimAngle(615, 250, 1200, 800, 510, 400, 500, 400, 1.5);
+    assert.ok(Math.abs(upAngle + Math.PI / 2) < 0.001, `Aiming up under zoom must match -PI/2, got ${upAngle}`);
+  });
+
+  // --- Test 74: Hero Sprite & Weapon Animation Rendering ---
+  await test('74. Hero sprite renderer draws all 4 classes cleanly across idle, running, dashing, and multi-stage attack frames', async () => {
+    const { drawHeroSprite } = await import('./src/client/heroSprites.ts');
+
+    let drawOps = 0;
+    const mockCtx = {
+      save: () => { drawOps++; },
+      restore: () => { drawOps++; },
+      translate: () => { drawOps++; },
+      rotate: () => { drawOps++; },
+      scale: () => { drawOps++; },
+      beginPath: () => { drawOps++; },
+      closePath: () => { drawOps++; },
+      moveTo: () => { drawOps++; },
+      lineTo: () => { drawOps++; },
+      arc: () => { drawOps++; },
+      fillRect: () => { drawOps++; },
+      strokeRect: () => { drawOps++; },
+      fill: () => { drawOps++; },
+      stroke: () => { drawOps++; },
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    const classes = ['vanguard', 'ranger', 'arcanist', 'cleric'] as const;
+    const attackFrames = [0, 220, 150, 90, 30];
+    const angles = [0.2, Math.PI * 0.8, -Math.PI / 4];
+
+    for (const heroClass of classes) {
+      for (const attackAnimMs of attackFrames) {
+        for (const aimAngle of angles) {
+          drawHeroSprite(
+            mockCtx,
+            {
+              heroClass,
+              attackAnimMs,
+              vx: attackAnimMs === 0 ? 180 : 0,
+              vy: 0,
+              hasteMs: 0,
+              shield: heroClass === 'vanguard' ? 20 : 0,
+            },
+            200,
+            200,
+            {
+              aimAngle,
+              bob: 1.5,
+              moving: attackAnimMs === 0,
+              now: 12345,
+            }
+          );
+        }
+      }
+    }
+
+    assert.ok(drawOps > 500, `Expected substantial canvas drawing operations across all hero animation frames, got ${drawOps}`);
+  });
+
+  // --- Test 75: Dynamic Weapon Swing Transitions & Ult Server Animation Trigger ---
+  await test('75. Dynamic weapon rotation/translation transitions & ult animation state work across all hero classes', async () => {
+    const { drawHeroSprite } = await import('./src/client/heroSprites.ts');
+    const room = new GameRoom({
+      roomId: 'R_TEST_SWING',
+      name: 'Weapon Swing Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 1337,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    const classes = ['vanguard', 'ranger', 'arcanist', 'cleric'] as const;
+
+    for (const heroClass of classes) {
+      const pid = `p_${heroClass}`;
+      room.addOrReconnectPlayer(pid, heroClass, heroClass);
+      const player = room.getPlayerState(pid)!;
+      assert.ok(player, `Expected player ${pid} to exist`);
+      player.ultCooldownMs = 0;
+      player.attackAnimMs = 0;
+
+      room.performAction(pid, 'ult', 0.25);
+      assert.ok(player.attackAnimMs >= 240, `Expected ult action for ${heroClass} to set attackAnimMs, got ${player.attackAnimMs}`);
+
+      const transformsByProgress: Array<{ translates: Array<[number, number]>; rotates: number[] }> = [];
+      for (const swingProgress of [0.1, 0.45, 0.85]) {
+        const translates: Array<[number, number]> = [];
+        const rotates: number[] = [];
+        const mockCtx = {
+          save: () => {},
+          restore: () => {},
+          translate: (x: number, y: number) => { translates.push([Number(x.toFixed(2)), Number(y.toFixed(2))]); },
+          rotate: (a: number) => { rotates.push(Number(a.toFixed(4))); },
+          scale: () => {},
+          beginPath: () => {},
+          closePath: () => {},
+          moveTo: () => {},
+          lineTo: () => {},
+          arc: () => {},
+          fillRect: () => {},
+          strokeRect: () => {},
+          fill: () => {},
+          stroke: () => {},
+          fillStyle: '',
+          strokeStyle: '',
+          lineWidth: 1,
+        } as unknown as CanvasRenderingContext2D;
+
+        drawHeroSprite(
+          mockCtx,
+          {
+            heroClass,
+            attackAnimMs: 0,
+            vx: 0,
+            vy: 0,
+            hasteMs: 0,
+            shield: 0,
+          },
+          100,
+          100,
+          {
+            aimAngle: 0.3,
+            bob: 0,
+            moving: false,
+            now: 5000,
+            swingProgress,
+            swingKind: 'tactical',
+          }
+        );
+
+        assert.ok(translates.length >= 2 && rotates.length >= 1, `Expected transform ops for ${heroClass}`);
+        transformsByProgress.push({ translates, rotates });
+      }
+
+      // Ensure windup, strike/cast/release, and recovery produce distinct weapon transforms
+      assert.notDeepStrictEqual(
+        transformsByProgress[0],
+        transformsByProgress[1],
+        `Expected ${heroClass} weapon transform to transition from windup to active strike`
+      );
+      assert.notDeepStrictEqual(
+        transformsByProgress[1],
+        transformsByProgress[2],
+        `Expected ${heroClass} weapon transform to transition from active strike to recovery`
+      );
+    }
+  });
+
+  // --- Test 76: Multiplayer Networking Optimizations (Single Serialization, Backpressure, RoomClientIndex, HUD Key, PingTracker) ---
+  await test('76. Networking optimizations preserve protocol correctness and eliminate redundant work', async () => {
+    const {
+      broadcastSerialized,
+      sendRawFrame,
+      RoomClientIndex,
+      WS_TICK_BACKPRESSURE_HIGH_WATER_BYTES,
+      WS_CRITICAL_BACKPRESSURE_BYTES,
+      WS_MAX_CONSECUTIVE_DROPPED_TICKS,
+    } = await import('./src/server/wsTransport.ts');
+    const {
+      PingTracker,
+      buildSnapshotHudKey,
+      buildLobbyRoomsKey,
+      quantizePlayerInput,
+      hasDiscreteInputChanged,
+      isSameQuantizedInput,
+    } = await import('./src/client/networkStats.ts');
+
+    // 1. Single-pass serialization per broadcast
+    let mockSeq = 0;
+    const makeMockClient = (bufferedAmount = 0) => {
+      mockSeq++;
+      const sent: string[] = [];
+      let closed = false;
+      return {
+        userId: `u_${mockSeq}`,
+        username: `User${mockSeq}`,
+        roomId: null as string | null,
+        droppedTicks: 0,
+        totalDroppedTicks: 0,
+        sent,
+        get isClosed() {
+          return closed;
+        },
+        ws: {
+          readyState: 1,
+          get bufferedAmount() {
+            return bufferedAmount;
+          },
+          setBufferedAmount(val: number) {
+            bufferedAmount = val;
+          },
+          send(data: string) {
+            sent.push(data);
+          },
+          close() {
+            closed = true;
+            this.readyState = 3;
+          },
+        },
+      };
+    };
+
+    const mockClients = [makeMockClient(0), makeMockClient(0), makeMockClient(0), makeMockClient(0)];
+    let serializeCalls = 0;
+    const roomPayload = { type: 'room:tick' as const, snapshot: {} as any };
+    const result = broadcastSerialized(
+      mockClients,
+      roomPayload,
+      { droppable: true },
+      (m) => {
+        serializeCalls++;
+        return JSON.stringify(m);
+      }
+    );
+    assert.strictEqual(serializeCalls, 1, 'Expected JSON serializer to execute once across all 4 recipients');
+    assert.strictEqual(result.sentCount, 4);
+    assert.strictEqual(mockClients[0].sent[0], mockClients[3].sent[0]);
+
+    // 2. Backpressure: droppable frames skip high-water clients; critical frames still deliver; overflow closes client
+    const slowClient = makeMockClient(WS_TICK_BACKPRESSURE_HIGH_WATER_BYTES + 512);
+    const tickRes = sendRawFrame(slowClient, '{"type":"room:tick"}', { droppable: true });
+    assert.strictEqual(tickRes, 'dropped_backpressure');
+    assert.strictEqual(slowClient.droppedTicks, 1);
+    assert.strictEqual(slowClient.sent.length, 0);
+
+    const chatRes = sendRawFrame(slowClient, '{"type":"chat:message"}', { droppable: false });
+    assert.strictEqual(chatRes, 'sent');
+    assert.strictEqual(slowClient.sent.length, 1);
+
+    // Drain resets droppedTicks
+    slowClient.ws.setBufferedAmount(0);
+    const recoveredRes = sendRawFrame(slowClient, '{"type":"room:tick"}', { droppable: true });
+    assert.strictEqual(recoveredRes, 'sent');
+    assert.strictEqual(slowClient.droppedTicks, 0);
+
+    // Persistent stall triggers disconnect after WS_MAX_CONSECUTIVE_DROPPED_TICKS
+    slowClient.ws.setBufferedAmount(WS_TICK_BACKPRESSURE_HIGH_WATER_BYTES + 100);
+    for (let i = 0; i < WS_MAX_CONSECUTIVE_DROPPED_TICKS - 1; i++) {
+      assert.strictEqual(sendRawFrame(slowClient, '{"type":"room:tick"}', { droppable: true }), 'dropped_backpressure');
+    }
+    assert.strictEqual(sendRawFrame(slowClient, '{"type":"room:tick"}', { droppable: true }), 'closed_overflow');
+    assert.strictEqual(slowClient.isClosed, true);
+
+    // Extreme buffer spikes trigger immediate disconnect
+    const stalledClient = makeMockClient(WS_CRITICAL_BACKPRESSURE_BYTES + 1);
+    assert.strictEqual(sendRawFrame(stalledClient, '{"type":"room:tick"}', { droppable: true }), 'closed_overflow');
+    assert.strictEqual(stalledClient.isClosed, true);
+
+    // 3. RoomClientIndex O(roomSize) routing
+    const index = new RoomClientIndex<(typeof mockClients)[0]>();
+    index.assignRoom(mockClients[0], 'ROOM-A');
+    index.assignRoom(mockClients[1], 'ROOM-A');
+    index.assignRoom(mockClients[2], 'ROOM-B');
+    assert.strictEqual(index.getRoomClientCount('ROOM-A'), 2);
+    assert.strictEqual(index.getRoomClientCount('ROOM-B'), 1);
+    index.assignRoom(mockClients[1], 'ROOM-B');
+    assert.strictEqual(index.getRoomClientCount('ROOM-A'), 1);
+    assert.strictEqual(index.getRoomClientCount('ROOM-B'), 2);
+    index.removeFromRoom(mockClients[1]);
+    assert.strictEqual(index.getRoomClientCount('ROOM-B'), 1);
+
+    // 4. Snapshot HUD Key deduplicates movement-only ticks while reacting to combat/HUD changes
+    const room = new GameRoom({
+      roomId: 'NET-TEST',
+      name: 'Networking Test',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 4242,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p1', 'Hero1', 'vanguard');
+    const snapA = room.buildSnapshot();
+    const keyA = buildSnapshotHudKey(snapA, 'p1', room.map);
+
+    // Pure coordinate shift away from NPCs/portals should preserve HUD key
+    const p1 = room.getPlayerState('p1')!;
+    p1.x += 5;
+    p1.y += 3;
+    const snapB = room.buildSnapshot();
+    const keyB = buildSnapshotHudKey(snapB, 'p1', room.map);
+    assert.strictEqual(keyA, keyB, 'Expected pure movement tick to preserve HUD key without React rerender');
+
+    // HP change must invalidate HUD key immediately
+    p1.hp = Math.max(1, p1.hp - 10);
+    const snapC = room.buildSnapshot();
+    const keyC = buildSnapshotHudKey(snapC, 'p1', room.map);
+    assert.notStrictEqual(keyB, keyC, 'Expected HP loss to update HUD key immediately');
+
+    // Lobby rooms key deduplication
+    const summaries = [room.getSummary()];
+    assert.strictEqual(buildLobbyRoomsKey(summaries, 3), buildLobbyRoomsKey([...summaries], 3));
+    assert.notStrictEqual(buildLobbyRoomsKey(summaries, 3), buildLobbyRoomsKey(summaries, 4));
+
+    // 5. Input quantization & discrete transition detection
+    const baseInput = quantizePlayerInput({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+      attack: false,
+      aimAngle: 0.501,
+      stickX: 0.402,
+      stickY: -0.204,
+    });
+    const tinyJitter = quantizePlayerInput({
+      up: false,
+      down: false,
+      left: false,
+      right: true,
+      attack: false,
+      aimAngle: 0.504,
+      stickX: 0.404,
+      stickY: -0.201,
+    });
+    assert.strictEqual(isSameQuantizedInput(baseInput, tinyJitter), true, 'Sub-threshold aim/stick noise should collapse');
+    assert.strictEqual(
+      hasDiscreteInputChanged(baseInput, { ...tinyJitter, attack: true }),
+      true,
+      'Discrete attack press must be detected immediately'
+    );
+
+    // 6. PingTracker RTT, jitter & quality diagnostics
+    const tracker = new PingTracker(5);
+    const d1 = tracker.recordSample(40);
+    assert.strictEqual(d1.pingMs, 40);
+    assert.strictEqual(d1.quality, 'excellent');
+    tracker.recordSample(80);
+    const d3 = tracker.recordSample(40);
+    assert.ok(d3.jitterMs > 0, 'Expected jitter > 0 across varying RTT samples');
+    assert.strictEqual(d3.minRttMs, 40);
+    assert.strictEqual(d3.maxRttMs, 80);
+    assert.strictEqual(d3.samples, 3);
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

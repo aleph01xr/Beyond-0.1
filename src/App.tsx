@@ -3,6 +3,18 @@ import { DungeonRunView } from './components/DungeonRunView.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
 import { SanctuaryLobby } from './components/SanctuaryLobby.tsx';
 import { getApiEndpoint, getWsUrl } from './client/apiConfig.ts';
+import {
+  buildLobbyRoomsKey,
+  buildSnapshotHudKey,
+  CLIENT_INPUT_CONTINUOUS_INTERVAL_MS,
+  CLIENT_WS_BACKPRESSURE_LIMIT_BYTES,
+  hasDiscreteInputChanged,
+  HUD_MAX_STALE_MS,
+  isSameQuantizedInput,
+  PingTracker,
+  quantizePlayerInput,
+  type PingDiagnostics,
+} from './client/networkStats.ts';
 import type {
   ChatMessage,
   ClientMessage,
@@ -40,19 +52,37 @@ export function App() {
   const [dungeonMap, setDungeonMap] = useState<DungeonMap | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [pingMs, setPingMs] = useState<number>(18);
+
+  const pingTrackerRef = useRef<PingTracker>(new PingTracker(10));
+  const [pingDiagnostics, setPingDiagnostics] = useState<PingDiagnostics>(() =>
+    pingTrackerRef.current.getDiagnostics()
+  );
 
   const latestSnapshotRef = useRef<GameSnapshot | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const activeRoomIdRef = useRef<string | null>(null);
+  const activePlayerIdRef = useRef<string>('');
+  const dungeonMapRef = useRef<DungeonMap | null>(null);
+  const lastHudKeyRef = useRef<string>('');
+  const lastHudSyncAtRef = useRef<number>(0);
+  const lastLobbyKeyRef = useRef<string>('');
+  const lastSentInputRef = useRef<PlayerInputState | null>(null);
+  const lastInputSentAtRef = useRef<number>(0);
+  const pendingInputRef = useRef<PlayerInputState | null>(null);
+  const inputFlushTimerRef = useRef<number | null>(null);
   const selectedClassRef = useRef<HeroClassId>(selectedClass);
   selectedClassRef.current = selectedClass;
 
   const sendWs = useCallback((msg: ClientMessage) => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (
+      (msg.type === 'player:input' || msg.type === 'ping') &&
+      ws.bufferedAmount > CLIENT_WS_BACKPRESSURE_LIMIT_BYTES
+    ) {
+      return;
     }
+    ws.send(JSON.stringify(msg));
   }, []);
 
   // Restore session if token exists in sessionStorage
@@ -93,6 +123,23 @@ export function App() {
 
     let disposed = false;
     let reconnectTimer: number | undefined;
+    pingTrackerRef.current.reset();
+
+    const sendPingProbe = () => {
+      const ws = wsRef.current;
+      if (
+        ws &&
+        ws.readyState === WebSocket.OPEN &&
+        ws.bufferedAmount <= CLIENT_WS_BACKPRESSURE_LIMIT_BYTES
+      ) {
+        ws.send(
+          JSON.stringify({
+            type: 'ping',
+            t: performance.now(),
+          } satisfies ClientMessage)
+        );
+      }
+    };
 
     const connect = () => {
       if (disposed) return;
@@ -102,6 +149,7 @@ export function App() {
 
       ws.onopen = () => {
         setErrorBanner(null);
+        sendPingProbe();
         if (activeRoomIdRef.current) {
           // Rejoin active room seamlessly on reconnect
           ws.send(
@@ -127,10 +175,19 @@ export function App() {
         }
 
         if (msg.type === 'lobby:rooms') {
-          setRooms(msg.rooms);
-          setOnlineCount(msg.onlineCount);
+          const lobbyKey = buildLobbyRoomsKey(msg.rooms, msg.onlineCount);
+          if (lobbyKey !== lastLobbyKeyRef.current) {
+            lastLobbyKeyRef.current = lobbyKey;
+            setRooms(msg.rooms);
+            setOnlineCount(msg.onlineCount);
+          }
         } else if (msg.type === 'room:joined') {
           activeRoomIdRef.current = msg.roomId;
+          activePlayerIdRef.current = msg.playerId;
+          dungeonMapRef.current = msg.map;
+          lastHudKeyRef.current = buildSnapshotHudKey(msg.snapshot, msg.playerId, msg.map);
+          lastHudSyncAtRef.current = performance.now();
+          lastSentInputRef.current = null;
           setPlayerId(msg.playerId);
           setDungeonMap(msg.map);
           latestSnapshotRef.current = msg.snapshot;
@@ -138,11 +195,28 @@ export function App() {
           setChatMessages(msg.chat);
           setErrorBanner(null);
           setScreen('PLAYING');
+          sendPingProbe();
         } else if (msg.type === 'room:map') {
+          dungeonMapRef.current = msg.map;
+          lastHudKeyRef.current = '';
           setDungeonMap(msg.map);
         } else if (msg.type === 'room:tick') {
+          // Canvas always consumes latest 20Hz snapshot via ref with zero React re-render overhead
           latestSnapshotRef.current = msg.snapshot;
-          setSnapshot(msg.snapshot);
+          const now = performance.now();
+          const nextHudKey = buildSnapshotHudKey(
+            msg.snapshot,
+            activePlayerIdRef.current,
+            dungeonMapRef.current
+          );
+          if (
+            nextHudKey !== lastHudKeyRef.current ||
+            now - lastHudSyncAtRef.current >= HUD_MAX_STALE_MS
+          ) {
+            lastHudKeyRef.current = nextHudKey;
+            lastHudSyncAtRef.current = now;
+            setSnapshot(msg.snapshot);
+          }
         } else if (msg.type === 'chat:message') {
           setChatMessages((prev) => {
             if (prev.some((m) => m.id === msg.message.id)) return prev;
@@ -150,7 +224,11 @@ export function App() {
           });
         } else if (msg.type === 'room:left') {
           activeRoomIdRef.current = null;
+          activePlayerIdRef.current = '';
+          dungeonMapRef.current = null;
+          lastHudKeyRef.current = '';
           latestSnapshotRef.current = null;
+          lastSentInputRef.current = null;
           setSnapshot(null);
           setDungeonMap(null);
           setScreen('LOBBY');
@@ -166,7 +244,10 @@ export function App() {
         } else if (msg.type === 'error') {
           setErrorBanner(msg.message);
         } else if (msg.type === 'pong') {
-          setPingMs(Math.max(1, Math.round(performance.now() - msg.t)));
+          const rtt = performance.now() - msg.t;
+          if (Number.isFinite(rtt) && rtt >= 0 && rtt < 15000) {
+            setPingDiagnostics(pingTrackerRef.current.recordSample(rtt));
+          }
         }
       };
 
@@ -179,22 +260,16 @@ export function App() {
 
     connect();
 
-    const pingInterval = window.setInterval(() => {
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: 'ping',
-            t: performance.now(),
-          } satisfies ClientMessage)
-        );
-      }
-    }, 3000);
+    const pingInterval = window.setInterval(sendPingProbe, 3000);
 
     return () => {
       disposed = true;
       window.clearInterval(pingInterval);
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (inputFlushTimerRef.current !== null) {
+        window.clearTimeout(inputFlushTimerRef.current);
+        inputFlushTimerRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -265,8 +340,42 @@ export function App() {
   );
 
   const handleSendInput = useCallback(
-    (input: PlayerInputState) => {
-      sendWs({ type: 'player:input', input });
+    (rawInput: PlayerInputState) => {
+      const quantized = quantizePlayerInput(rawInput);
+      const prev = lastSentInputRef.current;
+      if (isSameQuantizedInput(prev, quantized)) {
+        return;
+      }
+
+      const now = performance.now();
+      const discreteChanged = hasDiscreteInputChanged(prev, quantized);
+      const elapsed = now - lastInputSentAtRef.current;
+
+      if (discreteChanged || elapsed >= CLIENT_INPUT_CONTINUOUS_INTERVAL_MS) {
+        if (inputFlushTimerRef.current !== null) {
+          window.clearTimeout(inputFlushTimerRef.current);
+          inputFlushTimerRef.current = null;
+        }
+        pendingInputRef.current = null;
+        lastSentInputRef.current = quantized;
+        lastInputSentAtRef.current = now;
+        sendWs({ type: 'player:input', input: quantized });
+      } else {
+        pendingInputRef.current = quantized;
+        if (inputFlushTimerRef.current === null) {
+          const waitMs = Math.max(4, CLIENT_INPUT_CONTINUOUS_INTERVAL_MS - elapsed);
+          inputFlushTimerRef.current = window.setTimeout(() => {
+            inputFlushTimerRef.current = null;
+            const queued = pendingInputRef.current;
+            pendingInputRef.current = null;
+            if (queued && !isSameQuantizedInput(lastSentInputRef.current, queued)) {
+              lastSentInputRef.current = queued;
+              lastInputSentAtRef.current = performance.now();
+              sendWs({ type: 'player:input', input: queued });
+            }
+          }, waitMs);
+        }
+      }
     },
     [sendWs]
   );
@@ -336,7 +445,8 @@ export function App() {
         onRestartRun={handleRestartRun}
         onLeaveRoom={handleLeaveRoom}
         onSendAdminCommand={sendWs}
-        pingMs={pingMs}
+        pingMs={pingDiagnostics.pingMs}
+        pingDiagnostics={pingDiagnostics}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
         onReturnToTavern={() => handleJoinRoom('TAVERN-HUB', selectedClass)}

@@ -48,8 +48,8 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                   {snapshot.difficulty}
                 </span>
               </div>
-              <p className="text-xs text-[#A19FAF] font-mono mt-0.5">
-                Tactical Floor Layout · Press [M] or [Esc] to return to combat
+              <p className="text-xs text-[#A19FAF] font-mono mt-0.5 tabular-nums">
+                Rooms {snapshot.combatRoomsCleared ?? 0}/{snapshot.combatRoomsTotal ?? 0} · Boss Wards {snapshot.bossWards ?? 0} · Guardians Left {snapshot.guardiansRemaining ?? 0} · Press [M] or [Esc]
               </p>
             </div>
           </div>
@@ -101,6 +101,7 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                 const flags = flagMap.get(room.id);
                 const discovered = flags ? flags.discovered : room.discovered;
                 const cleared = flags ? flags.cleared : room.cleared;
+                const isGuardian = Boolean(room.guardian || flags?.guardian);
 
                 if (!discovered && room.type !== 'boss') {
                   return (
@@ -125,7 +126,7 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
 
                 if (room.type === 'boss') {
                   bgClass = 'bg-[#7F1D1D] border-[#EF4444] animate-pulse';
-                  typeTag = '[BOSS GUARDIAN]';
+                  typeTag = '[BOSS SANCTUM]';
                   tagColor = 'text-[#FCA5A5]';
                 } else if (room.type === 'treasure') {
                   bgClass = 'bg-[#78350F] border-[#F59E0B]';
@@ -139,6 +140,12 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                   bgClass = 'bg-[#1E293B] border-[#64748B]';
                   typeTag = '[START]';
                   tagColor = 'text-[#CBD5E1]';
+                } else if (isGuardian) {
+                  bgClass = cleared
+                    ? 'bg-[#064E3B]/70 border-[#10B981]'
+                    : 'bg-[#451A03] border-[#F59E0B]';
+                  typeTag = '[GUARDIAN]';
+                  tagColor = cleared ? 'text-[#6EE7B7]' : 'text-[#FCD34D]';
                 } else if (!cleared) {
                   bgClass = 'bg-[#334155] border-[#64748B]';
                   typeTag = '[HOSTILE]';
@@ -161,7 +168,7 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                     </span>
                     {room.type !== 'start' && (
                       <span className="text-[9px] text-[#A19FAF]">
-                        {cleared ? 'CLEARED' : 'UNCLEARED'}
+                        {cleared ? 'CLEARED' : isGuardian ? 'SEAL ACTIVE' : 'UNCLEARED'}
                       </span>
                     )}
                   </div>
@@ -174,13 +181,21 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
                   className={`absolute w-4 h-4 -ml-2 -mt-2 rounded-full border-2 flex items-center justify-center font-mono text-[8px] font-bold ${
                     snapshot.bossDefeated
                       ? 'bg-[#10B981] border-[#6EE7B7] text-black animate-bounce'
-                      : 'bg-[#0284C7] border-[#38BDF8] text-white'
+                      : snapshot.bossRoomCleared
+                        ? 'bg-[#D97706] border-[#FCD34D] text-black'
+                        : 'bg-[#0284C7] border-[#38BDF8] text-white'
                   }`}
                   style={{
                     left: Math.floor(map.portalPos.x / TILE_SIZE) * scale,
                     top: Math.floor(map.portalPos.y / TILE_SIZE) * scale,
                   }}
-                  title="Floor Portal"
+                  title={
+                    snapshot.bossDefeated
+                      ? 'Floor Portal (Unlocked)'
+                      : snapshot.bossRoomCleared
+                        ? `Floor Portal (Sealed by ${snapshot.guardiansRemaining ?? 0} Guardian Room)`
+                        : 'Floor Portal (Sealed by Floor Boss)'
+                  }
                 >
                   P
                 </div>
@@ -258,7 +273,11 @@ export const ExpandedMapModal: React.FC<ExpandedMapModalProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3.5 h-3.5 rounded-full bg-[#DC2626] border border-[#F87171]" />
-              <span>Boss Guardian</span>
+              <span>Floor Boss</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 bg-[#451A03] border border-[#F59E0B]" />
+              <span>Guardian Chamber</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 bg-[#78350F] border border-[#F59E0B]" />

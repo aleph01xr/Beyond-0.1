@@ -7,6 +7,13 @@ import express from 'express';
 import pg from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameRoom } from './src/server/gameEngine.ts';
+import {
+  broadcastSerialized,
+  RoomClientIndex,
+  sendJsonMessage,
+  type ManagedWsClient,
+  type SendFrameOptions,
+} from './src/server/wsTransport.ts';
 import type {
   AccountRecord,
   ClientMessage,
@@ -463,15 +470,18 @@ function createAccount(
   return rec;
 }
 
-interface ConnectedClient {
+interface ConnectedClient extends ManagedWsClient {
   ws: WebSocket;
   userId: string;
   username: string;
   roomId: string | null;
+  droppedTicks: number;
+  totalDroppedTicks: number;
 }
 
 const rooms = new Map<string, GameRoom>();
 const clients = new Set<ConnectedClient>();
+const roomClientIndex = new RoomClientIndex<ConnectedClient>();
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -482,13 +492,19 @@ function generateRoomCode(): string {
   return rooms.has(code) ? generateRoomCode() : code;
 }
 
-function sendJson(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(msg));
-  }
+function sendJson(ws: WebSocket, msg: ServerMessage, options?: SendFrameOptions): void {
+  sendJsonMessage(ws, msg, options);
 }
 
 function broadcastRoomList(): void {
+  const lobbyTargets: ConnectedClient[] = [];
+  for (const c of clients) {
+    if (!c.roomId || c.roomId === 'TAVERN-HUB') {
+      lobbyTargets.push(c);
+    }
+  }
+  if (lobbyTargets.length === 0) return;
+
   const summaries = Array.from(rooms.values())
     .filter((r) => r.roomId !== 'TAVERN-HUB')
     .map((r) => r.getSummary());
@@ -497,17 +513,17 @@ function broadcastRoomList(): void {
     rooms: summaries,
     onlineCount: clients.size,
   };
-  for (const c of clients) {
-    if (!c.roomId || c.roomId === 'TAVERN-HUB') {
-      sendJson(c.ws, payload);
-    }
-  }
+  broadcastSerialized(lobbyTargets, payload, { droppable: true });
 }
 
-function broadcastToRoom(roomId: string, msg: ServerMessage): void {
-  for (const c of clients) {
-    if (c.roomId === roomId) {
-      sendJson(c.ws, msg);
+function broadcastToRoom(roomId: string, msg: ServerMessage, options: SendFrameOptions = {}): void {
+  const stats = broadcastSerialized(roomClientIndex.getRoomClients(roomId), msg, options);
+  if (stats.closedCount > 0) {
+    for (const c of Array.from(roomClientIndex.getRoomClients(roomId))) {
+      if (c.ws.readyState !== WebSocket.OPEN) {
+        roomClientIndex.removeFromRoom(c, roomId);
+        clients.delete(c);
+      }
     }
   }
 }
@@ -576,11 +592,11 @@ function createManagedRoom(opts: {
 function leaveCurrentRoom(client: ConnectedClient): void {
   if (!client.roomId) return;
   const oldRoomId = client.roomId;
-  client.roomId = null;
+  roomClientIndex.removeFromRoom(client, oldRoomId);
   const room = rooms.get(oldRoomId);
   if (room) {
-    const stillConnected = Array.from(clients).some(
-      (other) => other.userId === client.userId && other.roomId === oldRoomId
+    const stillConnected = Array.from(roomClientIndex.getRoomClients(oldRoomId)).some(
+      (other) => other.userId === client.userId
     );
     if (!stillConnected) {
       room.removePlayer(client.userId);
@@ -950,7 +966,11 @@ async function startServer() {
   });
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({
+    server,
+    path: '/ws',
+    maxPayload: 64 * 1024,
+  });
 
   wss.on('connection', (ws, req) => {
     // --- WebSocket Handshake Origin Validation ---
@@ -980,6 +1000,8 @@ async function startServer() {
       userId: acc.id,
       username: acc.username,
       roomId: null,
+      droppedTicks: 0,
+      totalDroppedTicks: 0,
     };
     clients.add(client);
     broadcastRoomList();
@@ -1038,7 +1060,7 @@ async function startServer() {
           attributePoints: acc.attributePoints || 0,
           storage: acc.storedRelics || [],
         });
-        client.roomId = room.roomId;
+        roomClientIndex.assignRoom(client, room.roomId);
 
         sendJson(ws, {
           type: 'room:joined',
@@ -1094,7 +1116,7 @@ async function startServer() {
           attributePoints: acc.attributePoints || 0,
           storage: acc.storedRelics || [],
         });
-        client.roomId = room.roomId;
+        roomClientIndex.assignRoom(client, room.roomId);
 
         sendJson(ws, {
           type: 'room:joined',
@@ -1443,6 +1465,11 @@ async function startServer() {
       leaveCurrentRoom(client);
       broadcastRoomList();
     });
+
+    ws.on('error', () => {
+      clients.delete(client);
+      leaveCurrentRoom(client);
+    });
   });
 
   const TICK_MS = 50;
@@ -1456,8 +1483,10 @@ async function startServer() {
       }
       const prevStatus = room.status;
       room.tick(TICK_MS);
-      const snapshot = room.buildSnapshot();
-      broadcastToRoom(roomId, { type: 'room:tick', snapshot });
+      if (roomClientIndex.getRoomClientCount(roomId) > 0) {
+        const snapshot = room.buildSnapshot();
+        broadcastToRoom(roomId, { type: 'room:tick', snapshot }, { droppable: true });
+      }
       if (room.status !== prevStatus) {
         broadcastRoomList();
       }

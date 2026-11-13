@@ -221,6 +221,16 @@ export function generateDungeonFloor(
       shrineRoom.type = 'shrine';
       shrineRoom.cleared = true;
     }
+
+    // Designate Elite Guardian combat room(s) that hold the Portal Seal
+    const combatCandidates = sortedByDist.filter((r) => r.type === 'combat');
+    if (combatCandidates.length > 0) {
+      const targetGuardians = floor >= 5 && combatCandidates.length >= 3 ? 2 : 1;
+      for (let g = 0; g < targetGuardians; g++) {
+        const gRoom = combatCandidates[combatCandidates.length - 1 - g];
+        if (gRoom) gRoom.guardian = true;
+      }
+    }
   }
 
   for (const room of rooms) {
@@ -410,7 +420,8 @@ export function generateDungeonFloor(
         value: 55,
       });
     } else if (room.type === 'combat') {
-      const enemyCount = 3 + Math.floor(rng() * 3) + Math.min(2, Math.floor(floor / 2));
+      const baseEnemyCount = 3 + Math.floor(rng() * 3) + Math.min(2, Math.floor(floor / 2));
+      const enemyCount = room.guardian ? Math.max(4, baseEnemyCount) : baseEnemyCount;
       const pool: EnemyKind[] =
         floor === 1
           ? ['slime', 'goblin', 'skeleton']
@@ -448,17 +459,39 @@ export function generateDungeonFloor(
         }
         const ex = spawnTx * TILE_SIZE + TILE_SIZE / 2;
         const ey = spawnTy * TILE_SIZE + TILE_SIZE / 2;
-        const elite = rng() < 0.16 + floor * 0.04;
-        enemies.push(makeEnemy(`en_${floor}_${enemySeq++}`, kind, room.id, ex, ey, hpScale, elite, floor, biomeSpec.id));
+        const isRoomGuardian = Boolean(room.guardian && i === 0);
+        const elite = isRoomGuardian || rng() < 0.16 + floor * 0.04;
+        const enemy = makeEnemy(`en_${floor}_${enemySeq++}`, kind, room.id, ex, ey, hpScale, elite, floor, biomeSpec.id);
+        if (isRoomGuardian) {
+          enemy.name = `Guardian ${enemy.name.replace(/^Elite /, '')}`;
+          enemy.maxHp = Math.round(enemy.maxHp * 1.25);
+          enemy.hp = enemy.maxHp;
+          enemy.radius += 2;
+        }
+        enemies.push(enemy);
       }
 
-      if (rng() > 0.35) {
+      if (room.guardian) {
         props.push({
           id: `prop_${floor}_${propSeq++}`,
-          kind: rng() > 0.65 ? 'chest' : 'crate',
+          kind: 'chest',
+          x: centerWorldX,
+          y: centerWorldY,
+          opened: false,
+          locked: true,
+          roomId: room.id,
+          value: 45 + floor * 12,
+        });
+      } else if (rng() > 0.35) {
+        const propKind = rng() > 0.65 ? 'chest' : 'crate';
+        props.push({
+          id: `prop_${floor}_${propSeq++}`,
+          kind: propKind,
           x: (room.x + 1.8) * TILE_SIZE,
           y: (room.y + room.h - 1.8) * TILE_SIZE,
           opened: false,
+          locked: propKind === 'chest',
+          roomId: room.id,
           value: 20 + floor * 8,
         });
       }

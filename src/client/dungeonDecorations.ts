@@ -29,7 +29,8 @@ export function drawDungeonPortal(
   bossDefeated: boolean,
   now: number,
   biome: BiomeId,
-  floor = 1
+  floor = 1,
+  sealText?: string
 ): void {
   const roundPx = Math.round(px);
   const roundPy = Math.round(py);
@@ -245,14 +246,15 @@ export function drawDungeonPortal(
     ctx.save();
     ctx.font = '600 10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    const label = ' SEALED · GUARDIAN AWAKE';
+    const label = sealText || 'SEALED · GUARDIAN AWAKE';
+    const isGuardianSeal = label.includes('GUARDIANS');
     const tw = ctx.measureText(label).width;
-    ctx.fillStyle = 'rgba(15, 15, 22, 0.8)';
+    ctx.fillStyle = 'rgba(15, 15, 22, 0.85)';
     ctx.fillRect(roundPx - tw / 2 - 5, roundPy - 36, tw + 10, 14);
-    ctx.strokeStyle = '#475569';
+    ctx.strokeStyle = isGuardianSeal ? '#F59E0B' : '#475569';
     ctx.lineWidth = 1;
     ctx.strokeRect(roundPx - tw / 2 - 5, roundPy - 36, tw + 10, 14);
-    ctx.fillStyle = '#94A3B8';
+    ctx.fillStyle = isGuardianSeal ? '#FDE68A' : '#94A3B8';
     ctx.fillText(label, roundPx, roundPy - 26);
     ctx.restore();
   }
@@ -666,12 +668,36 @@ export function drawDungeonProp(
       ctx.fillRect(x - 13, y - 3, 26, 3);
 
       // Brass Lockplate & Keyhole
-      ctx.fillStyle = '#F59E0B';
+      ctx.fillStyle = prop.locked ? '#DC2626' : '#F59E0B';
       ctx.fillRect(x - 3, y - 4, 6, 6);
-      ctx.fillStyle = '#FEF08A';
+      ctx.fillStyle = prop.locked ? '#FCA5A5' : '#FEF08A';
       ctx.fillRect(x - 2, y - 3, 4, 3);
       ctx.fillStyle = '#18181B';
       ctx.fillRect(x - 1, y - 2, 2, 3);
+
+      if (prop.locked) {
+        // Arcane ward chains and LOCKED tag until room enemies fall
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.72)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(x - 14, y - 13);
+        ctx.lineTo(x + 14, y + 8);
+        ctx.moveTo(x + 14, y - 13);
+        ctx.lineTo(x - 14, y + 8);
+        ctx.stroke();
+
+        ctx.save();
+        ctx.font = '700 8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(20, 10, 14, 0.88)';
+        ctx.fillRect(x - 20, y - 26, 40, 11);
+        ctx.strokeStyle = '#EF4444';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - 20, y - 26, 40, 11);
+        ctx.fillStyle = '#FCA5A5';
+        ctx.fillText('LOCKED', x, y - 18);
+        ctx.restore();
+      }
 
     } else {
       // Opened Chest

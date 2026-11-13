@@ -12,7 +12,9 @@ import {
   type EnemyResistances,
   type EnemyState,
   type FieldZoneState,
+  FLOOR_BLESSINGS,
   type FloatingEvent,
+  type FloorBlessingId,
   type GameSnapshot,
   type HeroClassId,
   type NpcState,
@@ -22,6 +24,7 @@ import {
   type PlayerStatusType,
   type ProjectileState,
   type PropState,
+  type RoomNode,
   type RoomSummary,
   type TrainingDummyState,
 } from '../shared/types.ts';
@@ -64,6 +67,7 @@ export class GameRoom {
   private zoneTickAccumMs = 0;
   private statusDotAccumMs = 0;
   private clericAuraAccumMs = 0;
+  private floorMasteryAwarded = false;
   public onFloorClearedCallback?: (playerIds: string[], floor: number) => void;
   public onKillCallback?: (playerId: string) => void;
   public onReviveCallback?: (playerId: string) => void;
@@ -142,10 +146,40 @@ export class GameRoom {
     const floorBonus = (this.floor - 1) * 2;
     const partyScale = 1 + Math.max(0, this.players.size - 1) * 0.10;
     let dmg = (baseHit + floorBonus) * diffMult * partyScale;
+    if (enemy && enemy.kind === 'boss' && this.floor > 0) {
+      const wards = this.getBossWards();
+      if (wards > 0) {
+        dmg *= 1 + Math.min(0.28, wards * 0.07);
+      }
+    }
     if (enemy && (enemy.poisonedMs || 0) > 0) {
       dmg *= 0.70;
     }
     return Math.max(1, Math.round(dmg));
+  }
+
+  public getBlessingStacks(p: PlayerState, kind: FloorBlessingId): number {
+    return (p.floorBlessings || []).filter((b) => b === kind).length;
+  }
+
+  public getMaxBossWards(): number {
+    if (this.floor <= 0 || !this.map) return 0;
+    return this.map.rooms.filter((r) => r.type === 'combat').length;
+  }
+
+  public getBossWards(): number {
+    if (this.floor <= 0 || !this.map) return 0;
+    return this.map.rooms.filter((r) => r.type === 'combat' && !r.cleared).length;
+  }
+
+  public getGuardiansTotal(): number {
+    if (this.floor <= 0 || !this.map) return 0;
+    return this.map.rooms.filter((r) => r.type === 'combat' && r.guardian).length;
+  }
+
+  public getGuardiansRemaining(): number {
+    if (this.floor <= 0 || !this.map) return 0;
+    return this.map.rooms.filter((r) => r.type === 'combat' && r.guardian && !r.cleared).length;
   }
 
   public computeHealingAmount(
@@ -236,6 +270,8 @@ export class GameRoom {
       this.spawnPoint = generated.spawnPoint;
     }
 
+    this.floorMasteryAwarded = false;
+
     let idx = 0;
     for (const pr of this.players.values()) {
       const offsetAngle = (idx * Math.PI) / 2;
@@ -243,6 +279,7 @@ export class GameRoom {
       pr.state.y = this.spawnPoint.y + Math.sin(offsetAngle) * 20;
       pr.state.readyNextFloor = false;
       pr.state.statuses = [];
+      pr.state.floorBlessings = [];
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -524,6 +561,7 @@ export class GameRoom {
       pr.state.relics = [];
       pr.state.pendingRelicChoices = [];
       pr.state.statuses = [];
+      pr.state.floorBlessings = [];
       pr.state.downed = false;
       pr.state.downedTimerMs = 0;
       pr.state.reviveProgress = 0;
@@ -644,6 +682,7 @@ export class GameRoom {
       faith: savedStats?.faith || 0,
       attributePoints: savedStats?.attributePoints || 0,
       statuses: [],
+      floorBlessings: [],
     };
 
     if (state.level >= MAX_LEVEL) {
@@ -1113,7 +1152,8 @@ export class GameRoom {
     const def = HERO_CLASSES[p.heroClass];
     const intCdr = Math.min(0.20, (p.intelligence || 0) * 0.002);
     const relicCdr = p.relics.includes('hourglass_shard') ? 0.25 : 0;
-    const cdrMult = Math.max(0.55, 1 - (intCdr + relicCdr));
+    const blessingCdr = this.getBlessingStacks(p, 'swiftness') * 0.08;
+    const cdrMult = Math.max(0.50, 1 - (intCdr + relicCdr + blessingCdr));
 
     const isSilenced = p.statuses && p.statuses.some(s => s.type === 'silenced');
 
@@ -1258,6 +1298,17 @@ export class GameRoom {
         if (prop.opened) continue;
         const dist = Math.hypot(prop.x - p.x, prop.y - p.y);
         if (dist <= 62) {
+          if (prop.locked && prop.roomId !== undefined) {
+            const lockedRoom = this.map.rooms.find((r) => r.id === prop.roomId);
+            const stillAlive =
+              (lockedRoom && !lockedRoom.cleared) ||
+              this.enemies.some((e) => e.roomId === prop.roomId && e.hp > 0);
+            if (stillAlive) {
+              this.emitEvent('status', prop.x, prop.y - 24, 'LOCKED · CLEAR ROOM!', '#EF4444');
+              return {};
+            }
+            prop.locked = false;
+          }
           prop.opened = true;
           if (prop.kind === 'chest' || prop.kind === 'crate') {
             for (const ally of this.players.values()) {
@@ -1463,6 +1514,7 @@ export class GameRoom {
       if (p.ultCooldownMs > 0) return {};
       p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
+      p.attackAnimMs = 280;
 
       if (p.heroClass === 'vanguard') {
         this.zones.push({
@@ -1536,6 +1588,8 @@ export class GameRoom {
       mult *= (1 + mainStat * 0.03);
     }
     if (p.relics.includes('sunfire_signet')) mult *= 1.24;
+    const furyStacks = this.getBlessingStacks(p, 'fury');
+    if (furyStacks > 0) mult *= 1 + furyStacks * 0.10;
     return mult;
   }
 
@@ -2043,6 +2097,8 @@ export class GameRoom {
       let moveSpeed = def.speed * (1 + (p.dexterity || 0) * 0.0035);
       if (p.relics.includes('zephyr_greaves')) moveSpeed *= 1.15;
       if (p.hasteMs > 0) moveSpeed *= 1.22;
+      const swiftStacks = this.getBlessingStacks(p, 'swiftness');
+      if (swiftStacks > 0) moveSpeed *= 1 + swiftStacks * 0.08;
       if (p.speedBoost) moveSpeed *= 1.8;
 
       // Floor 2: Frostbite - Reduces movement speed
@@ -2139,7 +2195,7 @@ export class GameRoom {
       }
 
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const dexSpeedMult = 1 + (p.dexterity || 0) * 0.006;
+        const dexSpeedMult = (1 + (p.dexterity || 0) * 0.006) * (1 + this.getBlessingStacks(p, 'swiftness') * 0.08);
         let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         if (p.statuses.some(s => s.type === 'frostbite')) {
           hasteFactor *= 1.25; // 25% attack delay penalty
@@ -3663,28 +3719,176 @@ export class GameRoom {
       }
     }
 
+    let anyRoomNewlyCleared = false;
+    let bossJustCleared = false;
     for (const room of this.map.rooms) {
       if (!room.cleared) {
-        const aliveInRoom = this.enemies.some((e) => e.roomId === room.id);
+        const aliveInRoom = this.enemies.some((e) => e.roomId === room.id && e.hp > 0);
         if (!aliveInRoom) {
           room.cleared = true;
+          anyRoomNewlyCleared = true;
+
+          for (const prop of this.props) {
+            if (prop.roomId === room.id && prop.locked) {
+              prop.locked = false;
+            }
+          }
+
           if (room.type === 'boss') {
-            this.map.portalActive = true;
-            this.props.push({
-              id: this.nextId('prop'),
-              kind: 'relic_chest',
-              x: this.map.portalPos.x + 48,
-              y: this.map.portalPos.y,
-              opened: false,
-              value: 1,
-            });
-            this.pushSystemChat(
-              `Floor ${this.floor} Boss vanquished! Open the Relic Vault and press [E] at the Portal.`
-            );
+            bossJustCleared = true;
+            if (!this.props.some((pr) => pr.kind === 'relic_chest' && pr.roomId === room.id)) {
+              this.props.push({
+                id: this.nextId('prop'),
+                kind: 'relic_chest',
+                x: this.map.portalPos.x + 48,
+                y: this.map.portalPos.y,
+                opened: false,
+                roomId: room.id,
+                value: 1,
+              });
+            }
+          } else if (room.type === 'combat' && this.floor > 0) {
+            this.awardCombatRoomClear(room);
           }
         }
       }
     }
+
+    const combatRooms = this.map.rooms.filter((r) => r.type === 'combat');
+    if (
+      this.floor > 0 &&
+      anyRoomNewlyCleared &&
+      !this.floorMasteryAwarded &&
+      combatRooms.length > 0 &&
+      combatRooms.every((r) => r.cleared)
+    ) {
+      this.awardFullFloorMastery();
+    }
+
+    const bossRoom = this.map.rooms.find((r) => r.type === 'boss');
+    if (bossRoom && bossRoom.cleared) {
+      const guardiansRemaining = this.getGuardiansRemaining();
+      if (guardiansRemaining === 0) {
+        if (!this.map.portalActive) {
+          this.map.portalActive = true;
+          this.emitEvent(
+            'status',
+            this.map.portalPos.x,
+            this.map.portalPos.y - 34,
+            'PORTAL UNLOCKED!',
+            '#34D399'
+          );
+          this.pushSystemChat(
+            bossJustCleared
+              ? `Floor ${this.floor} Boss vanquished! Open the Relic Vault and press [E] at the Portal.`
+              : `Final Sanctum Guardian defeated! Floor ${this.floor} Exit Portal is now unsealed.`
+          );
+        }
+      } else if (bossJustCleared) {
+        this.emitEvent(
+          'status',
+          this.map.portalPos.x,
+          this.map.portalPos.y - 34,
+          `PORTAL SEALED · ${guardiansRemaining} GUARDIAN${guardiansRemaining > 1 ? 'S' : ''}`,
+          '#F59E0B'
+        );
+        this.pushSystemChat(
+          `Floor ${this.floor} Boss vanquished, but the Exit Portal remains sealed! Defeat the remaining ${guardiansRemaining} Guardian chamber${guardiansRemaining > 1 ? 's' : ''} to unlock the descent.`
+        );
+      }
+    }
+  }
+
+  private awardCombatRoomClear(room: RoomNode): void {
+    const isGuardian = Boolean(room.guardian);
+    const centerX = room.cx * TILE_SIZE + TILE_SIZE / 2;
+    const centerY = room.cy * TILE_SIZE + TILE_SIZE / 2;
+
+    const floorXpBonus = 1 + (this.floor - 1) * 0.35;
+    const diffXpBonus =
+      this.difficulty === 'Abyssal' ? 1.5 : this.difficulty === 'Heroic' ? 1.25 : 1.0;
+    const bonusXp = Math.round((isGuardian ? 95 : 55) * floorXpBonus * diffXpBonus);
+    const bonusGold = (isGuardian ? 45 : 24) + this.floor * (isGuardian ? 12 : 8);
+
+    const blessingOrder: FloorBlessingId[] = ['fury', 'swiftness', 'bastion'];
+    const blessing = blessingOrder[(room.id + this.floor) % blessingOrder.length];
+    const blessingMeta = FLOOR_BLESSINGS[blessing];
+
+    for (const ally of this.players.values()) {
+      const st = ally.state;
+      st.gold += bonusGold;
+      if (!st.floorBlessings) st.floorBlessings = [];
+      st.floorBlessings.push(blessing);
+
+      if (blessing === 'bastion') {
+        const bastionCap = 60 + this.getBlessingStacks(st, 'bastion') * 15;
+        st.shield = Math.min(bastionCap, st.shield + 20);
+      }
+
+      if (!st.downed) {
+        const healAmt = isGuardian ? 22 : 12;
+        st.hp = Math.min(st.maxHp, st.hp + healAmt);
+      }
+
+      this.grantXp(st, bonusXp);
+      this.emitEvent('gold', st.x, st.y - 16, `+${bonusGold}g · +${bonusXp} XP`, '#F4D378');
+      this.emitEvent(
+        'status',
+        st.x,
+        st.y - 34,
+        `${blessingMeta.name} (${blessingMeta.shortTag})`,
+        blessingMeta.color
+      );
+    }
+
+    this.emitEvent(
+      'status',
+      centerX,
+      centerY - 24,
+      isGuardian ? 'GUARDIAN DEFEATED!' : 'ROOM CLEARED!',
+      isGuardian ? '#F59E0B' : '#34D399'
+    );
+
+    const activeBoss = this.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
+    const remainingWards = this.getBossWards();
+    if (activeBoss) {
+      this.emitEvent(
+        'status',
+        activeBoss.x,
+        activeBoss.y - activeBoss.radius - 28,
+        remainingWards > 0 ? `WARD SHATTERED (${remainingWards} LEFT)` : 'ALL WARDS SHATTERED!',
+        '#38BDF8'
+      );
+    }
+
+    this.pushSystemChat(
+      `${isGuardian ? 'Guardian Chamber' : 'Combat Chamber'} cleared! Party earned +${bonusGold}g, +${bonusXp} XP & ${blessingMeta.name}. Boss Wards left: ${remainingWards}.`
+    );
+  }
+
+  private awardFullFloorMastery(): void {
+    this.floorMasteryAwarded = true;
+    const floorXpBonus = 1 + (this.floor - 1) * 0.35;
+    const diffXpBonus =
+      this.difficulty === 'Abyssal' ? 1.5 : this.difficulty === 'Heroic' ? 1.25 : 1.0;
+    const masteryXp = Math.round(130 * floorXpBonus * diffXpBonus);
+    const masteryGold = 60 + this.floor * 15;
+
+    for (const ally of this.players.values()) {
+      const st = ally.state;
+      st.gold += masteryGold;
+      st.attributePoints += 1;
+      if (!st.downed) {
+        st.hp = Math.min(st.maxHp, st.hp + 35);
+      }
+      st.potions = Math.min(5, st.potions + 1);
+      this.grantXp(st, masteryXp);
+      this.emitEvent('status', st.x, st.y - 42, 'FLOOR CLEARED (+1 ATTR PT!)', '#FDE047');
+    }
+
+    this.pushSystemChat(
+      `Floor Mastery achieved! All chambers on Floor ${this.floor} cleared: +${masteryGold}g, +${masteryXp} XP, +1 Potion, and +1 Attribute Point!`
+    );
   }
 
   public firePrimaryAttack(p: PlayerState): void {
@@ -3900,6 +4104,15 @@ export class GameRoom {
     const targetRes = GameRoom.getEnemyResistance(enemy.resistances, cat);
     const markBonus = enemy.markedMs > 0 ? 1.35 : 1.0;
     let finalDmg = Math.max(1, Math.round(rawAmount * (1 - targetRes) * markBonus));
+
+    // Boss Sanctum Wards: Each uncleared side combat room shields the boss (-12% dmg taken per ward, max -48%)
+    if (enemy.kind === 'boss' && this.floor > 0) {
+      const activeWards = this.getBossWards();
+      if (activeWards > 0) {
+        const wardMitigation = Math.min(0.48, activeWards * 0.12);
+        finalDmg = Math.max(1, Math.round(finalDmg * (1 - wardMitigation)));
+      }
+    }
 
     // Floor 6: Elyndor Charmed Trance - Mesmerized player deals 35% reduced outgoing damage
     if (attacker && attacker.statuses && attacker.statuses.some(s => s.type === 'charmed')) {
@@ -4173,16 +4386,16 @@ export class GameRoom {
       }
     }
 
-    if (Math.random() < 0.55 || enemy.kind === 'boss') {
+    if (enemy.elite || enemy.kind === 'boss' || Math.random() < 0.60) {
       this.props.push({
         id: this.nextId('prop'),
         kind: 'coin',
         x: enemy.x,
         y: enemy.y,
         opened: false,
-        value: enemy.kind === 'boss' ? 75 : enemy.elite ? 18 : 8,
+        value: enemy.kind === 'boss' ? 90 : enemy.elite ? 24 : 11,
       });
-    } else if (Math.random() < 0.14) {
+    } else if (Math.random() < 0.15) {
       this.props.push({
         id: this.nextId('prop'),
         kind: 'potion',
@@ -4193,7 +4406,7 @@ export class GameRoom {
       });
     }
 
-    const baseMobXp = enemy.kind === 'boss' ? 120 : enemy.elite ? 35 : 18;
+    const baseMobXp = enemy.kind === 'boss' ? 110 : enemy.elite ? 48 : 24;
     const floorXpBonus = 1 + (this.floor - 1) * 0.35;
     const diffXpBonus = this.difficulty === 'Abyssal' ? 1.5 : this.difficulty === 'Heroic' ? 1.25 : 1.0;
     const xpGain = Math.round(baseMobXp * floorXpBonus * diffXpBonus);
@@ -4275,6 +4488,10 @@ export class GameRoom {
     }
     if (damageType === 'elemental' && (p.intelligence || 0) > 0) {
       resist += Math.min(0.15, (p.intelligence || 0) * 0.0015);
+    }
+    const bastionStacks = this.getBlessingStacks(p, 'bastion');
+    if (bastionStacks > 0) {
+      resist += bastionStacks * 0.06;
     }
     resist = Math.min(0.75, Math.max(0, resist));
 
@@ -4509,8 +4726,42 @@ export class GameRoom {
 
   public buildSnapshot(): GameSnapshot {
     const events = this.pendingEvents.splice(0, this.pendingEvents.length);
-    const activePlayers = Array.from(this.players.values()).map((r) => r.state);
-    const portalReadyCount = activePlayers.filter((p) => p.readyNextFloor).length;
+    const activePlayers: PlayerState[] = [];
+    let portalReadyCount = 0;
+    for (const r of this.players.values()) {
+      activePlayers.push(r.state);
+      if (r.state.readyNextFloor) {
+        portalReadyCount++;
+      }
+    }
+
+    let combatRoomsTotal = 0;
+    let combatRoomsCleared = 0;
+    let bossRoomCleared = false;
+    const roomClearedFlags = new Array<{
+      id: number;
+      cleared: boolean;
+      discovered: boolean;
+      guardian?: boolean;
+      type?: RoomNode['type'];
+    }>(this.map.rooms.length);
+
+    for (let i = 0; i < this.map.rooms.length; i++) {
+      const r = this.map.rooms[i];
+      if (r.type === 'combat') {
+        combatRoomsTotal++;
+        if (r.cleared) combatRoomsCleared++;
+      } else if (r.type === 'boss') {
+        bossRoomCleared = Boolean(r.cleared);
+      }
+      roomClearedFlags[i] = {
+        id: r.id,
+        cleared: r.cleared,
+        discovered: r.discovered,
+        guardian: r.guardian,
+        type: r.type,
+      };
+    }
 
     return {
       roomId: this.roomId,
@@ -4521,6 +4772,14 @@ export class GameRoom {
       seed: this.baseSeed,
       elapsedSec: Math.floor((Date.now() - this.startedAt) / 1000),
       bossDefeated: this.map.portalActive,
+      bossRoomCleared,
+      bossWards: this.getBossWards(),
+      maxBossWards: this.getMaxBossWards(),
+      guardiansRemaining: this.getGuardiansRemaining(),
+      guardiansTotal: this.getGuardiansTotal(),
+      combatRoomsCleared,
+      combatRoomsTotal,
+      floorMasteryAwarded: this.floorMasteryAwarded,
       portalReadyCount,
       players: activePlayers,
       enemies: this.enemies,
@@ -4530,11 +4789,7 @@ export class GameRoom {
       npcs: this.npcs,
       trainingDummies: this.trainingDummies,
       events,
-      roomClearedFlags: this.map.rooms.map((r) => ({
-        id: r.id,
-        cleared: r.cleared,
-        discovered: r.discovered,
-      })),
+      roomClearedFlags,
     };
   }
 }

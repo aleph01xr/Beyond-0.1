@@ -350,6 +350,35 @@ export const RELIC_CATALOG: RelicDef[] = [
 
 export const TILE_SIZE = 32;
 
+export type FloorBlessingId = 'fury' | 'swiftness' | 'bastion';
+
+export const FLOOR_BLESSINGS: Record<
+  FloorBlessingId,
+  { id: FloorBlessingId; name: string; summary: string; color: string; shortTag: string }
+> = {
+  fury: {
+    id: 'fury',
+    name: "Warlord's Fury",
+    summary: '+10% outgoing attack & skill damage on this floor',
+    color: '#F97316',
+    shortTag: '+DMG',
+  },
+  swiftness: {
+    id: 'swiftness',
+    name: "Windrunner's Grace",
+    summary: '+8% movement speed & faster cooldowns on this floor',
+    color: '#34D399',
+    shortTag: '+SPD',
+  },
+  bastion: {
+    id: 'bastion',
+    name: 'Iron Sanctum',
+    summary: '+6% damage reduction & instant +20 Shield',
+    color: '#60A5FA',
+    shortTag: '+DEF',
+  },
+};
+
 export interface RoomNode {
   id: number;
   x: number;
@@ -361,6 +390,7 @@ export interface RoomNode {
   type: 'start' | 'combat' | 'treasure' | 'shrine' | 'boss';
   cleared: boolean;
   discovered: boolean;
+  guardian?: boolean;
 }
 
 export interface DungeonMap {
@@ -445,6 +475,7 @@ export interface PlayerState {
   faith: number;
   attributePoints: number;
   statuses: PlayerStatusEffect[];
+  floorBlessings?: FloorBlessingId[];
 }
 
 export type PlayerStatusType =
@@ -552,6 +583,8 @@ export interface PropState {
   y: number;
   opened: boolean;
   value: number;
+  locked?: boolean;
+  roomId?: number;
 }
 
 export interface FieldZoneState {
@@ -660,6 +693,14 @@ export interface GameSnapshot {
   seed: number;
   elapsedSec: number;
   bossDefeated: boolean;
+  bossRoomCleared?: boolean;
+  bossWards?: number;
+  maxBossWards?: number;
+  guardiansRemaining?: number;
+  guardiansTotal?: number;
+  combatRoomsCleared?: number;
+  combatRoomsTotal?: number;
+  floorMasteryAwarded?: boolean;
   portalReadyCount: number;
   players: PlayerState[];
   enemies: EnemyState[];
@@ -669,7 +710,13 @@ export interface GameSnapshot {
   npcs: NpcState[];
   trainingDummies: TrainingDummyState[];
   events: FloatingEvent[];
-  roomClearedFlags: { id: number; cleared: boolean; discovered: boolean }[];
+  roomClearedFlags: {
+    id: number;
+    cleared: boolean;
+    discovered: boolean;
+    guardian?: boolean;
+    type?: RoomNode['type'];
+  }[];
 }
 
 export interface UserProfile {

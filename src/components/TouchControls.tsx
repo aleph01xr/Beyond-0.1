@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
-import {
-  HERO_CLASSES,
-  type EnemyState,
-  type PlayerState,
+import type {
+  EnemyState,
+  GameSnapshot,
+  PlayerState,
 } from '../shared/types.ts';
+import { HERO_CLASSES } from '../shared/types.ts';
 
 export type JoystickSizeOption = 'small' | 'medium' | 'large' | 'huge';
 export type JoystickModeOption = 'fixed' | 'floating';
@@ -48,6 +49,7 @@ const BUTTON_CONFIGS: Record<
 interface TouchControlsProps {
   player: PlayerState;
   enemies: EnemyState[];
+  latestSnapshotRef?: React.MutableRefObject<GameSnapshot | null>;
   nearInteractable: boolean;
   onStickMove: (stickX: number, stickY: number, aimAngle?: number) => void;
   onAttackPress: (pressed: boolean, aimAngle?: number) => void;
@@ -84,6 +86,7 @@ export function saveTouchSettings(s: TouchSettings): void {
 export const TouchControls: React.FC<TouchControlsProps> = ({
   player,
   enemies,
+  latestSnapshotRef,
   nearInteractable,
   onStickMove,
   onAttackPress,
@@ -152,15 +155,18 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   };
 
   const getAutoTargetAngle = () => {
+    const liveSnap = latestSnapshotRef?.current;
+    const livePlayer = liveSnap?.players.find((p) => p.id === player.id) ?? player;
+    const liveEnemies = liveSnap?.enemies ?? enemies;
     let nearestDist = Infinity;
-    let targetAngle = player.aimAngle;
-    const maxDist = player.heroClass === 'vanguard' ? 140 : 460;
-    for (const en of enemies) {
+    let targetAngle = livePlayer.aimAngle;
+    const maxDist = livePlayer.heroClass === 'vanguard' ? 140 : 460;
+    for (const en of liveEnemies) {
       if (en.hp <= 0) continue;
-      const d = Math.hypot(en.x - player.x, en.y - player.y);
+      const d = Math.hypot(en.x - livePlayer.x, en.y - livePlayer.y);
       if (d < nearestDist && d <= maxDist) {
         nearestDist = d;
-        targetAngle = Math.atan2(en.y - player.y, en.x - player.x);
+        targetAngle = Math.atan2(en.y - livePlayer.y, en.x - livePlayer.x);
       }
     }
     return targetAngle;
