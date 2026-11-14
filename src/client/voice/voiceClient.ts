@@ -10,16 +10,22 @@ export interface VoiceParticipantState {
   volume: number;
 }
 
+export type VoiceConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
 export class VoiceClientManager {
   private room: Room | null = null;
   private currentRoomId: string | null = null;
-  private isConnected = false;
   private isMicEnabled = false;
   private isDeafened = false;
   private locallyMutedUsers = new Set<string>();
   private listeners: (() => void)[] = [];
   private participantsState = new Map<string, VoiceParticipantState>();
   private audioElements = new Map<string, HTMLAudioElement>();
+  private abortController: AbortController | null = null;
+
+  public connectionState: VoiceConnectionState = 'disconnected';
+  public lastError: string | null = null;
+  public httpStatus: number | null = null;
 
   constructor() {}
 
@@ -37,10 +43,25 @@ export class VoiceClientManager {
   }
 
   public async connect(roomId: string, tokenAuthHeader: string, userId: string, username: string) {
-    if (this.isConnected && this.currentRoomId === roomId) return;
-    await this.disconnect();
+    if (this.connectionState === 'connected' && this.currentRoomId === roomId) {
+      return;
+    }
+
+    // Cancel any ongoing connection attempt
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+
+    await this.disconnectInternal();
 
     this.currentRoomId = roomId;
+    this.connectionState = 'connecting';
+    this.lastError = null;
+    this.httpStatus = null;
+    this.notify();
+
+    console.log(`[VoiceClient] Requesting token for room: ${roomId}`);
 
     try {
       const res = await fetch(getApiEndpoint('/api/voice/token'), {
@@ -50,15 +71,32 @@ export class VoiceClientManager {
           ...(tokenAuthHeader ? { Authorization: tokenAuthHeader } : {}),
         },
         body: JSON.stringify({ roomId }),
+        signal: this.abortController.signal,
       });
 
+      this.httpStatus = res.status;
+
       if (!res.ok) {
-        console.warn('Voice chat token request failed or LiveKit not configured.');
+        const errData = await res.json().catch(() => ({}));
+        const errMessage = errData.error || `Server responded with status ${res.status}`;
+        console.warn(`[VoiceClient] Token request failed (${res.status}):`, errMessage);
+        this.connectionState = 'error';
+        this.lastError = errMessage;
+        this.notify();
         return;
       }
 
       const data = (await res.json()) as { token: string; url: string };
-      if (!data || !data.token || !data.url) return;
+      if (!data || !data.token || !data.url) {
+        throw new Error('Invalid token response received from server.');
+      }
+
+      console.log('[VoiceClient] Token received successfully. Connecting to LiveKit...');
+
+      // Guard against stale room changes during async fetch
+      if (this.currentRoomId !== roomId || this.abortController.signal.aborted) {
+        return;
+      }
 
       const room = new Room({
         adaptiveStream: true,
@@ -73,14 +111,19 @@ export class VoiceClientManager {
       this.room = room;
 
       room.on(RoomEvent.Connected, () => {
-        this.isConnected = true;
+        if (this.currentRoomId !== roomId) return;
+        this.connectionState = 'connected';
+        this.lastError = null;
+        console.log(`[VoiceClient] Successfully confirmed LiveKit connection to room: ${roomId}`);
         this.notify();
       });
 
-      room.on(RoomEvent.Disconnected, () => {
-        this.isConnected = false;
-        this.currentRoomId = null;
-        this.notify();
+      room.on(RoomEvent.Disconnected, (reason) => {
+        console.log('[VoiceClient] Disconnected from LiveKit room, reason:', reason);
+        if (this.currentRoomId === roomId) {
+          this.connectionState = 'disconnected';
+          this.notify();
+        }
       });
 
       room.on(RoomEvent.ParticipantConnected, (p) => {
@@ -131,18 +174,22 @@ export class VoiceClientManager {
       await room.connect(data.url, data.token);
       await room.localParticipant.setMicrophoneEnabled(false);
       this.isMicEnabled = false;
-      this.notify();
-    } catch (err) {
-      console.error('Failed to connect to LiveKit voice room:', err);
-      this.isConnected = false;
-      this.currentRoomId = null;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('[VoiceClient] Connection attempt aborted.');
+        return;
+      }
+      console.error('[VoiceClient] Connection failure:', err);
+      this.connectionState = 'error';
+      this.lastError = err.message || 'Failed to establish voice connection.';
       this.notify();
     }
   }
 
-  public async disconnect() {
+  private async disconnectInternal() {
     if (this.room) {
       try {
+        this.room.removeAllListeners();
         await this.room.disconnect();
       } catch {
         // ignore
@@ -155,10 +202,22 @@ export class VoiceClientManager {
     }
     this.audioElements.clear();
     this.participantsState.clear();
-    this.isConnected = false;
+  }
+
+  public async disconnect() {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    await this.disconnectInternal();
+    this.connectionState = 'disconnected';
     this.currentRoomId = null;
     this.isMicEnabled = false;
     this.notify();
+  }
+
+  public get isConnected(): boolean {
+    return this.connectionState === 'connected';
   }
 
   public async toggleMicrophone(): Promise<boolean> {
@@ -171,7 +230,7 @@ export class VoiceClientManager {
       this.isMicEnabled = nextState;
       this.notify();
     } catch (err) {
-      console.error('Failed to toggle microphone:', err);
+      console.error('[VoiceClient] Failed to toggle microphone:', err);
     }
     return this.isMicEnabled;
   }
@@ -185,7 +244,7 @@ export class VoiceClientManager {
       this.isMicEnabled = enabled;
       this.notify();
     } catch (err) {
-      console.error('Failed to set microphone enabled:', err);
+      console.error('[VoiceClient] Failed to set microphone enabled:', err);
     }
   }
 
@@ -284,9 +343,12 @@ export class VoiceClientManager {
 
   public getStatus() {
     return {
+      connectionState: this.connectionState,
       isConnected: this.isConnected,
       isMicEnabled: this.isMicEnabled,
       isDeafened: this.isDeafened,
+      lastError: this.lastError,
+      httpStatus: this.httpStatus,
       participants: Array.from(this.participantsState.values()),
     };
   }

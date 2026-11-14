@@ -900,15 +900,26 @@ async function startServer() {
 
     const room = rooms.get(roomId);
     if (!room) {
+      console.warn(`[Voice] Token request rejected: Room ${roomId} not found.`);
       res.status(404).json({ error: 'Game room not found.' });
       return;
     }
+
+    // Validate actual room membership
+    if (!room.hasPlayer(acc.id)) {
+      console.warn(`[Voice] Token request rejected: Player ${acc.username} (${acc.id}) is not a member of room ${roomId}.`);
+      res.status(403).json({ error: 'Forbidden: You are not a member of this room.' });
+      return;
+    }
+
+    console.log(`[Voice] Validated membership for user ${acc.username} in room ${roomId}. Generating token...`);
 
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
     const livekitUrl = process.env.LIVEKIT_URL;
 
     if (!apiKey || !apiSecret || !livekitUrl) {
+      console.warn('[Voice] LiveKit server is not configured (missing environment variables).');
       res.status(503).json({
         error: 'LiveKit server is not configured on this server environment.',
       });
@@ -927,11 +938,65 @@ async function startServer() {
         canSubscribe: true,
       });
       const jwtToken = await at.toJwt();
+      console.log(`[Voice] Successfully generated token for user ${acc.username} in room ${roomId}.`);
       res.json({ token: jwtToken, url: livekitUrl });
     } catch (err) {
-      console.error('Failed to generate LiveKit access token:', err);
+      console.error('[Voice] Failed to generate LiveKit access token:', err);
       res.status(500).json({ error: 'Failed to generate voice token.' });
     }
+  });
+
+  app.post('/api/voice/report', async (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required for reporting.' });
+      return;
+    }
+    const reporterAcc = accountsById.get(userId);
+    if (!reporterAcc) {
+      res.status(401).json({ error: 'Account not found.' });
+      return;
+    }
+
+    const { roomId, reportedUserId, reason } = req.body || {};
+    if (!roomId || !reportedUserId || !reason) {
+      res.status(400).json({ error: 'roomId, reportedUserId, and reason are required.' });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room || !room.hasPlayer(userId)) {
+      res.status(403).json({ error: 'Invalid room or membership.' });
+      return;
+    }
+
+    console.log(`[VoiceReport] Player ${reporterAcc.username} reported user ID ${reportedUserId} in room ${roomId} for: ${reason}`);
+
+    if (dbPool) {
+      try {
+        await dbPool.query(
+          `CREATE TABLE IF NOT EXISTS voice_reports (
+            id SERIAL PRIMARY KEY,
+            room_id VARCHAR(64) NOT NULL,
+            reporter_id VARCHAR(64) NOT NULL,
+            reported_id VARCHAR(64) NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+          );`
+        );
+        await dbPool.query(
+          `INSERT INTO voice_reports (room_id, reporter_id, reported_id, reason) VALUES ($1, $2, $3, $4);`,
+          [roomId, userId, reportedUserId, String(reason)]
+        );
+      } catch (err) {
+        console.error('Failed to persist voice report to PostgreSQL:', err);
+      }
+    }
+
+    res.json({ success: true, message: 'Report recorded successfully.' });
   });
 
   // Protected Admin Migration: Export Accounts

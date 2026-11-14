@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { voiceManager } from '../client/voice/voiceClient.ts';
 import { sfx } from '../client/sound.ts';
+import { getApiEndpoint } from '../client/apiConfig.ts';
 
 interface VoiceHUDProps {
   roomId: string;
@@ -23,6 +24,7 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
   const [reportModalUser, setReportModalUser] = useState<{ id: string; name: string } | null>(null);
   const [reportReason, setReportReason] = useState('Harassment or inappropriate audio');
   const [reportedSuccess, setReportedSuccess] = useState(false);
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -56,14 +58,48 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
     voiceManager.setDeafened(!status.isDeafened);
   };
 
-  const handleReportSubmit = (e: React.FormEvent) => {
+  const handleRetryConnection = () => {
+    sfx.playUiClick();
+    voiceManager.connect(roomId, tokenAuthHeader, userId, username);
+  };
+
+  const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    sfx.playUiClick('confirm');
-    setReportedSuccess(true);
-    setTimeout(() => {
-      setReportedSuccess(false);
-      setReportModalUser(null);
-    }, 2000);
+    if (!reportModalUser) return;
+    sfx.playUiClick();
+    setIsSubmittingReport(true);
+
+    try {
+      const res = await fetch(getApiEndpoint('/api/voice/report'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(tokenAuthHeader ? { Authorization: tokenAuthHeader } : {}),
+        },
+        body: JSON.stringify({
+          roomId,
+          reportedUserId: reportModalUser.id,
+          reason: reportReason,
+        }),
+      });
+
+      if (res.ok) {
+        sfx.playUiClick('confirm');
+        setReportedSuccess(true);
+        setTimeout(() => {
+          setReportedSuccess(false);
+          setReportModalUser(null);
+        }, 2000);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Failed to submit report: ${errData.error || 'Server error'}`);
+      }
+    } catch (err) {
+      console.error('Report submission error:', err);
+      alert('Network error while submitting report.');
+    } finally {
+      setIsSubmittingReport(false);
+    }
   };
 
   return (
@@ -77,30 +113,46 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
             setVoiceOpen((v) => !v);
           }}
           className={`stone-button text-[10px] sm:text-xs py-1 px-2.5 flex items-center gap-1.5 shadow-xl transition-all ${
-            status.isConnected
+            status.connectionState === 'connected'
               ? status.isMicEnabled
                 ? 'bg-[#166534] text-white border-[#22C55E] animate-pulse'
                 : 'bg-[#1F1E2E] text-[#E6E4EE] border-[#4A4760]'
-              : 'bg-[#191824] text-[#9E9CAE] border-[#38354A]'
+              : status.connectionState === 'connecting'
+                ? 'bg-[#3A3319] text-[#FDE047] border-[#EAB308] animate-pulse'
+                : status.connectionState === 'error'
+                  ? 'bg-[#7F1D1D] text-[#FCA5A5] border-[#EF4444]'
+                  : 'bg-[#191824] text-[#9E9CAE] border-[#38354A]'
           }`}
           title="Proximity Voice Chat Controls"
         >
           <span
             className={`w-2 h-2 rounded-full ${
-              status.isConnected
+              status.connectionState === 'connected'
                 ? status.isMicEnabled
                   ? 'bg-emerald-400 animate-ping'
-                  : 'bg-amber-400'
-                : 'bg-slate-500'
+                  : 'bg-emerald-400'
+                : status.connectionState === 'connecting'
+                  ? 'bg-amber-400 animate-ping'
+                  : status.connectionState === 'error'
+                    ? 'bg-rose-500 animate-bounce'
+                    : 'bg-slate-500'
             }`}
           />
           <span className="font-mono">
-            {status.isConnected ? (status.isMicEnabled ? 'MIC ON' : 'VOICE') : 'CONNECTING...'}
+            {status.connectionState === 'connected'
+              ? status.isMicEnabled
+                ? 'MIC ON'
+                : 'VOICE'
+              : status.connectionState === 'connecting'
+                ? 'CONNECTING'
+                : status.connectionState === 'error'
+                  ? 'VOICE ERROR'
+                  : 'DISCONNECTED'}
           </span>
         </button>
 
         {/* Quick Mic Mute Toggle */}
-        {status.isConnected && (
+        {status.connectionState === 'connected' && (
           <button
             type="button"
             onClick={handleToggleMic}
@@ -144,32 +196,68 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
               </button>
             </div>
 
-            {/* General Settings & Quick Toggles */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleToggleMic}
-                className={`stone-button text-xs py-2 px-3 flex items-center justify-center gap-2 font-bold ${
-                  status.isMicEnabled
-                    ? 'bg-[#166534] text-white border-emerald-500'
-                    : 'bg-[#252336] text-[#C9C7D8] border-[#45425C]'
-                }`}
-              >
-                <span>{status.isMicEnabled ? '🎙️ Transmitting' : '🔇 Mic Muted'}</span>
-              </button>
+            {/* Connection Status & Error / Retry Banner */}
+            <div className="bg-[#12111A] p-2.5 border border-[#353347] flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    status.connectionState === 'connected'
+                      ? 'bg-emerald-400'
+                      : status.connectionState === 'connecting'
+                        ? 'bg-amber-400 animate-pulse'
+                        : 'bg-rose-500'
+                  }`}
+                />
+                <div>
+                  <div className="font-bold text-white uppercase">
+                    Status: {status.connectionState}
+                    {status.httpStatus ? ` (HTTP ${status.httpStatus})` : ''}
+                  </div>
+                  {status.lastError && (
+                    <div className="text-[10px] text-rose-300 mt-0.5">{status.lastError}</div>
+                  )}
+                </div>
+              </div>
 
-              <button
-                type="button"
-                onClick={handleToggleDeafen}
-                className={`stone-button text-xs py-2 px-3 flex items-center justify-center gap-2 font-bold ${
-                  status.isDeafened
-                    ? 'bg-[#7F1D1D] text-[#FCA5A5] border-rose-500'
-                    : 'bg-[#252336] text-[#C9C7D8] border-[#45425C]'
-                }`}
-              >
-                <span>{status.isDeafened ? '🎧 Deafened' : '🔊 Listening'}</span>
-              </button>
+              {status.connectionState !== 'connected' && status.connectionState !== 'connecting' && (
+                <button
+                  type="button"
+                  onClick={handleRetryConnection}
+                  className="stone-button text-xs py-1 px-2.5 bg-amber-900 text-white border-amber-500 font-bold"
+                >
+                  Retry
+                </button>
+              )}
             </div>
+
+            {/* General Settings & Quick Toggles */}
+            {status.connectionState === 'connected' && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleToggleMic}
+                  className={`stone-button text-xs py-2 px-3 flex items-center justify-center gap-2 font-bold ${
+                    status.isMicEnabled
+                      ? 'bg-[#166534] text-white border-emerald-500'
+                      : 'bg-[#252336] text-[#C9C7D8] border-[#45425C]'
+                  }`}
+                >
+                  <span>{status.isMicEnabled ? '🎙️ Transmitting' : '🔇 Mic Muted'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleToggleDeafen}
+                  className={`stone-button text-xs py-2 px-3 flex items-center justify-center gap-2 font-bold ${
+                    status.isDeafened
+                      ? 'bg-[#7F1D1D] text-[#FCA5A5] border-rose-500'
+                      : 'bg-[#252336] text-[#C9C7D8] border-[#45425C]'
+                  }`}
+                >
+                  <span>{status.isDeafened ? '🎧 Deafened' : '🔊 Listening'}</span>
+                </button>
+              </div>
+            )}
 
             {/* Participants / Party Proximity List */}
             <div className="space-y-2">
@@ -258,7 +346,9 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
 
                 {status.participants.length === 0 && (
                   <div className="text-center py-6 text-xs text-[#78768A] font-mono">
-                    No other party members in voice range yet.
+                    {status.connectionState === 'connected'
+                      ? 'No other party members in voice range yet.'
+                      : 'Connecting to voice room...'}
                   </div>
                 )}
               </div>
@@ -290,7 +380,7 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
 
             {reportedSuccess ? (
               <div className="p-3 bg-emerald-950 border border-emerald-600 text-emerald-300 text-xs text-center font-bold">
-                Report submitted successfully. Thank you for keeping Beyond safe.
+                Report submitted and recorded successfully. Thank you for keeping Beyond safe.
               </div>
             ) : (
               <form onSubmit={handleReportSubmit} className="space-y-3">
@@ -315,15 +405,17 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
                   <button
                     type="button"
                     onClick={() => setReportModalUser(null)}
+                    disabled={isSubmittingReport}
                     className="stone-button text-xs py-1 px-3 bg-[#2B293D] text-white border-[#524E6B]"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="stone-button text-xs py-1.5 px-3 bg-rose-900 text-white border-rose-500 font-bold"
+                    disabled={isSubmittingReport}
+                    className="stone-button text-xs py-1.5 px-3 bg-rose-900 text-white border-rose-500 font-bold disabled:opacity-50"
                   >
-                    Submit Report
+                    {isSubmittingReport ? 'Submitting...' : 'Submit Report'}
                   </button>
                 </div>
               </form>
