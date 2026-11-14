@@ -36,6 +36,12 @@ import {
   moveWithCollision as sharedMoveWithCollision,
   normalizePlayerInputDirection,
 } from '../shared/playerMovement.ts';
+import {
+  computeGroundTargetPosition,
+  findBestAutoTarget,
+  getAbilityTargetSpec,
+  getPrimaryAttackRange,
+} from '../shared/abilityTargeting.ts';
 import { generateDungeonFloor, generateTavernFloor, makeEnemy } from './dungeonGenerator.ts';
 
 interface PlayerRuntime {
@@ -1152,7 +1158,8 @@ export class GameRoom {
   public performAction(
     playerId: string,
     action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-    aimAngle = 0
+    aimAngle = 0,
+    options?: { aimDistance?: number; explicitAim?: boolean }
   ): { floorChanged?: DungeonMap } {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== 'playing') return {};
@@ -1174,10 +1181,14 @@ export class GameRoom {
       p.maxDashCooldownMs = p.dashCooldownMs;
 
       let dashAngle = p.aimAngle;
-      if (Math.hypot(p.vx, p.vy) > 0.1) {
+      if (!options?.explicitAim && Math.hypot(p.vx, p.vy) > 0.1) {
         dashAngle = Math.atan2(p.vy, p.vx);
       }
-      const dashDist = 110;
+      const dashSpec = getAbilityTargetSpec(p.heroClass, 'dash');
+      const dashDist =
+        typeof options?.aimDistance === 'number' && Number.isFinite(options.aimDistance)
+          ? Math.max(24, Math.min(dashSpec.range, options.aimDistance))
+          : dashSpec.defaultDist;
       this.moveWithCollision(
         p,
         Math.cos(dashAngle) * dashDist,
@@ -1469,7 +1480,7 @@ export class GameRoom {
             damage: baseDmg,
             pierce: 2,
             slowOnHit: true,
-            ttlMs: 950,
+            ttlMs: 460,
           });
         }
       } else if (p.heroClass === 'arcanist') {
@@ -1489,7 +1500,7 @@ export class GameRoom {
             radius: 7,
             damage: baseDmg,
             pierce: 2,
-            ttlMs: 850,
+            ttlMs: 450,
           });
         }
       } else if (p.heroClass === 'cleric') {
@@ -1550,31 +1561,45 @@ export class GameRoom {
         }
         this.emitEvent('status', p.x, p.y - 26, 'Hunter Quarry Marked', '#FBBF24');
       } else if (p.heroClass === 'arcanist') {
-        const tx = p.x + Math.cos(p.aimAngle) * 110;
-        const ty = p.y + Math.sin(p.aimAngle) * 110;
+        const ultSpec = getAbilityTargetSpec('arcanist', 'ult');
+        const targetPos = computeGroundTargetPosition(
+          p.x,
+          p.y,
+          p.aimAngle,
+          options?.aimDistance,
+          ultSpec
+        );
         this.zones.push({
           id: this.nextId('zone'),
           kind: 'chrono_well',
-          x: tx,
-          y: ty,
+          x: targetPos.x,
+          y: targetPos.y,
           radius: 100,
           ttlMs: 5000,
           maxTtlMs: 5000,
           ownerId: p.id,
         });
-        this.emitEvent('status', tx, ty - 20, 'Chrono Well', '#7CC6FE');
+        this.emitEvent('status', targetPos.x, targetPos.y - 20, 'Chrono Well', '#7CC6FE');
       } else if (p.heroClass === 'cleric') {
+        const ultSpec = getAbilityTargetSpec('cleric', 'ult');
+        const targetPos = computeGroundTargetPosition(
+          p.x,
+          p.y,
+          p.aimAngle,
+          options?.aimDistance,
+          ultSpec
+        );
         this.zones.push({
           id: this.nextId('zone'),
           kind: 'solar_beacon',
-          x: p.x,
-          y: p.y,
+          x: targetPos.x,
+          y: targetPos.y,
           radius: 115,
           ttlMs: 6000,
           maxTtlMs: 6000,
           ownerId: p.id,
         });
-        this.emitEvent('status', p.x, p.y - 26, 'Solar Beacon', '#FDE68A');
+        this.emitEvent('status', targetPos.x, targetPos.y - 26, 'Solar Beacon', '#FDE68A');
       }
       return {};
     }
@@ -3882,35 +3907,20 @@ export class GameRoom {
     const extraCount = p.relics.includes('twinstring_charm') ? 1 : 0;
     const bonusPierce = p.relics.includes('piercing_prism') ? 1 : 0;
 
-    // Automatic Target Acquisition: Find nearest enemy or training dummy within strike range
-    // Vanguard: 85px melee cleave range; Ranged: 460px line-of-fire search
-    let bestTarget: { id: string; x: number; y: number } | null = null;
-    let bestDist = Infinity;
-    const maxSearchDist = p.heroClass === 'vanguard' ? 85 : 460;
-
-    for (const enemy of this.enemies) {
-      if (enemy.hp <= 0) continue;
-      const d = Math.hypot(enemy.x - p.x, enemy.y - p.y);
-      if (d <= maxSearchDist && d < bestDist) {
-        bestDist = d;
-        bestTarget = enemy;
-      }
-    }
-
-    if (!bestTarget) {
-      for (const dummy of this.trainingDummies) {
-        const d = Math.hypot(dummy.x - p.x, dummy.y - p.y);
-        if (d <= maxSearchDist && d < bestDist) {
-          bestDist = d;
-          bestTarget = dummy;
-        }
-      }
-    }
-
-    // Automatically orient attack towards the nearest target
-    if (bestTarget) {
-      p.aimAngle = Math.atan2(bestTarget.y - p.y, bestTarget.x - p.x);
-    }
+    // Soft homing lock ONLY for targets within a narrow forward aim cone (±28°)
+    // with unobstructed line-of-sight and exact per-class attack range.
+    const maxSearchDist = getPrimaryAttackRange(p.heroClass);
+    const bestTarget = findBestAutoTarget({
+      playerX: p.x,
+      playerY: p.y,
+      maxRange: maxSearchDist,
+      preferredAngle: p.aimAngle,
+      minDot: 0.88,
+      map: this.map,
+      props: this.props,
+      enemies: this.enemies,
+      trainingDummies: this.trainingDummies,
+    })?.target ?? null;
 
     const shotCount = 1 + extraCount;
     for (let s = 0; s < shotCount; s++) {
@@ -3949,7 +3959,7 @@ export class GameRoom {
           damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 850,
+          ttlMs: 420,
           targetEnemyId: bestTarget?.id,
         });
       } else if (p.heroClass === 'arcanist') {
@@ -3985,7 +3995,7 @@ export class GameRoom {
           damage: shotDmg,
           pierce: 2 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 920,
+          ttlMs: 480,
           targetEnemyId: bestTarget?.id,
         });
       } else {
@@ -4002,7 +4012,7 @@ export class GameRoom {
           damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 800,
+          ttlMs: 420,
           targetEnemyId: bestTarget?.id,
         });
       }

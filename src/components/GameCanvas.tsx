@@ -35,6 +35,27 @@ import {
 import { drawHumanoidBoss } from '../client/npcSprites.ts';
 import { drawFallenAndGhostPlayer } from '../client/fallenPlayerSprite.ts';
 import { drawHeroSprite, type HeroSwingKind } from '../client/heroSprites.ts';
+import {
+  resolveEnemyDirection8,
+  resolveNpcDirection8,
+  resolvePlayerDirection8,
+  type Direction8,
+} from '../client/directionalFacing.ts';
+import {
+  hasMovementInput,
+  normalizePlayerInputDirection,
+} from '../shared/playerMovement.ts';
+import {
+  findBestAutoTarget,
+  getAbilityTargetSpec,
+  getPrimaryAttackRange,
+  type AbilityAimState,
+  type AimableAction,
+} from '../shared/abilityTargeting.ts';
+import {
+  drawAbilityTargetingIndicator,
+  drawPrimaryAttackRangeIndicator,
+} from '../client/abilityIndicator.ts';
 import { sfx, soundManager } from '../client/sound.ts';
 import {
   HERO_CLASSES,
@@ -56,6 +77,15 @@ interface GameCanvasProps {
   localInputRef?: React.MutableRefObject<PlayerInputState>;
   latestInputSeqRef?: React.MutableRefObject<number>;
   pingMsRef?: React.MutableRefObject<number>;
+  abilityAimRef?: React.MutableRefObject<AbilityAimState | null>;
+  desktopCancelZoneRef?: React.RefObject<HTMLDivElement | null>;
+  onAbilityAimUiChange?: (
+    ui: {
+      action: AimableAction;
+      cancelled: boolean;
+      source: 'touch' | 'mouse' | 'keyboard';
+    } | null
+  ) => void;
   onSendKeyboardInput: (keys: {
     up: boolean;
     down: boolean;
@@ -66,7 +96,8 @@ interface GameCanvasProps {
   }) => void;
   onTriggerAction: (
     action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-    aimAngle: number
+    aimAngle: number,
+    opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
   chatFocused: boolean;
@@ -88,6 +119,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   localInputRef,
   latestInputSeqRef,
   pingMsRef,
+  abilityAimRef,
+  desktopCancelZoneRef,
+  onAbilityAimUiChange,
   onSendKeyboardInput,
   onTriggerAction,
   onSendPing,
@@ -105,6 +139,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   });
   const mouseScreenRef = useRef({ x: 0, y: 0 });
   const aimAngleRef = useRef(0);
+  const aimSourceRef = useRef<'mouse' | 'directional'>('directional');
+  const lastMouseActiveAtRef = useRef(0);
+  const mouseButtonDownRef = useRef(false);
+  const localPlayerPosRef = useRef<{ x: number; y: number } | null>(null);
+  const viewportRef = useRef<{ cw: number; ch: number; zoom: number }>({ cw: 1, ch: 1, zoom: 1 });
   const localSwingTriggerRef = useRef<{
     bornAt: number;
     durationMs: number;
@@ -130,6 +169,136 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   latestInputSeqPropRef.current = latestInputSeqRef;
   const pingMsPropRef = useRef(pingMsRef);
   pingMsPropRef.current = pingMsRef;
+
+  const fallbackAbilityAimRef = useRef<AbilityAimState | null>(null);
+  const abilityAimPropRef = useRef<React.MutableRefObject<AbilityAimState | null>>(
+    abilityAimRef ?? fallbackAbilityAimRef
+  );
+  abilityAimPropRef.current = abilityAimRef ?? fallbackAbilityAimRef;
+  const desktopCancelZonePropRef = useRef(desktopCancelZoneRef);
+  desktopCancelZonePropRef.current = desktopCancelZoneRef;
+  const onAbilityAimUiChangeRef = useRef(onAbilityAimUiChange);
+  onAbilityAimUiChangeRef.current = onAbilityAimUiChange;
+  const activeAimKeyRef = useRef<string | null>(null);
+  const activeMouseAimButtonRef = useRef<number | null>(null);
+  const lastAimUiKeyRef = useRef<string>('null');
+
+  const syncAimUi = (aim: AbilityAimState | null) => {
+    const key = aim ? `${aim.action}:${aim.cancelled}:${aim.source}` : 'null';
+    if (lastAimUiKeyRef.current !== key) {
+      lastAimUiKeyRef.current = key;
+      onAbilityAimUiChangeRef.current?.(
+        aim ? { action: aim.action, cancelled: aim.cancelled, source: aim.source } : null
+      );
+    }
+  };
+
+  const canStartAbilityAim = (action: AimableAction): boolean => {
+    const snap = latestSnapshotRef.current;
+    const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+    if (!me || me.downed) return false;
+    const isSilenced = Boolean(
+      me.statuses && me.statuses.some((s) => s.type === 'silenced')
+    );
+    if (action !== 'dash' && isSilenced) {
+      sfx.playUiClick();
+      return false;
+    }
+    if (action === 'tactical' && me.skillCooldownMs > 0) return false;
+    if (action === 'ult' && me.ultCooldownMs > 0) return false;
+    if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return false;
+    return true;
+  };
+
+  const computeDesktopAimTarget = (
+    action: AimableAction,
+    source: 'mouse' | 'keyboard'
+  ): { aimAngle: number; aimDistance: number; magnitude: number } => {
+    const snap = latestSnapshotRef.current;
+    const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+    const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action);
+    const pos = localPlayerPosRef.current || (me ? { x: me.x, y: me.y } : null);
+    const vp = viewportRef.current;
+    const useMouse =
+      (source === 'mouse' || aimSourceRef.current === 'mouse') &&
+      pos &&
+      (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0);
+
+    if (useMouse && pos) {
+      const safeZoom = Math.max(0.1, vp.zoom);
+      const wx = cameraRef.current.x + (mouseScreenRef.current.x - vp.cw / 2) / safeZoom;
+      const wy = cameraRef.current.y + (mouseScreenRef.current.y - vp.ch / 2) / safeZoom;
+      const dx = wx - pos.x;
+      const dy = wy - pos.y;
+      const dist = Math.hypot(dx, dy);
+      const angle = dist > 0.5 ? Math.atan2(dy, dx) : aimAngleRef.current;
+      let aimDistance = spec.defaultDist;
+      if (spec.kind === 'ground_aoe') {
+        aimDistance = Math.max(0, Math.min(spec.range, dist));
+      } else if (spec.kind === 'dash' && spec.action === 'dash') {
+        aimDistance =
+          dist >= 28 ? Math.max(36, Math.min(spec.range, dist)) : spec.defaultDist;
+      } else {
+        aimDistance = spec.range;
+      }
+      const magnitude =
+        spec.range > 0 ? Math.min(1, aimDistance / spec.range) : 1;
+      return { aimAngle: angle, aimDistance, magnitude };
+    }
+
+    return {
+      aimAngle: aimAngleRef.current,
+      aimDistance: spec.defaultDist,
+      magnitude: 1,
+    };
+  };
+
+  const commitDesktopAbilityAim = (forceCancel = false) => {
+    const aimHolder = abilityAimPropRef.current;
+    const cur = aimHolder.current;
+    if (!cur || cur.source === 'touch') return;
+
+    const refreshed = computeDesktopAimTarget(
+      cur.action,
+      cur.source === 'mouse' ? 'mouse' : 'keyboard'
+    );
+    const castAngle =
+      cur.source === 'mouse' || aimSourceRef.current === 'mouse'
+        ? refreshed.aimAngle
+        : aimAngleRef.current;
+    const castDist = refreshed.aimDistance;
+    const wasCancelled = forceCancel || cur.cancelled;
+
+    aimHolder.current = null;
+    activeAimKeyRef.current = null;
+    activeMouseAimButtonRef.current = null;
+    syncAimUi(null);
+
+    if (wasCancelled) {
+      sfx.playUiClick();
+      return;
+    }
+
+    if (cur.action === 'dash') {
+      sfx.playDash();
+    } else if (cur.action === 'tactical') {
+      sfx.playSkill('tactical');
+      triggerLocalSwing('tactical');
+    } else {
+      sfx.playSkill('ult');
+      triggerLocalSwing('ult');
+    }
+
+    const explicitAim =
+      cur.action !== 'dash' ||
+      cur.source === 'mouse' ||
+      aimSourceRef.current === 'mouse';
+
+    onTriggerActionRef.current(cur.action, castAngle, {
+      aimDistance: castDist,
+      explicitAim,
+    });
+  };
 
   const triggerLocalSwing = (kind: HeroSwingKind) => {
     const now = performance.now();
@@ -452,6 +621,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
   // Keyboard Event Handlers (Only fires when keys change - NEVER on an arbitrary interval!)
   useEffect(() => {
+    const syncDirectionalAimFromKeys = (): boolean => {
+      const mx = (keysRef.current.right ? 1 : 0) - (keysRef.current.left ? 1 : 0);
+      const my = (keysRef.current.down ? 1 : 0) - (keysRef.current.up ? 1 : 0);
+      if (mx === 0 && my === 0) return false;
+      const nowMs = performance.now();
+      const mouseRecentlyActive =
+        mouseButtonDownRef.current ||
+        (aimSourceRef.current === 'mouse' && nowMs - lastMouseActiveAtRef.current <= 900);
+      if (!mouseRecentlyActive) {
+        aimSourceRef.current = 'directional';
+        aimAngleRef.current = Math.atan2(my, mx);
+        return true;
+      }
+      return false;
+    };
+
     const emitKeys = () => {
       onSendKeyboardInputRef.current({
         ...keysRef.current,
@@ -464,76 +649,64 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       const k = e.key.toLowerCase();
       let changed = false;
 
+      if (k === 'escape') {
+        const curAim = abilityAimPropRef.current.current;
+        if (curAim && curAim.source !== 'touch') {
+          e.preventDefault();
+          commitDesktopAbilityAim(true);
+        }
+        return;
+      }
+
       if (k === 'w' || e.key === 'ArrowUp') {
         if (!keysRef.current.up) {
           keysRef.current.up = true;
           changed = true;
         }
+        if (syncDirectionalAimFromKeys()) changed = true;
       } else if (k === 's' || e.key === 'ArrowDown') {
         if (!keysRef.current.down) {
           keysRef.current.down = true;
           changed = true;
         }
+        if (syncDirectionalAimFromKeys()) changed = true;
       } else if (k === 'a' || e.key === 'ArrowLeft') {
         if (!keysRef.current.left) {
           keysRef.current.left = true;
           changed = true;
         }
+        if (syncDirectionalAimFromKeys()) changed = true;
       } else if (k === 'd' || e.key === 'ArrowRight') {
         if (!keysRef.current.right) {
           keysRef.current.right = true;
           changed = true;
         }
+        if (syncDirectionalAimFromKeys()) changed = true;
       } else if (e.code === 'Space') {
         e.preventDefault();
-        const snap = latestSnapshotRef.current;
-        const me = snap?.players.find((p) => p.id === playerId);
-        if (me && snap) {
-          let nearestDist = Infinity;
-          const maxDist = me.heroClass === 'vanguard' ? 140 : 460;
-          for (const en of snap.enemies) {
-            if (en.hp <= 0) continue;
-            const d = Math.hypot(en.x - me.x, en.y - me.y);
-            if (d < nearestDist && d <= maxDist) {
-              nearestDist = d;
-              aimAngleRef.current = Math.atan2(en.y - me.y, en.x - me.x);
-            }
-          }
-          if (nearestDist === Infinity && snap.trainingDummies) {
-            for (const dummy of snap.trainingDummies) {
-              const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
-              if (d < nearestDist && d <= maxDist) {
-                nearestDist = d;
-                aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
-              }
-            }
-          }
-          if (nearestDist === Infinity && snap.trainingDummies) {
-            for (const dummy of snap.trainingDummies) {
-              const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
-              if (d < nearestDist && d <= maxDist) {
-                nearestDist = d;
-                aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
-              }
-            }
-          }
-        }
+        syncDirectionalAimFromKeys();
         if (!keysRef.current.attack) {
           keysRef.current.attack = true;
           changed = true;
           triggerLocalSwing('primary');
         }
-      } else if (k === 'q') {
-        sfx.playSkill('tactical');
-        triggerLocalSwing('tactical');
-        onTriggerActionRef.current('tactical', aimAngleRef.current);
-      } else if (k === 'r' || e.key === 'Shift') {
-        sfx.playSkill('ult');
-        triggerLocalSwing('ult');
-        onTriggerActionRef.current('ult', aimAngleRef.current);
-      } else if (k === 'c' || k === 'f' || k === 'v') {
-        sfx.playDash();
-        onTriggerActionRef.current('dash', aimAngleRef.current);
+      } else if (k === 'q' || k === 'r' || e.key === 'Shift' || k === 'c' || k === 'f' || k === 'v') {
+        if (e.repeat || abilityAimPropRef.current.current) return;
+        const action: AimableAction =
+          k === 'q' ? 'tactical' : k === 'r' || e.key === 'Shift' ? 'ult' : 'dash';
+        if (!canStartAbilityAim(action)) return;
+        syncDirectionalAimFromKeys();
+        const target = computeDesktopAimTarget(action, 'keyboard');
+        activeAimKeyRef.current = e.key === 'Shift' ? 'shift' : k;
+        abilityAimPropRef.current.current = {
+          action,
+          source: 'keyboard',
+          aimAngle: target.aimAngle,
+          magnitude: target.magnitude,
+          aimDistance: target.aimDistance,
+          cancelled: false,
+        };
+        syncAimUi(abilityAimPropRef.current.current);
       } else if (k === 'h' || k === '1') {
         sfx.playHeal();
         onTriggerActionRef.current('potion', aimAngleRef.current);
@@ -554,6 +727,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
     const handleKeyUp = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
+      const normAimKey = e.key === 'Shift' ? 'shift' : k;
+      if (activeAimKeyRef.current && normAimKey === activeAimKeyRef.current) {
+        commitDesktopAbilityAim(false);
+      }
+
       let changed = false;
       if (k === 'w' || e.key === 'ArrowUp') {
         keysRef.current.up = false;
@@ -571,10 +749,16 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         keysRef.current.attack = false;
         changed = true;
       }
-      if (changed) emitKeys();
+      if (changed) {
+        syncDirectionalAimFromKeys();
+        emitKeys();
+      }
     };
 
     const handleBlur = () => {
+      if (abilityAimPropRef.current.current && abilityAimPropRef.current.current.source !== 'touch') {
+        commitDesktopAbilityAim(true);
+      }
       const hadKeys =
         keysRef.current.up ||
         keysRef.current.down ||
@@ -593,13 +777,65 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
     };
 
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      const cur = abilityAimPropRef.current.current;
+      if (!cur || cur.source === 'touch') return;
+      const canvasEl = canvasRef.current;
+      if (canvasEl) {
+        const rect = canvasEl.getBoundingClientRect();
+        mouseScreenRef.current = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+        aimSourceRef.current = 'mouse';
+        lastMouseActiveAtRef.current = performance.now();
+        updateMouseAimImmediately(mouseScreenRef.current.x, mouseScreenRef.current.y);
+      }
+
+      const target = computeDesktopAimTarget(cur.action, 'mouse');
+      cur.aimAngle = target.aimAngle;
+      cur.aimDistance = target.aimDistance;
+      cur.magnitude = target.magnitude;
+
+      const cancelRect = desktopCancelZonePropRef.current?.current?.getBoundingClientRect();
+      const overCancel = Boolean(
+        cancelRect &&
+          e.clientX >= cancelRect.left - 8 &&
+          e.clientX <= cancelRect.right + 8 &&
+          e.clientY >= cancelRect.top - 8 &&
+          e.clientY <= cancelRect.bottom + 8
+      );
+      if (cur.cancelled !== overCancel) {
+        cur.cancelled = overCancel;
+        syncAimUi(cur);
+      }
+    };
+
+    const handleWindowMouseUp = (e: MouseEvent) => {
+      if (e.button === 0 && mouseButtonDownRef.current) {
+        mouseButtonDownRef.current = false;
+        keysRef.current.attack = false;
+        emitKeys();
+      }
+      const cur = abilityAimPropRef.current.current;
+      if (cur && cur.source === 'mouse') {
+        if (activeMouseAimButtonRef.current === null || e.button === activeMouseAimButtonRef.current) {
+          commitDesktopAbilityAim(false);
+        }
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
     };
   }, [latestSnapshotRef, playerId]);
 
@@ -649,7 +885,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     }
     const floatingTexts: ActiveFloatingText[] = [];
     const clericPulses: { x: number; y: number; bornAt: number }[] = [];
-    const playerFacingMap = new Map<string, boolean>();
+    const playerFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
+    const enemyFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
     const seenEventIds = new Set<string>();
     const particleManager = new ParticleManager();
     const localPredictor = new LocalPredictionController();
@@ -1281,6 +1518,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         lastPlayerDowned = me.downed;
 
         const mySmooth = smoothedPlayers.get(me.id) || { x: me.x, y: me.y };
+        localPlayerPosRef.current = { x: mySmooth.x, y: mySmooth.y };
+        viewportRef.current = { cw, ch, zoom };
+
         if (!cameraSnappedRef.current) {
           cameraRef.current.x = mySmooth.x;
           cameraRef.current.y = mySmooth.y;
@@ -1289,7 +1529,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           stepCameraFollow(cameraRef.current, mySmooth.x, mySmooth.y, dtSec);
         }
 
-        if (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0) {
+        const stickActive =
+          typeof activeLocalInput.stickX === 'number' &&
+          typeof activeLocalInput.stickY === 'number' &&
+          Math.hypot(activeLocalInput.stickX, activeLocalInput.stickY) > 0.1;
+
+        if (stickActive) {
+          aimSourceRef.current = 'directional';
+          aimAngleRef.current =
+            typeof activeLocalInput.aimAngle === 'number'
+              ? activeLocalInput.aimAngle
+              : Math.atan2(activeLocalInput.stickY!, activeLocalInput.stickX!);
+        } else if (
+          aimSourceRef.current === 'mouse' &&
+          (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0)
+        ) {
           aimAngleRef.current = computeWorldAimAngle(
             mouseScreenRef.current.x,
             mouseScreenRef.current.y,
@@ -1304,6 +1558,33 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
           if (me.statuses && me.statuses.some(s => s.type === 'disoriented')) {
             aimAngleRef.current += Math.sin(now * 0.018) * 0.18;
+          }
+          if (localInputPropRef.current?.current) {
+            localInputPropRef.current.current.aimAngle = aimAngleRef.current;
+          }
+        } else if (
+          aimSourceRef.current === 'directional' &&
+          localInputPropRef.current?.current &&
+          typeof localInputPropRef.current.current.aimAngle === 'number' &&
+          mouseScreenRef.current.x === 0 &&
+          mouseScreenRef.current.y === 0
+        ) {
+          aimAngleRef.current = localInputPropRef.current.current.aimAngle;
+        }
+
+        // Keep active desktop ability aim synchronized as the player moves or turns
+        const activeAim = abilityAimPropRef.current.current;
+        if (activeAim && activeAim.source !== 'touch') {
+          if (me.downed) {
+            commitDesktopAbilityAim(true);
+          } else {
+            const refreshed = computeDesktopAimTarget(
+              activeAim.action,
+              activeAim.source === 'mouse' ? 'mouse' : 'keyboard'
+            );
+            activeAim.aimAngle = refreshed.aimAngle;
+            activeAim.aimDistance = refreshed.aimDistance;
+            activeAim.magnitude = refreshed.magnitude;
           }
         }
       }
@@ -2796,6 +3077,57 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         drawTavernDecorations(ctx, now);
       }
 
+      // Target Acquisition for local player (exact class range + wall LoS)
+      let lockedEnemyId: string | null = null;
+      const mySmoothPos = me ? smoothedPlayers.get(me.id) || { x: me.x, y: me.y } : null;
+      if (me && !me.downed && mySmoothPos) {
+        const maxDist = getPrimaryAttackRange(me.heroClass);
+        const isMouseAim = aimSourceRef.current === 'mouse';
+        const lockMatch = findBestAutoTarget({
+          playerX: mySmoothPos.x,
+          playerY: mySmoothPos.y,
+          maxRange: maxDist,
+          preferredAngle: aimAngleRef.current,
+          minDot: isMouseAim ? 0.88 : -1,
+          map,
+          props: snap.props,
+          enemies: snap.enemies,
+          trainingDummies: snap.trainingDummies,
+        });
+        lockedEnemyId = lockMatch?.target.id ?? null;
+      }
+
+      // Real-Time Drag-to-Aim Ability Targeting Indicator OR Subtle Basic-Attack Range Ring
+      const activeTargetingAim = abilityAimPropRef.current.current;
+      if (me && !me.downed && mySmoothPos) {
+        if (activeTargetingAim) {
+          drawAbilityTargetingIndicator(
+            ctx,
+            map,
+            snap,
+            me,
+            mySmoothPos.x,
+            mySmoothPos.y,
+            activeTargetingAim,
+            now
+          );
+        } else {
+          const isAttackingNow = Boolean(
+            keysRef.current.attack ||
+              activeLocalInput.attack ||
+              me.attackAnimMs > 0
+          );
+          drawPrimaryAttackRangeIndicator(
+            ctx,
+            mySmoothPos.x,
+            mySmoothPos.y,
+            me.heroClass,
+            Boolean(lockedEnemyId),
+            isAttackingNow
+          );
+        }
+      }
+
       // Props, Relic Vault, Mystic Shrine & Pickups
       for (const prop of snap.props) {
         if (prop.opened && (prop.kind === 'crate' || prop.kind === 'coin' || prop.kind === 'potion')) {
@@ -2815,31 +3147,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       // NPCs & Training Dummies (Tavern Social Hub)
       if (snap.npcs) {
         for (const npc of snap.npcs) {
-          drawNpc(ctx, npc, now);
-        }
-      }
-      // Auto-hit Target Acquisition for local player
-      const myPlayer = snap.players.find((p) => p.id === playerId);
-      let lockedEnemyId: string | null = null;
-      if (myPlayer && !myPlayer.downed) {
-        let bestDist = Infinity;
-        const maxDist = myPlayer.heroClass === 'vanguard' ? 140 : 460;
-        for (const en of snap.enemies) {
-          if (en.hp <= 0) continue;
-          const d = Math.hypot(en.x - myPlayer.x, en.y - myPlayer.y);
-          if (d < bestDist && d <= maxDist) {
-            bestDist = d;
-            lockedEnemyId = en.id;
-          }
-        }
-        if (!lockedEnemyId && snap.trainingDummies) {
-          for (const dummy of snap.trainingDummies) {
-            const d = Math.hypot(dummy.x - myPlayer.x, dummy.y - myPlayer.y);
-            if (d < bestDist && d <= maxDist) {
-              bestDist = d;
-              lockedEnemyId = dummy.id;
-            }
-          }
+          const npcPose = resolveNpcDirection8(npc, snap.players, 140);
+          drawNpc(ctx, npc, now, npcPose);
         }
       }
 
@@ -2855,31 +3164,38 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         const ex = Math.round(pos.x);
         const ey = Math.round(pos.y);
         const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex * 0.1) * 2 : Math.sin(now * 0.003 + ex * 0.1) * 1.5;
+        const prevEnemyFacing = enemyFacingMap.get(en.id);
+        const enemyPose = resolveEnemyDirection8(
+          en,
+          prevEnemyFacing?.dir ?? 'S',
+          prevEnemyFacing?.facingLeft ?? false
+        );
+        enemyFacingMap.set(en.id, { dir: enemyPose.dir, facingLeft: enemyPose.facingLeft });
 
         if (en.kind === 'slime') {
-          drawSlimeSprite(ctx, en, ex, ey, now, map.biome);
+          drawSlimeSprite(ctx, en, ex, ey, now, map.biome, enemyPose);
         } else if (en.kind === 'goblin') {
-          drawGoblinSprite(ctx, en, ex, ey, now);
+          drawGoblinSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'skeleton') {
-          drawSkeletonSprite(ctx, en, ex, ey, now);
+          drawSkeletonSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'cultist') {
-          drawCultistSprite(ctx, en, ex, ey, now);
+          drawCultistSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'knight') {
-          drawKnightSprite(ctx, en, ex, ey, now);
+          drawKnightSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'shadow_stalker') {
-          drawShadowStalkerSprite(ctx, en, ex, ey, now);
+          drawShadowStalkerSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'astral_sentinel') {
-          drawAstralSentinelSprite(ctx, en, ex, ey, now);
+          drawAstralSentinelSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'hymn_phantom') {
-          drawHymnPhantomSprite(ctx, en, ex, ey, now);
+          drawHymnPhantomSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'relic_golem') {
-          drawRelicGolemSprite(ctx, en, ex, ey, now);
+          drawRelicGolemSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'veiled_heretic') {
-          drawVeiledHereticSprite(ctx, en, ex, ey, now);
+          drawVeiledHereticSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'celestial_arbiter') {
-          drawCelestialArbiterSprite(ctx, en, ex, ey, now);
+          drawCelestialArbiterSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'warden_enforcer') {
-          drawWardenEnforcerSprite(ctx, en, ex, ey, now);
+          drawWardenEnforcerSprite(ctx, en, ex, ey, now, enemyPose);
         } else if (en.kind === 'boss') {
           // Boss ground shadow
           ctx.fillStyle = 'rgba(0,0,0,0.48)';
@@ -3041,7 +3357,19 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             particleManager.spawnBossShieldSparks(ex, ey, now);
           }
 
-          if (isCatacombs) {
+          const bossMirrorX = !enemyPose.isPureVertical && enemyPose.facingLeft;
+          const bossIsBack = enemyPose.verticalPlane === 'back';
+
+          if (map.floor >= 6) {
+            drawHumanoidBoss(ctx, ex, ey, en.name, now, en, enemyPose);
+          } else {
+            ctx.save();
+            if (bossMirrorX) {
+              ctx.translate(ex, 0);
+              ctx.scale(-1, 1);
+              ctx.translate(-ex, 0);
+            }
+            if (isCatacombs) {
             // ==============================================================
             // FLOOR 2 BOSS: Archlich Vaelor (The Sunken Crypt Archlich)
             // Floating Skeletal Necromancer Lord with floating silk shrouds,
@@ -3431,7 +3759,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               ctx.fillStyle = '#FFFFFF';
               ctx.fillRect(ox - 1.5, oy - 1.5, 3, 3);
             }
-          } else if (isAstral) {
+            } else if (isAstral) {
             // ==============================================================
             // FLOOR 5 BOSS: Archon of Nothingness (The Celestial Cosmic Titan)
             // Towering Celestial Entity with rotating zodiac rune halo,
@@ -3533,13 +3861,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#FEF08A';
             ctx.fillRect(ex - 1, ay - 58, 2, 5);
 
-            // Piercing Radiant Gold Starlight Eyes
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 9, ay - 34, 6, 4);
-            ctx.fillRect(ex + 3, ay - 34, 6, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 7, ay - 33, 3, 2);
-            ctx.fillRect(ex + 5, ay - 33, 3, 2);
+            // Piercing Radiant Gold Starlight Eyes (hidden when facing North)
+            if (!bossIsBack) {
+              ctx.fillStyle = '#FEF08A';
+              ctx.fillRect(ex - 9, ay - 34, 6, 4);
+              ctx.fillRect(ex + 3, ay - 34, 6, 4);
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(ex - 7, ay - 33, 3, 2);
+              ctx.fillRect(ex + 5, ay - 33, 3, 2);
+            }
 
             // Star-Forged Celestial Greatblade (Right Hand) with Shimmering Glow
             const bladeSway = Math.sin(now * 0.005) * 0.08;
@@ -3568,8 +3898,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               ctx.fillStyle = s % 2 === 0 ? '#38BDF8' : '#FEF08A';
               ctx.fillRect(Math.round(sx), Math.round(sy), 2.5, 2.5);
             }
-          } else if (map.floor >= 6) {
-            drawHumanoidBoss(ctx, ex, ey, en.name, now, en);
           } else {
             // ==============================================================
             // FLOOR 1 BOSS: Warden Malakor (Highkeep Bastion Warden Knight)
@@ -3637,16 +3965,26 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillRect(ex - 2, ey - 46 + walkBob, 4, 8);
             ctx.fillRect(ex + 15, ey - 44 + walkBob, 3, 10);
 
-            // Steel visor faceplate
-            ctx.fillStyle = '#0F172A';
-            ctx.fillRect(ex - 11, ey - 32 + walkBob, 22, 10);
-            // Glowing Amber Visor Slits
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 9, ey - 30 + walkBob, 7, 4);
-            ctx.fillRect(ex + 2, ey - 30 + walkBob, 7, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 7, ey - 29 + walkBob, 3, 2);
-            ctx.fillRect(ex + 4, ey - 29 + walkBob, 3, 2);
+            if (!bossIsBack) {
+              // Steel visor faceplate
+              ctx.fillStyle = '#0F172A';
+              ctx.fillRect(ex - 11, ey - 32 + walkBob, 22, 10);
+              // Glowing Amber Visor Slits
+              ctx.fillStyle = '#FEF08A';
+              ctx.fillRect(ex - 9, ey - 30 + walkBob, 7, 4);
+              ctx.fillRect(ex + 2, ey - 30 + walkBob, 7, 4);
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(ex - 7, ey - 29 + walkBob, 3, 2);
+              ctx.fillRect(ex + 4, ey - 29 + walkBob, 3, 2);
+            } else {
+              // Rear crimson mantle draped across Malakor's back & solid rear greathelm plate
+              ctx.fillStyle = '#9F1239';
+              ctx.fillRect(ex - 20, ey - 18 + walkBob, 40, 38);
+              ctx.fillStyle = '#F59E0B';
+              ctx.fillRect(ex - 20, ey + 17 + walkBob, 40, 3);
+              ctx.fillStyle = '#475569';
+              ctx.fillRect(ex - 12, ey - 34 + walkBob, 24, 14);
+            }
 
             // Left Hand: Tower Kite Greatshield
             ctx.fillStyle = '#334155';
@@ -3673,9 +4011,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillStyle = '#D97706';
             ctx.fillRect(swordX + 2, ey + 10 + walkBob, 4, 7);
           }
+          ctx.restore();
+          }
         } else {
           // Safe visible fallback for any undefined or custom enemy kinds
-          drawGenericEnemySprite(ctx, en, ex, ey, now);
+          drawGenericEnemySprite(ctx, en, ex, ey, now, enemyPose);
         }
 
         if (en.markedMs > 0) {
@@ -4027,11 +4367,29 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         const hx = Math.round(pos.x);
         const hy = Math.round(pos.y);
         const def = HERO_CLASSES[p.heroClass];
-        const moving = Math.hypot(p.vx, p.vy) > 5;
+        const isLocalPlayer = p.id === playerId;
+        const ang = isLocalPlayer ? aimAngleRef.current : p.aimAngle;
+        const vx = p.vx || 0;
+        const vy = p.vy || 0;
+        const velMag = Math.hypot(vx, vy);
+        const isCharmed = Boolean(p.statuses?.some((s) => s.type === 'charmed'));
+        const isDisoriented = Boolean(p.statuses?.some((s) => s.type === 'disoriented'));
+
+        let moveX = vx;
+        let moveY = vy;
+        let moving = velMag > 5;
+
+        if (isLocalPlayer && !isCharmed && velMag <= 290 && hasMovementInput(activeLocalInput)) {
+          const norm = normalizePlayerInputDirection(activeLocalInput, isDisoriented, now);
+          moveX = norm.mx;
+          moveY = norm.my;
+          moving = Math.hypot(moveX, moveY) > 0.05;
+        }
+
         const bob = moving ? Math.sin(now * 0.018) * 2 : 0;
 
         if (p.downed) {
-          drawFallenAndGhostPlayer(ctx, p, hx, hy, now, p.id === playerId);
+          drawFallenAndGhostPlayer(ctx, p, hx, hy, now, isLocalPlayer);
           continue;
         }
 
@@ -4044,8 +4402,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           const isSwift = p.hasteMs > 0 || moving;
           if (isSwift) {
             // Swiftness wind motion lines drifting behind movement
-            const windOffX = -Math.cos(p.aimAngle) * 14;
-            const windOffY = -Math.sin(p.aimAngle) * 14;
+            const swiftAngle =
+              moving && Math.hypot(moveX, moveY) > 0.05 ? Math.atan2(moveY, moveX) : ang;
+            const windOffX = -Math.cos(swiftAngle) * 14;
+            const windOffY = -Math.sin(swiftAngle) * 14;
             ctx.strokeStyle = 'rgba(134, 239, 172, 0.7)';
             ctx.lineWidth = 1.8;
             ctx.beginPath();
@@ -4053,7 +4413,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.lineTo(hx + windOffX * 1.8, hy + windOffY * 1.8);
             ctx.stroke();
             if (p.hasteMs > 0) {
-              particleManager.spawnRangerSwiftnessTrail(hx, hy, p.aimAngle, now);
+              particleManager.spawnRangerSwiftnessTrail(hx, hy, swiftAngle, now);
             }
           }
         } else if (p.heroClass === 'arcanist') {
@@ -4172,23 +4532,20 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           });
         }
 
-        // Aim angle & articulated pixel hero sprite with 60 FPS smooth weapon swing transitions
-        const ang = p.id === playerId ? aimAngleRef.current : p.aimAngle;
-        const vx = p.vx || 0;
-        const vy = p.vy || 0;
-        let facingLeft = playerFacingMap.get(p.id) ?? (Math.cos(ang) < 0);
-        const isMovingH = Math.abs(vx) > 0.5;
-        const isMovingV = Math.abs(vy) > 0.5 && !isMovingH;
-        const isStandingStill = !isMovingH && !isMovingV;
-
-        if (isMovingH) {
-          facingLeft = vx < 0;
-        } else if (isMovingV) {
-          facingLeft = Math.cos(ang) < 0;
-        } else if (isStandingStill && !playerFacingMap.has(p.id)) {
-          facingLeft = Math.cos(ang) < 0;
-        }
-        playerFacingMap.set(p.id, facingLeft);
+        // True 8-directional character facing (movement when moving, aimAngle when idle)
+        // with independent 360-degree weapon aiming.
+        const prevFacing = playerFacingMap.get(p.id);
+        const playerPose = resolvePlayerDirection8({
+          moveX,
+          moveY,
+          aimAngle: ang,
+          isMoving: moving,
+          prevFacingLeft: prevFacing?.facingLeft ?? Math.cos(ang) < 0,
+        });
+        playerFacingMap.set(p.id, {
+          dir: playerPose.dir,
+          facingLeft: playerPose.facingLeft,
+        });
 
         const swingState = playerWeaponSwings.get(p.id);
         const swingProgress = swingState
@@ -4201,11 +4558,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           now,
           swingProgress,
           swingKind: swingState?.kind,
-          facingLeft,
+          facingLeft: playerPose.facingLeft,
+          facingDirection: playerPose.dir,
         });
 
         // Player Name Tag
-        const isLocalPlayer = p.id === playerId;
         const displayLabel = p.username;
 
         ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
@@ -4586,9 +4943,36 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     };
   }, [latestSnapshotRef, map, playerId]);
 
+  const updateMouseAimImmediately = (sx: number, sy: number) => {
+    const pos = localPlayerPosRef.current;
+    const vp = viewportRef.current;
+    if (pos) {
+      aimAngleRef.current = computeWorldAimAngle(
+        sx,
+        sy,
+        vp.cw,
+        vp.ch,
+        pos.x,
+        pos.y,
+        cameraRef.current.x,
+        cameraRef.current.y,
+        vp.zoom
+      );
+    }
+  };
+
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const nx = e.clientX - rect.left;
+    const ny = e.clientY - rect.top;
+    const moved =
+      Math.hypot(nx - mouseScreenRef.current.x, ny - mouseScreenRef.current.y) > 2;
+    mouseScreenRef.current = { x: nx, y: ny };
+    if (moved || mouseButtonDownRef.current) {
+      aimSourceRef.current = 'mouse';
+      lastMouseActiveAtRef.current = performance.now();
+      updateMouseAimImmediately(nx, ny);
+    }
     if (keysRef.current.attack) {
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     }
@@ -4596,44 +4980,43 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const nx = e.clientX - rect.left;
+    const ny = e.clientY - rect.top;
+    mouseScreenRef.current = { x: nx, y: ny };
+    aimSourceRef.current = 'mouse';
+    lastMouseActiveAtRef.current = performance.now();
+    updateMouseAimImmediately(nx, ny);
     if (e.button === 0) {
+      if (abilityAimPropRef.current.current) return;
+      mouseButtonDownRef.current = true;
       keysRef.current.attack = true;
-      const snap = latestSnapshotRef.current;
-      const me = snap?.players.find((p) => p.id === playerId);
-      if (me && snap) {
-        let nearestDist = Infinity;
-        const maxDist = me.heroClass === 'vanguard' ? 140 : 460;
-        for (const en of snap.enemies) {
-          if (en.hp <= 0) continue;
-          const d = Math.hypot(en.x - me.x, en.y - me.y);
-          if (d < nearestDist && d <= maxDist) {
-            nearestDist = d;
-            aimAngleRef.current = Math.atan2(en.y - me.y, en.x - me.x);
-          }
-        }
-        if (nearestDist === Infinity && snap.trainingDummies) {
-          for (const dummy of snap.trainingDummies) {
-            const d = Math.hypot(dummy.x - me.x, dummy.y - me.y);
-            if (d < nearestDist && d <= maxDist) {
-              nearestDist = d;
-              aimAngleRef.current = Math.atan2(dummy.y - me.y, dummy.x - me.x);
-            }
-          }
-        }
-      }
       triggerLocalSwing('primary');
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     } else if (e.button === 2) {
       e.preventDefault();
-      sfx.playSkill('tactical');
-      triggerLocalSwing('tactical');
-      onTriggerAction('tactical', aimAngleRef.current);
+      if (abilityAimPropRef.current.current?.source === 'keyboard') {
+        commitDesktopAbilityAim(true);
+        return;
+      }
+      if (!abilityAimPropRef.current.current && canStartAbilityAim('tactical')) {
+        activeMouseAimButtonRef.current = 2;
+        const target = computeDesktopAimTarget('tactical', 'mouse');
+        abilityAimPropRef.current.current = {
+          action: 'tactical',
+          source: 'mouse',
+          aimAngle: target.aimAngle,
+          magnitude: target.magnitude,
+          aimDistance: target.aimDistance,
+          cancelled: false,
+        };
+        syncAimUi(abilityAimPropRef.current.current);
+      }
     }
   };
 
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.button === 0) {
+    if (e.button === 0 && mouseButtonDownRef.current) {
+      mouseButtonDownRef.current = false;
       keysRef.current.attack = false;
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     }

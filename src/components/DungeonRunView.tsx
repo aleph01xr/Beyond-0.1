@@ -32,6 +32,7 @@ import { CharacterInventoryModal } from './CharacterInventoryModal.tsx';
 import { ExpandedMapModal } from './ExpandedMapModal.tsx';
 import { CinematicIntroOverlay } from './CinematicIntroOverlay.tsx';
 import { GameMenuModal } from './GameMenuModal.tsx';
+import { VoiceHUD } from './VoiceHUD.tsx';
 import { calculatePlayerStatProjections } from '../shared/statUtils.ts';
 import {
   HERO_CLASSES,
@@ -48,6 +49,11 @@ import {
   type RoomSummary,
 } from '../shared/types.ts';
 import { getStatusEffectMeta } from '../shared/statusEffects.ts';
+import {
+  getAbilityTargetSpec,
+  type AbilityAimState,
+  type AimableAction,
+} from '../shared/abilityTargeting.ts';
 import type { PingDiagnostics } from '../client/networkStats.ts';
 
 interface DungeonRunViewProps {
@@ -59,7 +65,8 @@ interface DungeonRunViewProps {
   onSendInput: (input: PlayerInputState) => void;
   onTriggerAction: (
     action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-    aimAngle: number
+    aimAngle: number,
+    opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
   onSelectRelic: (relicId: string) => void;
   onChangeClass: (heroClass: HeroClassId) => void;
@@ -286,14 +293,15 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const handleTriggerActionWithPortal = useCallback(
     (
       action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-      aimAngle: number
+      aimAngle: number,
+      opts?: { aimDistance?: number; explicitAim?: boolean }
     ) => {
       if (action === 'interact' && isTavernRef.current && nearPortalRef.current) {
         sfx.playUiClick();
         setExpeditionGateOpen(true);
         return;
       }
-      onTriggerAction(action, aimAngle);
+      onTriggerAction(action, aimAngle, opts);
     },
     [onTriggerAction]
   );
@@ -347,7 +355,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     cur.down = stickY > 0.25;
     cur.left = stickX < -0.25;
     cur.right = stickX > 0.25;
-    if (typeof aimAngle === 'number') {
+    if (typeof aimAngle === 'number' && !cur.attack) {
       cur.aimAngle = aimAngle;
     }
     onSendInput({ ...cur });
@@ -390,6 +398,37 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     [onSendInput]
   );
 
+  const abilityAimRef = useRef<AbilityAimState | null>(null);
+  const desktopCancelZoneRef = useRef<HTMLDivElement | null>(null);
+  const [activeAimUi, setActiveAimUi] = useState<{
+    action: AimableAction;
+    cancelled: boolean;
+    source: 'touch' | 'mouse' | 'keyboard';
+  } | null>(null);
+
+  const startDesktopButtonAim = (action: AimableAction) => {
+    if (!me || me.downed) return;
+    if (action !== 'dash' && isSilenced) {
+      sfx.playUiClick();
+      return;
+    }
+    if (action === 'tactical' && me.skillCooldownMs > 0) return;
+    if (action === 'ult' && me.ultCooldownMs > 0) return;
+    if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return;
+
+    const spec = getAbilityTargetSpec(me.heroClass, action);
+    const angle = unifiedInputRef.current.aimAngle ?? me.aimAngle ?? 0;
+    abilityAimRef.current = {
+      action,
+      source: 'mouse',
+      aimAngle: angle,
+      magnitude: 0,
+      aimDistance: spec.defaultDist,
+      cancelled: false,
+    };
+    setActiveAimUi({ action, cancelled: false, source: 'mouse' });
+  };
+
   return (
     <div className="relative w-screen h-screen h-[100dvh] overflow-hidden select-none bg-[#111219] touch-none pt-safe pb-safe pl-safe pr-safe">
       {/* 60 FPS Pixel-Art Canvas */}
@@ -400,6 +439,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         localInputRef={unifiedInputRef}
         latestInputSeqRef={latestInputSeqRef}
         pingMsRef={pingMsRef}
+        abilityAimRef={abilityAimRef}
+        desktopCancelZoneRef={desktopCancelZoneRef}
+        onAbilityAimUiChange={setActiveAimUi}
         onSendKeyboardInput={handleKeyboardInput}
         onTriggerAction={handleTriggerActionWithPortal}
         onSendPing={onSendPing}
@@ -955,8 +997,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         <TouchControls
           player={me}
           enemies={snapshot.enemies}
+          map={map}
           latestSnapshotRef={latestSnapshotRef}
           nearInteractable={nearInteractable}
+          abilityAimRef={abilityAimRef}
+          onAbilityAimUiChange={setActiveAimUi}
           onStickMove={handleStickMove}
           onAttackPress={handleAttackPress}
           onTriggerAction={handleTriggerActionWithPortal}
@@ -964,6 +1009,25 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           settings={touchSettings}
           onOpenSettings={() => setTouchSettingsOpen(true)}
         />
+      )}
+
+      {/* DESKTOP AIMING CANCEL DROP ZONE */}
+      {me && !(isTouchDevice || forceTouchGamepad) && activeAimUi && activeAimUi.source !== 'touch' && (
+        <div
+          ref={desktopCancelZoneRef}
+          className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-20 hidden sm:flex items-center gap-2.5 px-4 py-2 border-2 transition-all shadow-xl pointer-events-auto ${
+            activeAimUi.cancelled
+              ? 'bg-[#7F1D1D]/95 border-[#FCA5A5] text-white scale-105'
+              : 'bg-[#1B1B26]/92 border-[#EF4444]/70 text-[#FCA5A5]'
+          }`}
+        >
+          <span className="font-mono text-xs font-bold">✕</span>
+          <span className="font-display text-xs tracking-wide whitespace-nowrap">
+            {activeAimUi.cancelled
+              ? 'Release to Cancel Cast'
+              : `Aiming ${getAbilityTargetSpec(me.heroClass, activeAimUi.action).label} · Drag Here or [ESC] to Cancel`}
+          </span>
+        </div>
       )}
 
       {/* DESKTOP KEYBOARD / MOUSE ACTION BAR (Visible when touch gamepad is not active or on wide screens) */}
@@ -978,21 +1042,27 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              if (isSilenced) {
-                sfx.playUiClick();
+            onMouseDown={(e) => {
+              if (e.button === 0) {
+                e.preventDefault();
+                startDesktopButtonAim('tactical');
               }
-              onTriggerAction('tactical', me.aimAngle);
             }}
-            title={isSilenced ? 'Silenced: Tactical ability sealed' : myDef.tacticalName}
+            title={isSilenced ? 'Silenced: Tactical ability sealed' : `${myDef.tacticalName} (Hold & drag to aim, release to cast)`}
             className={`stone-button stone-button-dark flex-col items-start min-w-[120px] h-auto py-1.5 ${
-              isSilenced ? 'border-[#C084FC] opacity-60 bg-[#241a33]' : tacSec > 0 ? 'opacity-50 grayscale' : ''
+              activeAimUi?.action === 'tactical'
+                ? 'ring-2 ring-[#38BDF8] border-[#38BDF8]'
+                : isSilenced
+                ? 'border-[#C084FC] opacity-60 bg-[#241a33]'
+                : tacSec > 0
+                ? 'opacity-50 grayscale'
+                : ''
             }`}
           >
             <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
               <span>[Q / RMB]</span>
               <span className={isSilenced ? 'text-[#C084FC] font-bold' : ''}>
-                {isSilenced ? '[SILENCED]' : tacSec > 0 ? `${tacSec}s` : 'READY'}
+                {isSilenced ? '[SILENCED]' : tacSec > 0 ? `${tacSec}s` : activeAimUi?.action === 'tactical' ? 'AIM' : 'READY'}
               </span>
             </div>
             <div className="font-display text-sm whitespace-nowrap">
@@ -1002,15 +1072,17 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              if (isSilenced) {
-                sfx.playUiClick();
+            onMouseDown={(e) => {
+              if (e.button === 0) {
+                e.preventDefault();
+                startDesktopButtonAim('ult');
               }
-              onTriggerAction('ult', me.aimAngle);
             }}
-            title={isSilenced ? 'Silenced: Ultimate ability sealed' : myDef.ultName}
+            title={isSilenced ? 'Silenced: Ultimate ability sealed' : `${myDef.ultName} (Hold & drag to aim, release to cast)`}
             className={`stone-button flex-col items-start min-w-[120px] h-auto py-1.5 ${
-              isSilenced
+              activeAimUi?.action === 'ult'
+                ? 'stone-button-gold ring-2 ring-[#FEF08A]'
+                : isSilenced
                 ? 'stone-button-dark border-[#C084FC] opacity-60 bg-[#241a33]'
                 : ultSec > 0
                 ? 'stone-button-dark opacity-50 grayscale'
@@ -1020,7 +1092,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
               <span>[R / Shift]</span>
               <span className={isSilenced ? 'text-[#C084FC] font-bold' : ''}>
-                {isSilenced ? '[SILENCED]' : ultSec > 0 ? `${ultSec}s` : 'READY'}
+                {isSilenced ? '[SILENCED]' : ultSec > 0 ? `${ultSec}s` : activeAimUi?.action === 'ult' ? 'AIM' : 'READY'}
               </span>
             </div>
             <div className="font-display text-sm whitespace-nowrap">
@@ -1030,19 +1102,24 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              if (dashSec === 0) {
-                sfx.playDash();
-                onTriggerAction('dash', me.aimAngle);
+            onMouseDown={(e) => {
+              if (e.button === 0) {
+                e.preventDefault();
+                startDesktopButtonAim('dash');
               }
             }}
+            title="Evasion Dash (Hold & drag to aim, release to dash)"
             className={`stone-button flex-col items-start min-w-[110px] h-auto py-1.5 ${
-              dashSec > 0 ? 'stone-button-dark opacity-50 grayscale' : 'stone-button-gold border-[#F59E0B]'
+              activeAimUi?.action === 'dash'
+                ? 'stone-button-gold ring-2 ring-[#FDE68A]'
+                : dashSec > 0
+                ? 'stone-button-dark opacity-50 grayscale'
+                : 'stone-button-gold border-[#F59E0B]'
             }`}
           >
             <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
-              <span>[Space / C]</span>
-              <span>{dashSec > 0 ? `${dashSec}s` : 'READY'}</span>
+              <span>[C / F]</span>
+              <span>{dashSec > 0 ? `${dashSec}s` : activeAimUi?.action === 'dash' ? 'AIM' : 'READY'}</span>
             </div>
             <div className="font-display text-sm whitespace-nowrap text-[#FDE68A]">
               Dash
@@ -1054,7 +1131,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               type="button"
               onClick={() => {
                 sfx.playHeal();
-                onTriggerAction('potion', me.aimAngle);
+                onTriggerAction('potion', unifiedInputRef.current.aimAngle);
               }}
               className="stone-button stone-button-red flex-col items-start h-auto py-1.5 min-w-[100px]"
             >
@@ -1109,7 +1186,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             type="button"
             onClick={() => {
               sfx.playUiClick();
-              handleTriggerActionWithPortal('interact', me.aimAngle);
+              handleTriggerActionWithPortal('interact', unifiedInputRef.current.aimAngle);
             }}
             className={`stone-button flex-col h-auto py-2 ${
               isTavern && nearPortal ? 'stone-button-gold animate-pulse' : 'stone-button-dark'
@@ -1144,34 +1221,34 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
       {/* Party Chat Drawer */}
       {chatOpen && (
-        <section className="fixed bottom-24 right-4 sm:right-6 z-30 w-72 sm:w-80 bg-[#1B1B26]/96 border border-[#38364C] flex flex-col shadow-2xl">
-          <div className="px-3 py-2 border-b border-[#2D2C3D] flex items-center justify-between">
-            <span className="font-display text-sm text-white">Party Chat</span>
+        <section className="fixed bottom-24 right-4 sm:right-6 z-30 w-88 sm:w-[420px] bg-[#1B1B26]/98 border-2 border-[#38364C] flex flex-col shadow-2xl">
+          <div className="px-4 py-3 border-b-2 border-[#2D2C3D] flex items-center justify-between bg-[#14141E]">
+            <span className="font-display text-base text-white font-bold tracking-wide">Party Chat</span>
             <button
               type="button"
               onClick={() => setChatOpen(false)}
-              className="text-xs text-[#9E9CAE] hover:text-white cursor-pointer min-h-[36px] flex items-center px-2"
+              className="text-xs sm:text-sm text-[#9E9CAE] hover:text-white cursor-pointer min-h-[36px] flex items-center px-2.5 font-mono"
             >
-              Close
+              [X] Close
             </button>
           </div>
-          <div className="h-40 overflow-y-auto p-2.5 space-y-1.5 text-xs">
+          <div className="h-64 sm:h-80 overflow-y-auto p-3.5 space-y-2.5 text-xs sm:text-sm">
             {chatMessages.map((m) => (
-              <div key={m.id} className="leading-snug">
+              <div key={m.id} className="leading-relaxed">
                 <span
                   className={`font-semibold ${
-                    m.system ? 'text-[#D9AA52]' : 'text-[#93C5FD]'
+                    m.system ? 'text-[#FCD34D]' : 'text-[#60A5FA]'
                   }`}
                 >
                   {m.sender}:
                 </span>{' '}
-                <span className="text-[#E6E4EE]">{m.text}</span>
+                <span className="text-[#F3F2F8]">{m.text}</span>
               </div>
             ))}
           </div>
           <form
             onSubmit={handleChatSubmit}
-            className="p-2 border-t border-[#2D2C3D] flex gap-1.5"
+            className="p-3 border-t-2 border-[#2D2C3D] flex gap-2 bg-[#14141E]"
           >
             <input
               type="text"
@@ -1179,13 +1256,13 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               onFocus={() => setChatFocused(true)}
               onBlur={() => setChatFocused(false)}
               onChange={(e) => setChatDraft(e.target.value)}
-              placeholder="Party message..."
-              maxLength={140}
-              className="flex-1 px-2.5 py-1.5 bg-[#13131B] border border-[#323044] text-xs text-white focus:outline-none focus:border-[#D9AA52]"
+              placeholder="Send a message to party..."
+              maxLength={160}
+              className="flex-1 px-3 py-2 bg-[#121219] border border-[#3A384C] text-xs sm:text-sm text-white focus:outline-none focus:border-[#FCD34D]"
             />
             <button
               type="submit"
-              className="px-3 py-1.5 bg-[#313044] hover:bg-[#413F59] text-xs font-semibold text-white cursor-pointer whitespace-nowrap min-h-[36px]"
+              className="stone-button stone-button-gold px-4 py-2 text-xs sm:text-sm font-bold text-black cursor-pointer whitespace-nowrap min-h-[38px]"
             >
               Send
             </button>
@@ -1768,6 +1845,18 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           biomeTitle={cinematicIntro.biomeTitle}
           isInitialChapterEntry={cinematicIntro.isInitialChapterEntry}
           onComplete={handleDismissIntro}
+        />
+      )}
+
+      {/* Proximity Voice HUD */}
+      {me && (
+        <VoiceHUD
+          roomId={snapshot.roomId}
+          tokenAuthHeader={localStorage.getItem('beyond_token') ? `Bearer ${localStorage.getItem('beyond_token')}` : ''}
+          userId={playerId}
+          username={me.username}
+          myPos={{ x: me.x, y: me.y }}
+          otherPlayers={snapshot.players.filter(p => p.id !== playerId).map(p => ({ id: p.id, x: p.x, y: p.y, username: p.username }))}
         />
       )}
     </div>

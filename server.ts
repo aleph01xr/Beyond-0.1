@@ -8,6 +8,7 @@ import express from 'express';
 import pg from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameRoom } from './src/server/gameEngine.ts';
+import { AccessToken } from 'livekit-server-sdk';
 import {
   broadcastSerialized,
   RoomClientIndex,
@@ -876,6 +877,63 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  app.post('/api/voice/token', async (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required for voice chat.' });
+      return;
+    }
+    const acc = accountsById.get(userId);
+    if (!acc) {
+      res.status(401).json({ error: 'Account not found.' });
+      return;
+    }
+
+    const roomId = String(req.body?.roomId || '').trim();
+    if (!roomId) {
+      res.status(400).json({ error: 'Room ID required.' });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    if (!room) {
+      res.status(404).json({ error: 'Game room not found.' });
+      return;
+    }
+
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
+    const livekitUrl = process.env.LIVEKIT_URL;
+
+    if (!apiKey || !apiSecret || !livekitUrl) {
+      res.status(503).json({
+        error: 'LiveKit server is not configured on this server environment.',
+      });
+      return;
+    }
+
+    try {
+      const at = new AccessToken(apiKey, apiSecret, {
+        identity: acc.id,
+        name: acc.username,
+      });
+      at.addGrant({
+        roomJoin: true,
+        room: roomId,
+        canPublish: true,
+        canSubscribe: true,
+      });
+      const jwtToken = await at.toJwt();
+      res.json({ token: jwtToken, url: livekitUrl });
+    } catch (err) {
+      console.error('Failed to generate LiveKit access token:', err);
+      res.status(500).json({ error: 'Failed to generate voice token.' });
+    }
+  });
+
   // Protected Admin Migration: Export Accounts
   app.get('/api/admin/export-accounts', (req, res) => {
     const authHeader = req.headers.authorization || '';
@@ -1148,7 +1206,10 @@ async function startServer() {
       if (msg.type === 'player:input') {
         room.updateInput(acc.id, msg.input, msg.seq);
       } else if (msg.type === 'player:action') {
-        const res = room.performAction(acc.id, msg.action, msg.aimAngle);
+        const res = room.performAction(acc.id, msg.action, msg.aimAngle, {
+          aimDistance: typeof msg.aimDistance === 'number' && Number.isFinite(msg.aimDistance) ? msg.aimDistance : undefined,
+          explicitAim: Boolean(msg.explicitAim),
+        });
         if (res.floorChanged) {
           broadcastToRoom(room.roomId, {
             type: 'room:map',

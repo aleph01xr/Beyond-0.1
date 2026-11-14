@@ -4,6 +4,18 @@ import path from 'node:path';
 import { GameRoom } from './src/server/gameEngine.ts';
 import { TILE_SIZE, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
 import {
+  computeGroundTargetPosition,
+  findBestAutoTarget,
+  getAbilityTargetSpec,
+  getPrimaryAttackRange,
+  simulateDashEndpoint,
+  type AimableAction,
+} from './src/shared/abilityTargeting.ts';
+import {
+  drawAbilityTargetingIndicator,
+  drawPrimaryAttackRangeIndicator,
+} from './src/client/abilityIndicator.ts';
+import {
   drawHumanoidBoss,
   drawElyndorBoss,
   drawZadkielBoss,
@@ -4233,6 +4245,653 @@ async function runRegressionTests() {
     const f120 = computeExpSmoothingFactor(45, 1 / 120);
     const combined120 = 1 - Math.pow(1 - f120, 2);
     assert.ok(Math.abs(f60 - combined120) < 1e-9, 'Expected dt-normalized smoothing to match across 60Hz and 120Hz');
+  });
+
+  // --- Test 78: 8-Directional Character, Enemy & NPC Facing and Rendering ---
+  await test('78. True 8-directional facing (N, NE, E, SE, S, SW, W, NW) works across all hero classes, animations, abilities, controls, enemies, and NPCs', async () => {
+    const {
+      DIRECTION8_LIST,
+      angleToDirection8,
+      direction8ToPose,
+      resolvePlayerDirection8,
+      resolveEnemyDirection8,
+      resolveNpcDirection8,
+    } = await import('./src/client/directionalFacing.ts');
+    const { drawHeroSprite } = await import('./src/client/heroSprites.ts');
+    const {
+      drawSlimeSprite,
+      drawGoblinSprite,
+      drawSkeletonSprite,
+      drawCultistSprite,
+      drawKnightSprite,
+      drawShadowStalkerSprite,
+      drawAstralSentinelSprite,
+      drawHymnPhantomSprite,
+      drawRelicGolemSprite,
+      drawVeiledHereticSprite,
+      drawCelestialArbiterSprite,
+      drawWardenEnforcerSprite,
+      drawGenericEnemySprite,
+    } = await import('./src/client/enemySprites.ts');
+    const { drawNpc, drawHumanoidBoss } = await import('./src/client/npcSprites.ts');
+    const { normalizePlayerInputDirection, hasMovementInput } = await import('./src/shared/playerMovement.ts');
+
+    // 1. Angle quantization & pose metadata for all 8 directions
+    const expectedAngles: Array<[number, string, string]> = [
+      [0, 'E', 'side'],
+      [Math.PI / 4, 'SE', 'front'],
+      [Math.PI / 2, 'S', 'front'],
+      [(3 * Math.PI) / 4, 'SW', 'front'],
+      [Math.PI, 'W', 'side'],
+      [(-3 * Math.PI) / 4, 'NW', 'back'],
+      [-Math.PI / 2, 'N', 'back'],
+      [-Math.PI / 4, 'NE', 'back'],
+    ];
+    for (const [ang, expectedDir, expectedPlane] of expectedAngles) {
+      const dir = angleToDirection8(ang);
+      assert.strictEqual(dir, expectedDir, `Angle ${ang} should map to ${expectedDir}, got ${dir}`);
+      const pose = direction8ToPose(dir, false);
+      assert.strictEqual(pose.verticalPlane, expectedPlane);
+    }
+
+    // 2. Movement facing vs idle aim facing + keyboard & mobile joystick controls
+    const kbDirs = [
+      { up: true, down: false, left: false, right: false, expected: 'N' },
+      { up: true, down: false, left: false, right: true, expected: 'NE' },
+      { up: false, down: false, left: false, right: true, expected: 'E' },
+      { up: false, down: true, left: false, right: true, expected: 'SE' },
+      { up: false, down: true, left: false, right: false, expected: 'S' },
+      { up: false, down: true, left: true, right: false, expected: 'SW' },
+      { up: false, down: false, left: true, right: false, expected: 'W' },
+      { up: true, down: false, left: true, right: false, expected: 'NW' },
+    ];
+    for (const kb of kbDirs) {
+      const input = { ...kb, attack: false, aimAngle: 0 };
+      assert.strictEqual(hasMovementInput(input), true);
+      const { mx, my } = normalizePlayerInputDirection(input, false, 1000);
+      // Aim opposite (South-West/East) while moving -> character must face movement direction
+      const movingPose = resolvePlayerDirection8({
+        moveX: mx,
+        moveY: my,
+        aimAngle: Math.PI * 0.75,
+        isMoving: true,
+        prevFacingLeft: false,
+      });
+      assert.strictEqual(movingPose.dir, kb.expected, `Keyboard move should face ${kb.expected}`);
+    }
+
+    // Mobile virtual joystick 8-way input
+    for (const dir of DIRECTION8_LIST) {
+      const targetPose = direction8ToPose(dir, false);
+      const stickInput = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        stickX: targetPose.dirX * 0.9,
+        stickY: targetPose.dirY * 0.9,
+        attack: false,
+        aimAngle: 0,
+      };
+      assert.strictEqual(hasMovementInput(stickInput), true);
+      const { mx, my } = normalizePlayerInputDirection(stickInput, false, 1000);
+      const joyPose = resolvePlayerDirection8({
+        moveX: mx,
+        moveY: my,
+        aimAngle: Math.PI,
+        isMoving: true,
+      });
+      assert.strictEqual(joyPose.dir, dir, `Joystick input should face ${dir}`);
+    }
+
+    // Standing still -> character faces aimAngle across all 8 directions
+    for (const dir of DIRECTION8_LIST) {
+      const targetPose = direction8ToPose(dir, false);
+      const idlePose = resolvePlayerDirection8({
+        moveX: 0,
+        moveY: 0,
+        aimAngle: targetPose.angleRad,
+        isMoving: false,
+      });
+      assert.strictEqual(idlePose.dir, dir, `Idle aim should face ${dir}`);
+    }
+
+    // Remote multiplayer player moving NW while aiming SE -> faces NW
+    const remotePose = resolvePlayerDirection8({
+      moveX: -120,
+      moveY: -120,
+      aimAngle: Math.PI / 4,
+      isMoving: true,
+    });
+    assert.strictEqual(remotePose.dir, 'NW');
+    assert.strictEqual(remotePose.facingLeft, true);
+
+    // 3. Render all 4 hero classes across all 8 directions (idle, walk, primary, tactical, ult, independent aim)
+    const createTrackingMockCtx = () => {
+      const stack: number[] = [1];
+      const scales: Array<[number, number]> = [];
+      const rotates: number[] = [];
+      const textScaleXs: number[] = [];
+      let drawOps = 0;
+      const ctx = {
+        fillStyle: '#000',
+        strokeStyle: '#000',
+        lineWidth: 1,
+        font: '',
+        textAlign: 'center',
+        textBaseline: 'middle',
+        globalAlpha: 1,
+        save: () => { stack.push(stack[stack.length - 1]); },
+        restore: () => { if (stack.length > 1) stack.pop(); },
+        translate: () => {},
+        rotate: (a: number) => { rotates.push(a); },
+        scale: (sx: number, sy: number) => {
+          scales.push([sx, sy]);
+          stack[stack.length - 1] *= sx;
+        },
+        beginPath: () => {},
+        closePath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        quadraticCurveTo: () => {},
+        bezierCurveTo: () => {},
+        arc: () => {},
+        ellipse: () => {},
+        fillRect: () => { drawOps++; },
+        strokeRect: () => { drawOps++; },
+        fill: () => { drawOps++; },
+        stroke: () => { drawOps++; },
+        fillText: () => { textScaleXs.push(stack[stack.length - 1]); drawOps++; },
+        createRadialGradient: () => ({ addColorStop: () => {} }),
+      } as unknown as CanvasRenderingContext2D;
+      return {
+        ctx,
+        getStats: () => ({ drawOps, scales: [...scales], rotates: [...rotates], textScaleXs: [...textScaleXs] }),
+      };
+    };
+
+    const heroClasses = ['vanguard', 'ranger', 'arcanist', 'cleric'] as const;
+    const swingKinds = ['primary', 'tactical', 'ult'] as const;
+    for (const heroClass of heroClasses) {
+      for (const dir of DIRECTION8_LIST) {
+        const pose = direction8ToPose(dir, false);
+        // Idle + Walk
+        for (const moving of [false, true]) {
+          const tracker = createTrackingMockCtx();
+          drawHeroSprite(
+            tracker.ctx,
+            {
+              heroClass,
+              attackAnimMs: 0,
+              vx: moving ? pose.dirX * 160 : 0,
+              vy: moving ? pose.dirY * 160 : 0,
+              hasteMs: heroClass === 'ranger' && moving ? 1000 : 0,
+              shield: heroClass === 'vanguard' ? 25 : 0,
+            },
+            240,
+            240,
+            {
+              aimAngle: pose.angleRad,
+              bob: moving ? 1.5 : 0,
+              moving,
+              now: 12000,
+              facingLeft: pose.facingLeft,
+              facingDirection: dir,
+            }
+          );
+          const stats = tracker.getStats();
+          assert.ok(stats.drawOps > 10, `Expected drawing ops for ${heroClass} ${dir} moving=${moving}`);
+          const expectMirror = !pose.isPureVertical && pose.facingLeft;
+          const hasMirrorScale = stats.scales.some(([sx]) => sx === -1);
+          assert.strictEqual(
+            hasMirrorScale,
+            expectMirror,
+            `${heroClass} ${dir} horizontal mirror mismatch`
+          );
+        }
+
+        // Primary, Tactical, Ult with independent aim perpendicular to facing
+        const indepAim = pose.angleRad + Math.PI / 2;
+        for (const swingKind of swingKinds) {
+          const tracker = createTrackingMockCtx();
+          drawHeroSprite(
+            tracker.ctx,
+            {
+              heroClass,
+              attackAnimMs: 180,
+              vx: pose.dirX * 140,
+              vy: pose.dirY * 140,
+              hasteMs: 0,
+              shield: 10,
+            },
+            240,
+            240,
+            {
+              aimAngle: indepAim,
+              bob: 1,
+              moving: true,
+              now: 12500,
+              swingProgress: 0.48,
+              swingKind,
+              facingLeft: pose.facingLeft,
+              facingDirection: dir,
+            }
+          );
+          const stats = tracker.getStats();
+          assert.ok(stats.drawOps > 12, `Expected attack draw ops for ${heroClass} ${dir} ${swingKind}`);
+          assert.ok(stats.rotates.length >= 1, `Expected independent weapon rotation for ${heroClass} ${dir} ${swingKind}`);
+        }
+      }
+    }
+
+    // 4. All 13 enemy sprite renderers + 5 humanoid bosses across all 8 directions
+    const baseEnemy = {
+      id: 'e_dir',
+      kind: 'goblin' as const,
+      name: 'Test Mob',
+      roomId: 1,
+      x: 200,
+      y: 200,
+      vx: 0,
+      vy: 0,
+      hp: 100,
+      maxHp: 100,
+      radius: 14,
+      state: 'chase' as const,
+      windupMs: 0,
+      targetX: 200,
+      targetY: 200,
+      markedMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
+      elite: false,
+    };
+
+    const enemyRenderers = [
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawSlimeSprite(ctx, en, 200, 200, 12000, 'catacombs', p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawGoblinSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawSkeletonSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawCultistSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawKnightSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawShadowStalkerSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawAstralSentinelSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawHymnPhantomSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawRelicGolemSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawVeiledHereticSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawCelestialArbiterSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawWardenEnforcerSprite(ctx, en, 200, 200, 12000, p),
+      (ctx: CanvasRenderingContext2D, en: any, p: any) => drawGenericEnemySprite(ctx, en, 200, 200, 12000, p),
+    ];
+
+    for (const dir of DIRECTION8_LIST) {
+      const targetPose = direction8ToPose(dir, false);
+      const enemyState = {
+        ...baseEnemy,
+        vx: targetPose.dirX * 90,
+        vy: targetPose.dirY * 90,
+      };
+      const resolved = resolveEnemyDirection8(enemyState, 'S', false);
+      assert.strictEqual(resolved.dir, dir);
+
+      for (const renderFn of enemyRenderers) {
+        const tracker = createTrackingMockCtx();
+        assert.doesNotThrow(() => renderFn(tracker.ctx, enemyState, resolved));
+        const stats = tracker.getStats();
+        assert.ok(stats.drawOps > 0);
+        // Ensure any text drawn (e.g. Hymn Phantom music notes) is never mirrored
+        for (const sx of stats.textScaleXs) {
+          assert.strictEqual(sx, 1, 'Enemy text elements must remain un-mirrored');
+        }
+      }
+
+      const bossTracker = createTrackingMockCtx();
+      assert.doesNotThrow(() =>
+        drawHumanoidBoss(bossTracker.ctx, 200, 200, 'Elyndor, Keeper of the Last Hymn', 12000, enemyState, resolved)
+      );
+      assert.ok(bossTracker.getStats().drawOps > 10);
+    }
+
+    // 5. Tavern NPCs: 8-way facing toward nearby player, default South when alone, un-mirrored name/talk badge
+    const npcs = [
+      { id: 'npc_bram', name: 'Innkeeper Bram', x: 300, y: 300, radius: 14, spriteKind: 'innkeeper' as const, dialogue: 'Welcome' },
+      { id: 'npc_lena', name: 'Barkeeper Lena', x: 300, y: 300, radius: 14, spriteKind: 'barkeep' as const, dialogue: 'Drink?' },
+      { id: 'npc_jorah', name: 'Veteran Jorah', x: 300, y: 300, radius: 14, spriteKind: 'veteran' as const, dialogue: 'Ready' },
+      { id: 'npc_aleph', name: 'Aleph', x: 300, y: 300, radius: 14, spriteKind: 'mysterious_cloak' as const, dialogue: 'Hmm' },
+      { id: 'npc_other', name: 'Traveler', x: 300, y: 300, radius: 14, spriteKind: 'scholar' as const, dialogue: 'Hi' },
+    ];
+    assert.strictEqual(resolveNpcDirection8(npcs[0], [], 140).dir, 'S');
+    for (const dir of DIRECTION8_LIST) {
+      const p = direction8ToPose(dir, false);
+      const nearbyPlayer = { x: 300 + p.dirX * 60, y: 300 + p.dirY * 60, downed: false };
+      const npcPose = resolveNpcDirection8(npcs[0], [nearbyPlayer], 140);
+      assert.strictEqual(npcPose.dir, dir);
+      for (const npc of npcs) {
+        const tracker = createTrackingMockCtx();
+        assert.doesNotThrow(() => drawNpc(tracker.ctx, npc, 12000, npcPose));
+        const stats = tracker.getStats();
+        assert.ok(stats.textScaleXs.length >= 2, 'NPC name and prompt should render');
+        for (const sx of stats.textScaleXs) {
+          assert.strictEqual(sx, 1, `NPC ${npc.name} badge text must stay upright (un-mirrored) on ${dir}`);
+        }
+      }
+    }
+
+    // 6. Server primary attacks preserve 8-directional aimAngle even with enemies behind player
+    const atkRoom = new GameRoom({
+      roomId: 'EXPEDITION-8WAY-ATK',
+      name: 'Test 8Way Attack',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 9012,
+    });
+    for (const heroClass of ['vanguard', 'ranger', 'arcanist', 'cleric'] as const) {
+      const pid = `atk_${heroClass}`;
+      atkRoom.addOrReconnectPlayer(pid, pid, heroClass);
+      const player = atkRoom.getPlayerState(pid)!;
+      for (const dir of DIRECTION8_LIST) {
+        const pose = direction8ToPose(dir, false);
+        atkRoom.enemies = [
+          {
+            ...baseEnemy,
+            id: `rear_${dir}`,
+            x: player.x - pose.dirX * 55,
+            y: player.y - pose.dirY * 55,
+          },
+        ];
+        atkRoom.projectiles = [];
+        player.aimAngle = pose.angleRad;
+        atkRoom.firePrimaryAttack(player);
+        const proj = atkRoom.projectiles.find((pr) => pr.ownerId === pid);
+        assert.ok(proj, `Primary attack should spawn projectile for ${heroClass} facing ${dir}`);
+        const angleDiff = Math.abs(
+          Math.atan2(Math.sin(proj!.angle - pose.angleRad), Math.cos(proj!.angle - pose.angleRad))
+        );
+        assert.ok(angleDiff < 0.05, `${heroClass} projectile on ${dir} must follow aimAngle (diff=${angleDiff})`);
+        assert.ok(!proj!.targetEnemyId, `Rear enemy must not be homing-locked when aiming ${dir}`);
+      }
+    }
+  });
+
+  // --- Test 79: Drag-to-aim ability targeting specs, ground AoE placement, dash aiming & indicator rendering ---
+  test('79. Drag-to-aim ability targeting specs, server execution, and canvas indicators work across all classes', () => {
+    const room = new GameRoom({
+      roomId: 'EXPEDITION-DRAG-AIM',
+      name: 'Drag Aim Test',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 4242,
+    });
+
+    // 1. Validate spec taxonomy across all classes & dash
+    assert.strictEqual(getAbilityTargetSpec('vanguard', 'tactical').kind, 'dash');
+    assert.strictEqual(getAbilityTargetSpec('vanguard', 'ult').kind, 'self_aoe');
+    assert.strictEqual(getAbilityTargetSpec('ranger', 'tactical').kind, 'cone_volley');
+    assert.strictEqual(getAbilityTargetSpec('ranger', 'ult').kind, 'self_aoe');
+    assert.strictEqual(getAbilityTargetSpec('arcanist', 'tactical').kind, 'self_aoe');
+    assert.strictEqual(getAbilityTargetSpec('arcanist', 'ult').kind, 'ground_aoe');
+    assert.strictEqual(getAbilityTargetSpec('cleric', 'tactical').kind, 'self_aoe');
+    assert.strictEqual(getAbilityTargetSpec('cleric', 'ult').kind, 'ground_aoe');
+    assert.strictEqual(getAbilityTargetSpec('ranger', 'dash').kind, 'dash');
+
+    // 2. Arcanist Chrono Well honors aimDistance and clamps to 220px max range
+    room.addOrReconnectPlayer('arc_aim', 'Arc', 'arcanist');
+    const arc = room.getPlayerState('arc_aim')!;
+    arc.ultCooldownMs = 0;
+    const startX = arc.x;
+    const startY = arc.y;
+    room.zones = [];
+    room.performAction('arc_aim', 'ult', Math.PI / 2, {
+      aimDistance: 500, // beyond 220 max range
+      explicitAim: true,
+    });
+    const chronoZone = room.zones.find((z) => z.kind === 'chrono_well');
+    assert.ok(chronoZone, 'Chrono Well zone should spawn');
+    assert.ok(
+      Math.abs(chronoZone!.x - startX) < 1 && Math.abs(chronoZone!.y - (startY + 220)) < 1,
+      `Chrono Well must clamp target distance to 220px along aimAngle (got dx=${chronoZone!.x - startX}, dy=${chronoZone!.y - startY})`
+    );
+    // Cooldown lock must prevent recasting immediately
+    room.zones = [];
+    room.performAction('arc_aim', 'ult', 0, { aimDistance: 100, explicitAim: true });
+    assert.strictEqual(room.zones.length, 0, 'Cooldown lock must block ult recast');
+
+    // 3. Cleric Solar Beacon places at target ground coordinates & defaults to self-cast when omitted
+    room.addOrReconnectPlayer('cle_aim', 'Cle', 'cleric');
+    const cle = room.getPlayerState('cle_aim')!;
+    cle.ultCooldownMs = 0;
+    room.zones = [];
+    room.performAction('cle_aim', 'ult', Math.PI, { aimDistance: 140, explicitAim: true });
+    const solarAimed = room.zones.find((z) => z.kind === 'solar_beacon');
+    assert.ok(solarAimed, 'Aimed Solar Beacon should spawn');
+    assert.ok(
+      Math.abs(solarAimed!.x - (cle.x - 140)) < 1 && Math.abs(solarAimed!.y - cle.y) < 1,
+      'Solar Beacon must spawn at aimed ground offset'
+    );
+    // Default (quick tap) places on self (distance 0)
+    cle.ultCooldownMs = 0;
+    room.zones = [];
+    room.performAction('cle_aim', 'ult', 0);
+    const solarDefault = room.zones.find((z) => z.kind === 'solar_beacon');
+    assert.ok(
+      solarDefault && Math.abs(solarDefault.x - cle.x) < 1 && Math.abs(solarDefault.y - cle.y) < 1,
+      'Quick-tap Solar Beacon without aimDistance must center on player'
+    );
+
+    // 4. Explicit-aim Dash overrides movement vector (vx, vy), while quick-tap Dash follows movement
+    room.addOrReconnectPlayer('rng_aim', 'Rng', 'ranger');
+    const rng = room.getPlayerState('rng_aim')!;
+    const originX = rng.x;
+    const originY = rng.y;
+    rng.vx = 180; // Moving East
+    rng.vy = 0;
+    rng.dashCooldownMs = 0;
+    room.performAction('rng_aim', 'dash', Math.PI / 2, {
+      aimDistance: 60,
+      explicitAim: true,
+    });
+    assert.ok(
+      rng.y > originY + 20 && Math.abs(rng.x - originX) < 5,
+      `Explicit-aim dash must move South even while walking East (dx=${rng.x - originX}, dy=${rng.y - originY})`
+    );
+
+    // Quick-tap dash (explicitAim false) follows movement vector East
+    rng.x = originX;
+    rng.y = originY;
+    rng.dashCooldownMs = 0;
+    room.performAction('rng_aim', 'dash', Math.PI / 2, {
+      explicitAim: false,
+    });
+    assert.ok(
+      rng.x > originX + 30 && Math.abs(rng.y - originY) < 5,
+      `Non-explicit dash must follow active velocity vector East (dx=${rng.x - originX}, dy=${rng.y - originY})`
+    );
+
+    // 5. Silence restriction remains intact
+    room.applyStatusEffect(arc, 'silence', 2000);
+    arc.skillCooldownMs = 0;
+    const beforeProjCount = room.projectiles.length;
+    room.performAction('arc_aim', 'tactical', 0, { explicitAim: true });
+    assert.strictEqual(room.projectiles.length, beforeProjCount, 'Silenced player must not fire tactical ability');
+
+    // 6. Wall-clamped simulateDashEndpoint stays inside walkable map bounds
+    const clampedEnd = simulateDashEndpoint(
+      room.map,
+      room.props,
+      room.npcs,
+      originX,
+      originY,
+      0,
+      5000,
+      14
+    );
+    assert.ok(
+      clampedEnd.x < room.map.width * TILE_SIZE,
+      'Simulated dash endpoint must clamp against dungeon walls'
+    );
+
+    // 7. Canvas indicator renders cleanly for all hero classes, actions, and cancel states
+    const noop = () => {};
+    const mockCtx = {
+      save: noop,
+      restore: noop,
+      translate: noop,
+      rotate: noop,
+      scale: noop,
+      beginPath: noop,
+      closePath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      arc: noop,
+      fill: noop,
+      stroke: noop,
+      fillRect: noop,
+      setLineDash: noop,
+      createRadialGradient: () => ({ addColorStop: noop }),
+    } as unknown as CanvasRenderingContext2D;
+
+    const snap = room.buildSnapshot();
+    const classes: HeroClassId[] = ['vanguard', 'ranger', 'arcanist', 'cleric'];
+    const actions: AimableAction[] = ['tactical', 'ult', 'dash'];
+    for (const hc of classes) {
+      const p = { ...rng, heroClass: hc };
+      for (const act of actions) {
+        for (const cancelled of [false, true]) {
+          assert.doesNotThrow(() =>
+            drawAbilityTargetingIndicator(
+              mockCtx,
+              room.map,
+              snap,
+              p,
+              p.x,
+              p.y,
+              {
+                action: act,
+                source: 'touch',
+                aimAngle: Math.PI / 4,
+                magnitude: 0.75,
+                aimDistance: getAbilityTargetSpec(hc, act).range * 0.75,
+                cancelled,
+              },
+              15000
+            )
+          );
+        }
+      }
+    }
+    const groundRes = computeGroundTargetPosition(100, 100, 0, 999, getAbilityTargetSpec('arcanist', 'ult'));
+    assert.strictEqual(groundRes.distance, 220);
+  });
+
+  // --- Test 80: Smart Auto-Aim (360° Touch Kiting, LoS, Exact Class Ranges) & Low-Visibility Range Indicator ---
+  test('80. Smart auto-aim respects class ranges, line-of-sight, kiting angles, training dummies, and low-visibility range indicator', () => {
+    // 1. Exact per-class primary attack ranges (Ranger, Arcanist, Cleric further nerfed; Vanguard unchanged)
+    assert.strictEqual(getPrimaryAttackRange('vanguard'), 81);
+    assert.strictEqual(getPrimaryAttackRange('ranger'), 210);
+    assert.strictEqual(getPrimaryAttackRange('arcanist'), 195);
+    assert.strictEqual(getPrimaryAttackRange('cleric'), 175);
+    assert.strictEqual(getAbilityTargetSpec('ranger', 'tactical').range, 210);
+    assert.strictEqual(getAbilityTargetSpec('arcanist', 'tactical').range, 165);
+
+    // 2. Build a small synthetic dungeon map with a solid wall separating player and a blocked enemy
+    const w = 16;
+    const h = 16;
+    const tiles = new Array(w * h).fill(1);
+    for (let y = 0; y < h; y++) {
+      tiles[y * w + 10] = 2; // vertical wall at tile x=10 (world x=320..352)
+    }
+    const testMap = {
+      width: w,
+      height: h,
+      tiles,
+      rooms: [],
+      biome: 'courtyard' as const,
+      biomeTitle: 'Test Arena',
+      floor: 1,
+      seed: 1,
+      portalPos: { x: 100, y: 100 },
+      portalActive: false,
+      torches: [],
+    };
+
+    // Player at (240, 240), walking/facing West (PI), enemy behind them East at (300, 240),
+    // another enemy behind the wall at (380, 240)
+    const behindCloseEnemy = { id: 'e_east', x: 300, y: 240, hp: 50, radius: 14 };
+    const wallBlockedEnemy = { id: 'e_wall', x: 380, y: 240, hp: 50, radius: 14 };
+    const outOfRangeEnemy = { id: 'e_far', x: 240, y: 650, hp: 50, radius: 14 };
+
+    // Touch 360° auto-aim (minDot: -1) acquires the rear enemy while kiting West
+    const touchLock = findBestAutoTarget({
+      playerX: 240,
+      playerY: 240,
+      maxRange: getPrimaryAttackRange('ranger'),
+      preferredAngle: Math.PI, // walking West
+      minDot: -1,
+      map: testMap,
+      props: [],
+      enemies: [wallBlockedEnemy, outOfRangeEnemy, behindCloseEnemy],
+    });
+    assert.ok(touchLock, 'Touch auto-aim must acquire enemy in range while kiting away');
+    assert.strictEqual(touchLock!.target.id, 'e_east');
+    assert.ok(Math.abs(touchLock!.angle - 0) < 0.01, 'Angle should point East directly at e_east');
+
+    // If only wall-blocked or out-of-range enemies exist, auto-aim must ignore them and fall back to training dummy if in LoS
+    const dummyFallback = findBestAutoTarget({
+      playerX: 240,
+      playerY: 240,
+      maxRange: getPrimaryAttackRange('cleric'),
+      preferredAngle: 0,
+      minDot: -1,
+      map: testMap,
+      props: [],
+      enemies: [wallBlockedEnemy, outOfRangeEnemy],
+      trainingDummies: [{ id: 'dummy_1', x: 240, y: 360 }],
+    });
+    assert.ok(dummyFallback, 'Auto-aim should acquire training dummy when no valid LoS enemy is in range');
+    assert.strictEqual(dummyFallback!.target.id, 'dummy_1');
+
+    // Vanguard range (85px) must NOT lock onto enemy at 120px
+    const vanMiss = findBestAutoTarget({
+      playerX: 240,
+      playerY: 240,
+      maxRange: getPrimaryAttackRange('vanguard'),
+      minDot: -1,
+      enemies: [{ id: 'e_120', x: 360, y: 240, hp: 50 }],
+    });
+    assert.strictEqual(vanMiss, null, 'Vanguard 85px range must not lock enemy at 120px');
+
+    // 3. Low-visibility primary attack range indicator renders with low opacity (<= 0.25) and no fill
+    const capturedStrokes: string[] = [];
+    let fillCount = 0;
+    let drawnRadius = 0;
+    const rangeCtx = {
+      save: () => {},
+      restore: () => {},
+      setLineDash: () => {},
+      beginPath: () => {},
+      arc: (_x: number, _y: number, r: number) => { drawnRadius = r; },
+      stroke: () => { capturedStrokes.push(String(rangeCtx.strokeStyle)); },
+      fill: () => { fillCount++; },
+      strokeStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    drawPrimaryAttackRangeIndicator(rangeCtx, 200, 200, 'arcanist', false, false);
+    assert.strictEqual(drawnRadius, 195, 'Range circle must match Arcanist further nerfed attack range');
+    assert.strictEqual(fillCount, 0, 'Low-visibility range ring must not draw interior fill');
+    const idleAlphaMatch = capturedStrokes[0].match(/[\d.]+\)$/);
+    const idleAlpha = idleAlphaMatch ? parseFloat(idleAlphaMatch[0]) : 1;
+    assert.ok(idleAlpha > 0 && idleAlpha <= 0.15, `Idle range indicator alpha must be low-visibility (got ${idleAlpha})`);
+
+    drawPrimaryAttackRangeIndicator(rangeCtx, 200, 200, 'arcanist', true, true);
+    const activeAlphaMatch = capturedStrokes[1].match(/[\d.]+\)$/);
+    const activeAlpha = activeAlphaMatch ? parseFloat(activeAlphaMatch[0]) : 1;
+    assert.ok(activeAlpha > idleAlpha && activeAlpha <= 0.25, `Engaged range indicator alpha must stay subtle (got ${activeAlpha})`);
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

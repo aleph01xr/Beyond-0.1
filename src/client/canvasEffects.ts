@@ -6329,11 +6329,12 @@ export function drawEnhancedProjectile(
           ? 'slash_simple2.png'
           : 'slash_simple3.png';
     
-    const totalFrames = isCrit ? 7 : 3;
     const sheetImg = getSlashSheet(sheetFilename);
 
     if (sheetImg) {
-      const frameIdx = Math.floor((now * 0.024) % totalFrames);
+      const totalFrames = Math.max(1, Math.floor(sheetImg.naturalWidth / 128));
+      const lifeProgress = Math.max(0, Math.min(0.999, 1 - proj.ttlMs / 140));
+      const frameIdx = Math.min(totalFrames - 1, Math.floor(lifeProgress * totalFrames));
       const drawSize = Math.max(56, proj.radius * 2.8);
       ctx.drawImage(
         sheetImg,

@@ -57,7 +57,7 @@ var HERO_CLASSES = {
     speed: 210,
     damage: 24,
     attackCooldownMs: 320,
-    range: 380,
+    range: 266,
     primaryColor: "#2D5A3C",
     secondaryColor: "#4ADE80",
     capeColor: "#1A3826",
@@ -87,7 +87,7 @@ var HERO_CLASSES = {
     speed: 188,
     damage: 32,
     attackCooldownMs: 420,
-    range: 340,
+    range: 255,
     primaryColor: "#4338CA",
     secondaryColor: "#818CF8",
     capeColor: "#312E81",
@@ -117,7 +117,7 @@ var HERO_CLASSES = {
     speed: 185,
     damage: 22,
     attackCooldownMs: 380,
-    range: 290,
+    range: 218,
     primaryColor: "#E2E8F0",
     secondaryColor: "#FDE047",
     capeColor: "#854D0E",
@@ -274,7 +274,7 @@ var FLOOR_BLESSINGS = {
 };
 
 // src/shared/playerMovement.ts
-function isWallAtWorld(map, props, wx, wy) {
+function isWallAtWorld(map, props, wx, wy, npcs) {
   const tx = Math.floor(wx / TILE_SIZE);
   const ty = Math.floor(wy / TILE_SIZE);
   if (tx < 0 || tx >= map.width || ty < 0 || ty >= map.height) {
@@ -290,9 +290,17 @@ function isWallAtWorld(map, props, wx, wy) {
       }
     }
   }
+  if (npcs) {
+    for (let i = 0; i < npcs.length; i++) {
+      const npc = npcs[i];
+      if (Math.hypot(wx - npc.x, wy - npc.y) <= 20) {
+        return true;
+      }
+    }
+  }
   return false;
 }
-function hasLineOfSight(map, props, x1, y1, x2, y2) {
+function hasLineOfSight(map, props, x1, y1, x2, y2, npcs) {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.hypot(dx, dy);
@@ -301,7 +309,7 @@ function hasLineOfSight(map, props, x1, y1, x2, y2) {
   const stepX = dx / steps;
   const stepY = dy / steps;
   for (let i = 1; i < steps; i++) {
-    if (isWallAtWorld(map, props, x1 + stepX * i, y1 + stepY * i)) {
+    if (isWallAtWorld(map, props, x1 + stepX * i, y1 + stepY * i, npcs)) {
       return false;
     }
   }
@@ -327,24 +335,24 @@ var COLLISION_SIN = [
   -1,
   -Math.SQRT1_2
 ];
-function collidesCircle(map, props, wx, wy, radius) {
-  if (isWallAtWorld(map, props, wx, wy)) return true;
+function collidesCircle(map, props, wx, wy, radius, npcs) {
+  if (isWallAtWorld(map, props, wx, wy, npcs)) return true;
   for (let i = 0; i < 8; i++) {
     const cx = wx + COLLISION_COS[i] * radius;
     const cy = wy + COLLISION_SIN[i] * radius;
-    if (isWallAtWorld(map, props, cx, cy)) return true;
+    if (isWallAtWorld(map, props, cx, cy, npcs)) return true;
   }
   return false;
 }
-function moveWithCollision(map, props, entity, dx, dy, radius) {
-  if (collidesCircle(map, props, entity.x, entity.y, radius * 0.75)) {
+function moveWithCollision(map, props, entity, dx, dy, radius, npcs) {
+  if (collidesCircle(map, props, entity.x, entity.y, radius * 0.75, npcs)) {
     let escapeX = 0;
     let escapeY = 0;
     const probeDist = radius + 8;
     for (let i = 0; i < 8; i++) {
       const testX = entity.x + COLLISION_COS[i] * probeDist;
       const testY = entity.y + COLLISION_SIN[i] * probeDist;
-      if (!isWallAtWorld(map, props, testX, testY)) {
+      if (!isWallAtWorld(map, props, testX, testY, npcs)) {
         escapeX += COLLISION_COS[i];
         escapeY += COLLISION_SIN[i];
       }
@@ -357,19 +365,19 @@ function moveWithCollision(map, props, entity, dx, dy, radius) {
   }
   const targetX = entity.x + dx;
   const targetY = entity.y + dy;
-  if (hasLineOfSight(map, props, entity.x, entity.y, targetX, targetY) && !collidesCircle(map, props, targetX, targetY, radius)) {
+  if (hasLineOfSight(map, props, entity.x, entity.y, targetX, targetY, npcs) && !collidesCircle(map, props, targetX, targetY, radius, npcs)) {
     entity.x = targetX;
     entity.y = targetY;
     return;
   }
-  if (dx !== 0 && !collidesCircle(map, props, targetX, entity.y, radius)) {
+  if (dx !== 0 && !collidesCircle(map, props, targetX, entity.y, radius, npcs)) {
     entity.x = targetX;
-  } else if (dx !== 0 && !collidesCircle(map, props, entity.x + dx * 0.5, entity.y, radius)) {
+  } else if (dx !== 0 && !collidesCircle(map, props, entity.x + dx * 0.5, entity.y, radius, npcs)) {
     entity.x += dx * 0.5;
   }
-  if (dy !== 0 && !collidesCircle(map, props, entity.x, targetY, radius)) {
+  if (dy !== 0 && !collidesCircle(map, props, entity.x, targetY, radius, npcs)) {
     entity.y = targetY;
-  } else if (dy !== 0 && !collidesCircle(map, props, entity.x, entity.y + dy * 0.5, radius)) {
+  } else if (dy !== 0 && !collidesCircle(map, props, entity.x, entity.y + dy * 0.5, radius, npcs)) {
     entity.y += dy * 0.5;
   }
 }
@@ -426,6 +434,188 @@ function normalizePlayerInputDirection(input, disoriented = false, timeMs = 0) {
     }
   }
   return { mx, my };
+}
+
+// src/shared/abilityTargeting.ts
+var DASH_TARGET_SPEC = {
+  action: "dash",
+  label: "Dash",
+  kind: "dash",
+  range: 110,
+  aoeRadius: 18,
+  defaultDist: 110,
+  collisionRadius: 14,
+  accentColor: "#F59E0B",
+  secondaryColor: "#FEF08A"
+};
+var CLASS_ABILITY_SPECS = {
+  vanguard: {
+    tactical: {
+      action: "tactical",
+      label: "Bulwark Dash",
+      kind: "dash",
+      range: 92,
+      aoeRadius: 84,
+      secondaryRadius: 170,
+      defaultDist: 92,
+      collisionRadius: 12,
+      accentColor: "#F59E0B",
+      secondaryColor: "#93C5FD"
+    },
+    ult: {
+      action: "ult",
+      label: "Aegis Sanctuary",
+      kind: "self_aoe",
+      range: 0,
+      aoeRadius: 105,
+      defaultDist: 0,
+      accentColor: "#60A5FA",
+      secondaryColor: "#FDE047"
+    }
+  },
+  ranger: {
+    tactical: {
+      action: "tactical",
+      label: "Frost Volley",
+      kind: "cone_volley",
+      range: 287,
+      aoeRadius: 0,
+      defaultDist: 287,
+      coneRayOffsets: [-0.28, -0.14, 0, 0.14, 0.28],
+      accentColor: "#38BDF8",
+      secondaryColor: "#BAE6FD"
+    },
+    ult: {
+      action: "ult",
+      label: "Hunter Quarry",
+      kind: "self_aoe",
+      range: 0,
+      aoeRadius: 340,
+      defaultDist: 0,
+      accentColor: "#FBBF24",
+      secondaryColor: "#FDE68A"
+    }
+  },
+  arcanist: {
+    tactical: {
+      action: "tactical",
+      label: "Astral Nova",
+      kind: "self_aoe",
+      range: 218,
+      aoeRadius: 218,
+      defaultDist: 0,
+      radialRays: 8,
+      accentColor: "#818CF8",
+      secondaryColor: "#38BDF8"
+    },
+    ult: {
+      action: "ult",
+      label: "Chrono Well",
+      kind: "ground_aoe",
+      range: 220,
+      aoeRadius: 100,
+      defaultDist: 110,
+      accentColor: "#38BDF8",
+      secondaryColor: "#C084FC"
+    }
+  },
+  cleric: {
+    tactical: {
+      action: "tactical",
+      label: "Sanctified Pulse",
+      kind: "self_aoe",
+      range: 0,
+      aoeRadius: 210,
+      secondaryRadius: 135,
+      defaultDist: 0,
+      accentColor: "#34D399",
+      secondaryColor: "#FACC15"
+    },
+    ult: {
+      action: "ult",
+      label: "Solar Beacon",
+      kind: "ground_aoe",
+      range: 180,
+      aoeRadius: 115,
+      defaultDist: 0,
+      accentColor: "#FACC15",
+      secondaryColor: "#34D399"
+    }
+  }
+};
+function getAbilityTargetSpec(heroClass, action) {
+  if (action === "dash") return DASH_TARGET_SPEC;
+  return CLASS_ABILITY_SPECS[heroClass][action];
+}
+function clampGroundTargetDistance(rawDistance, spec) {
+  if (typeof rawDistance !== "number" || !Number.isFinite(rawDistance)) {
+    return spec.defaultDist;
+  }
+  return Math.max(0, Math.min(spec.range, rawDistance));
+}
+function computeGroundTargetPosition(playerX, playerY, aimAngle, rawDistance, spec) {
+  const dist = clampGroundTargetDistance(rawDistance, spec);
+  return {
+    x: playerX + Math.cos(aimAngle) * dist,
+    y: playerY + Math.sin(aimAngle) * dist,
+    distance: dist
+  };
+}
+var PRIMARY_ATTACK_RANGES = {
+  vanguard: 85,
+  ranger: 291,
+  arcanist: 274,
+  cleric: 246
+};
+function getPrimaryAttackRange(heroClass) {
+  return PRIMARY_ATTACK_RANGES[heroClass] ?? 246;
+}
+function findBestAutoTarget(opts) {
+  const hasPref = typeof opts.preferredAngle === "number" && Number.isFinite(opts.preferredAngle);
+  const prefCos = hasPref ? Math.cos(opts.preferredAngle) : 1;
+  const prefSin = hasPref ? Math.sin(opts.preferredAngle) : 0;
+  const minDot = typeof opts.minDot === "number" ? opts.minDot : -1;
+  const pickFrom = (list) => {
+    let bestTarget = null;
+    let bestScore = Infinity;
+    let bestAngle = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < list.length; i++) {
+      const candidate = list[i];
+      if (typeof candidate.hp === "number" && candidate.hp <= 0) continue;
+      const dx = candidate.x - opts.playerX;
+      const dy = candidate.y - opts.playerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= 1e-3 || dist > opts.maxRange) continue;
+      const dot = hasPref ? (dx * prefCos + dy * prefSin) / dist : 0;
+      if (minDot > -1 && dot < minDot) continue;
+      if (opts.map && opts.props && !hasLineOfSight(
+        opts.map,
+        opts.props,
+        opts.playerX,
+        opts.playerY,
+        candidate.x,
+        candidate.y
+      )) {
+        continue;
+      }
+      const score = dist - Math.max(0, dot) * 16;
+      if (score < bestScore) {
+        bestScore = score;
+        bestTarget = candidate;
+        bestAngle = Math.atan2(dy, dx);
+        bestDist = dist;
+      }
+    }
+    if (!bestTarget) return null;
+    return { target: bestTarget, angle: bestAngle, distance: bestDist };
+  };
+  const enemyMatch = pickFrom(opts.enemies);
+  if (enemyMatch) return enemyMatch;
+  if (opts.trainingDummies && opts.trainingDummies.length > 0) {
+    return pickFrom(opts.trainingDummies);
+  }
+  return null;
 }
 
 // src/server/dungeonGenerator.ts
@@ -1472,6 +1662,7 @@ var GameRoom = class _GameRoom {
     this.statusDotAccumMs = 0;
     this.clericAuraAccumMs = 0;
     this.floorMasteryAwarded = false;
+    this.recentStatusEvents = /* @__PURE__ */ new Map();
     this.roomId = opts.roomId;
     this.name = opts.name;
     this.hostName = opts.hostName;
@@ -2394,7 +2585,7 @@ var GameRoom = class _GameRoom {
     }
     return picked;
   }
-  performAction(playerId, action, aimAngle = 0) {
+  performAction(playerId, action, aimAngle = 0, options) {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== "playing") return {};
     const p = pr.state;
@@ -2411,10 +2602,11 @@ var GameRoom = class _GameRoom {
       p.dashCooldownMs = Math.round(2600 * cdrMult);
       p.maxDashCooldownMs = p.dashCooldownMs;
       let dashAngle = p.aimAngle;
-      if (Math.hypot(p.vx, p.vy) > 0.1) {
+      if (!options?.explicitAim && Math.hypot(p.vx, p.vy) > 0.1) {
         dashAngle = Math.atan2(p.vy, p.vx);
       }
-      const dashDist = 110;
+      const dashSpec = getAbilityTargetSpec(p.heroClass, "dash");
+      const dashDist = typeof options?.aimDistance === "number" && Number.isFinite(options.aimDistance) ? Math.max(24, Math.min(dashSpec.range, options.aimDistance)) : dashSpec.defaultDist;
       this.moveWithCollision(
         p,
         Math.cos(dashAngle) * dashDist,
@@ -2430,7 +2622,7 @@ var GameRoom = class _GameRoom {
         p.potions -= 1;
         const healAmt = Math.round(p.maxHp * 0.45);
         p.hp = Math.min(p.maxHp, p.hp + healAmt);
-        this.emitEvent("heal", p.x, p.y - 20, `+${healAmt} HP`, "#5CD68D");
+        this.emitEvent("heal", p.x, p.y - 20, `+${healAmt}`, "#34D399");
       }
       return {};
     }
@@ -2672,7 +2864,7 @@ var GameRoom = class _GameRoom {
             damage: baseDmg,
             pierce: 2,
             slowOnHit: true,
-            ttlMs: 950
+            ttlMs: 630
           });
         }
       } else if (p.heroClass === "arcanist") {
@@ -2692,7 +2884,7 @@ var GameRoom = class _GameRoom {
             radius: 7,
             damage: baseDmg,
             pierce: 2,
-            ttlMs: 850
+            ttlMs: 600
           });
         }
       } else if (p.heroClass === "cleric") {
@@ -2702,7 +2894,7 @@ var GameRoom = class _GameRoom {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
-            this.emitEvent("heal", ally.state.x, ally.state.y - 20, `+${heal} HP`, "#6EE7B7");
+            this.emitEvent("heal", ally.state.x, ally.state.y - 20, `+${heal}`, "#34D399");
           }
         }
         const smiteTargets = [...this.enemies];
@@ -2751,31 +2943,45 @@ var GameRoom = class _GameRoom {
         }
         this.emitEvent("status", p.x, p.y - 26, "Hunter Quarry Marked", "#FBBF24");
       } else if (p.heroClass === "arcanist") {
-        const tx = p.x + Math.cos(p.aimAngle) * 110;
-        const ty = p.y + Math.sin(p.aimAngle) * 110;
+        const ultSpec = getAbilityTargetSpec("arcanist", "ult");
+        const targetPos = computeGroundTargetPosition(
+          p.x,
+          p.y,
+          p.aimAngle,
+          options?.aimDistance,
+          ultSpec
+        );
         this.zones.push({
           id: this.nextId("zone"),
           kind: "chrono_well",
-          x: tx,
-          y: ty,
+          x: targetPos.x,
+          y: targetPos.y,
           radius: 100,
           ttlMs: 5e3,
           maxTtlMs: 5e3,
           ownerId: p.id
         });
-        this.emitEvent("status", tx, ty - 20, "Chrono Well", "#7CC6FE");
+        this.emitEvent("status", targetPos.x, targetPos.y - 20, "Chrono Well", "#7CC6FE");
       } else if (p.heroClass === "cleric") {
+        const ultSpec = getAbilityTargetSpec("cleric", "ult");
+        const targetPos = computeGroundTargetPosition(
+          p.x,
+          p.y,
+          p.aimAngle,
+          options?.aimDistance,
+          ultSpec
+        );
         this.zones.push({
           id: this.nextId("zone"),
           kind: "solar_beacon",
-          x: p.x,
-          y: p.y,
+          x: targetPos.x,
+          y: targetPos.y,
           radius: 115,
           ttlMs: 6e3,
           maxTtlMs: 6e3,
           ownerId: p.id
         });
-        this.emitEvent("status", p.x, p.y - 26, "Solar Beacon", "#FDE68A");
+        this.emitEvent("status", targetPos.x, targetPos.y - 26, "Solar Beacon", "#FDE68A");
       }
       return {};
     }
@@ -3135,7 +3341,7 @@ var GameRoom = class _GameRoom {
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
                 pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
-                this.emitEvent("heal", pr.state.x, pr.state.y - 16, `+${beaconHeal} Solar Beacon`, "#FEF08A");
+                this.emitEvent("heal", pr.state.x, pr.state.y - 16, `+${Math.round(beaconHeal)}`, "#34D399");
               }
             }
           }
@@ -3178,14 +3384,25 @@ var GameRoom = class _GameRoom {
       for (const pr of this.players.values()) {
         const cleric = pr.state;
         if (cleric.heroClass === "cleric" && !cleric.downed && cleric.connected) {
+          let anyMissingHp = false;
+          const targetsInRange = [];
           for (const allyPr of this.players.values()) {
             const ally = allyPr.state;
             if (!ally.downed && ally.connected && Math.hypot(ally.x - cleric.x, ally.y - cleric.y) <= 140) {
+              targetsInRange.push(ally);
+              if (ally.hp < ally.maxHp) {
+                anyMissingHp = true;
+              }
+            }
+          }
+          if (anyMissingHp) {
+            this.emitEvent("cleric_pulse", cleric.x, cleric.y, "Radiant Aura", "#22C55E");
+            for (const ally of targetsInRange) {
               if (ally.hp < ally.maxHp) {
                 const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
                 const healAmt = this.computeHealingAmount(baseHeal, cleric);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
-                this.emitEvent("heal", ally.x, ally.y - 18, ` Radiant Aura +${healAmt}`, "#FDE047");
+                this.emitEvent("heal", ally.x, ally.y - 18, `+${healAmt}`, "#34D399");
               }
             }
           }
@@ -3880,7 +4097,7 @@ var GameRoom = class _GameRoom {
               this.damagePlayer(nearest, 22 + this.floor * 2, "elemental");
               enemy.hp = Math.min(enemy.maxHp, enemy.hp + 45);
               this.emitEvent("damage", nearest.x, nearest.y - 14, "SOUL SIPHONED!", "#A855F7");
-              this.emitEvent("heal", enemy.x, enemy.y - enemy.radius - 16, "+45 HP", "#34D399");
+              this.emitEvent("heal", enemy.x, enemy.y - enemy.radius - 16, "+45", "#34D399");
               enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
               for (let k = 0; k < 5; k++) {
@@ -4803,29 +5020,18 @@ var GameRoom = class _GameRoom {
     const dmg = Math.round(def.damage * mult * critMult);
     const extraCount = p.relics.includes("twinstring_charm") ? 1 : 0;
     const bonusPierce = p.relics.includes("piercing_prism") ? 1 : 0;
-    let bestTarget = null;
-    let bestDist = Infinity;
-    const maxSearchDist = p.heroClass === "vanguard" ? 85 : 460;
-    for (const enemy of this.enemies) {
-      if (enemy.hp <= 0) continue;
-      const d = Math.hypot(enemy.x - p.x, enemy.y - p.y);
-      if (d <= maxSearchDist && d < bestDist) {
-        bestDist = d;
-        bestTarget = enemy;
-      }
-    }
-    if (!bestTarget) {
-      for (const dummy of this.trainingDummies) {
-        const d = Math.hypot(dummy.x - p.x, dummy.y - p.y);
-        if (d <= maxSearchDist && d < bestDist) {
-          bestDist = d;
-          bestTarget = dummy;
-        }
-      }
-    }
-    if (bestTarget) {
-      p.aimAngle = Math.atan2(bestTarget.y - p.y, bestTarget.x - p.x);
-    }
+    const maxSearchDist = getPrimaryAttackRange(p.heroClass);
+    const bestTarget = findBestAutoTarget({
+      playerX: p.x,
+      playerY: p.y,
+      maxRange: maxSearchDist,
+      preferredAngle: p.aimAngle,
+      minDot: 0.88,
+      map: this.map,
+      props: this.props,
+      enemies: this.enemies,
+      trainingDummies: this.trainingDummies
+    })?.target ?? null;
     const shotCount = 1 + extraCount;
     for (let s = 0; s < shotCount; s++) {
       const spread = shotCount === 2 ? s === 0 ? -0.1 : 0.1 : 0;
@@ -4862,7 +5068,7 @@ var GameRoom = class _GameRoom {
           damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 850,
+          ttlMs: 585,
           targetEnemyId: bestTarget?.id
         });
       } else if (p.heroClass === "arcanist") {
@@ -4898,7 +5104,7 @@ var GameRoom = class _GameRoom {
           damage: shotDmg,
           pierce: 2 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 920,
+          ttlMs: 680,
           targetEnemyId: bestTarget?.id
         });
       } else {
@@ -4915,7 +5121,7 @@ var GameRoom = class _GameRoom {
           damage: shotDmg,
           pierce: 1 + bonusPierce,
           crit: hasCrit,
-          ttlMs: 800,
+          ttlMs: 590,
           targetEnemyId: bestTarget?.id
         });
       }
@@ -5364,6 +5570,21 @@ var GameRoom = class _GameRoom {
     this.emitEvent("heal", target.x, target.y - 24, "Revived!", "#6EE7B7");
   }
   emitEvent(kind, x, y, text, color) {
+    const now = Date.now();
+    if (kind === "status" || kind === "crit") {
+      const throttleKey = `${Math.round(x / 45)}_${Math.round(y / 45)}_${text.trim()}`;
+      const lastTime = this.recentStatusEvents.get(throttleKey) ?? 0;
+      if (now - lastTime < 2500) {
+        return;
+      }
+      this.recentStatusEvents.set(throttleKey, now);
+      if (this.recentStatusEvents.size > 150) {
+        const cutoff = now - 5e3;
+        for (const [k, t] of this.recentStatusEvents.entries()) {
+          if (t < cutoff) this.recentStatusEvents.delete(k);
+        }
+      }
+    }
     this.pendingEvents.push({
       id: this.nextId("ev"),
       kind,
@@ -5384,13 +5605,13 @@ var GameRoom = class _GameRoom {
     return hasLineOfSight(this.map, this.props, x1, y1, x2, y2);
   }
   isWallAtWorld(wx, wy) {
-    return isWallAtWorld(this.map, this.props, wx, wy);
+    return isWallAtWorld(this.map, this.props, wx, wy, this.npcs);
   }
   collidesCircle(wx, wy, radius) {
-    return collidesCircle(this.map, this.props, wx, wy, radius);
+    return collidesCircle(this.map, this.props, wx, wy, radius, this.npcs);
   }
   moveWithCollision(entity, dx, dy, radius) {
-    moveWithCollision(this.map, this.props, entity, dx, dy, radius);
+    moveWithCollision(this.map, this.props, entity, dx, dy, radius, this.npcs);
   }
   getSummary() {
     return {
@@ -6655,7 +6876,10 @@ async function startServer() {
       if (msg.type === "player:input") {
         room.updateInput(acc.id, msg.input, msg.seq);
       } else if (msg.type === "player:action") {
-        const res = room.performAction(acc.id, msg.action, msg.aimAngle);
+        const res = room.performAction(acc.id, msg.action, msg.aimAngle, {
+          aimDistance: typeof msg.aimDistance === "number" && Number.isFinite(msg.aimDistance) ? msg.aimDistance : void 0,
+          explicitAim: Boolean(msg.explicitAim)
+        });
         if (res.floorChanged) {
           broadcastToRoom(room.roomId, {
             type: "room:map",

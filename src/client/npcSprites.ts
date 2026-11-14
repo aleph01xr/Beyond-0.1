@@ -1,4 +1,20 @@
 import type { NpcState, EnemyState } from '../shared/types.ts';
+import {
+  direction8ToPose,
+  resolveEnemyDirection8,
+  type DirectionalPose,
+} from './directionalFacing.ts';
+
+function getNpcGazeShift(facing?: DirectionalPose): {
+  pose: DirectionalPose;
+  isBack: boolean;
+  gazeX: number;
+} {
+  const pose = facing ?? direction8ToPose('S', false);
+  const isBack = pose.verticalPlane === 'back';
+  const gazeX = pose.isPureVertical ? 0 : pose.isDiagonal ? 0.9 : 1.6;
+  return { pose, isBack, gazeX };
+}
 
 /**
  * Beyond — Distinctive NPC Visual Designs & Idle Animation System
@@ -20,8 +36,10 @@ export function drawInnkeeperBram(
   x: number,
   y: number,
   now: number,
-  isSpeaking: boolean
+  isSpeaking: boolean,
+  facing?: DirectionalPose
 ): void {
+  const { isBack, gazeX } = getNpcGazeShift(facing);
   // 1. Idle Breathing & Speech Bob
   const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
   const breathe = Math.sin(now * 0.0035 + x) * 1.5;
@@ -194,57 +212,72 @@ export function drawInnkeeperBram(
   // Friendly rounded head base
   ctx.fillStyle = '#FCD34D'; // Warm skin
   ctx.fillRect(x - 5, headY, 10, 10);
-  // Warm flushed cheeks
-  ctx.fillStyle = '#F87171';
-  ctx.fillRect(x - 5, headY + 5, 2, 2);
-  ctx.fillRect(x + 3, headY + 5, 2, 2);
 
-  // Receding Wavy Amber-Brown Hair with Silver Temples
-  ctx.fillStyle = '#451A03';
-  ctx.fillRect(x - 6, headY - 2, 12, 4); // Top hairline
-  ctx.fillRect(x - 7, headY, 3, 8); // Left hair side
-  ctx.fillRect(x + 4, headY, 3, 8); // Right hair side
-  // Silver gray streaks at temples
-  ctx.fillStyle = '#94A3B8';
-  ctx.fillRect(x - 7, headY + 3, 2, 3);
-  ctx.fillRect(x + 5, headY + 3, 2, 3);
-
-  // Kind Brown Eyes & Blinking
-  ctx.fillStyle = '#451A03';
-  if (isBlinking) {
-    ctx.fillRect(x - 4, headY + 3, 3, 1);
-    ctx.fillRect(x + 1, headY + 3, 3, 1);
+  if (isBack) {
+    // Back of Bram's head: wavy amber-brown hair & silver temples + rear apron neck strap
+    ctx.fillStyle = '#451A03';
+    ctx.fillRect(x - 6, headY - 2, 12, 11);
+    ctx.fillStyle = '#5C3A21';
+    ctx.fillRect(x - 5, headY - 1, 10, 9);
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(x - 7, headY + 3, 2, 4);
+    ctx.fillRect(x + 5, headY + 3, 2, 4);
+    // Rear apron tie across chest back
+    ctx.fillStyle = '#92400E';
+    ctx.fillRect(x - 6, cy - 3, 12, 2);
   } else {
-    ctx.fillRect(x - 4, headY + 2.5, 3, 2.5);
-    ctx.fillRect(x + 1, headY + 2.5, 3, 2.5);
-    // Eye shine
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(x - 3, headY + 2.5, 1, 1);
-    ctx.fillRect(x + 2, headY + 2.5, 1, 1);
-  }
+    // Warm flushed cheeks
+    ctx.fillStyle = '#F87171';
+    ctx.fillRect(x - 5, headY + 5, 2, 2);
+    ctx.fillRect(x + 3, headY + 5, 2, 2);
 
-  // Full Bushy Walrus Mustache
-  ctx.fillStyle = '#78350F';
-  ctx.fillRect(x - 5, headY + 6, 10, 3);
-  ctx.fillStyle = '#5C3A21';
-  ctx.fillRect(x - 4, headY + 5.5, 8, 2);
-  // Mustache tips curling down
-  ctx.fillRect(x - 6, headY + 7, 2, 2);
-  ctx.fillRect(x + 4, headY + 7, 2, 2);
+    // Receding Wavy Amber-Brown Hair with Silver Temples
+    ctx.fillStyle = '#451A03';
+    ctx.fillRect(x - 6, headY - 2, 12, 4); // Top hairline
+    ctx.fillRect(x - 7, headY, 3, 8); // Left hair side
+    ctx.fillRect(x + 4, headY, 3, 8); // Right hair side
+    // Silver gray streaks at temples
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(x - 7, headY + 3, 2, 3);
+    ctx.fillRect(x + 5, headY + 3, 2, 3);
 
-  // Neatly Trimmed Gray-Speckled Beard
-  ctx.fillStyle = '#78350F';
-  ctx.fillRect(x - 4, headY + 9, 8, 3);
-  ctx.fillRect(x - 3, headY + 11, 6, 2);
-  ctx.fillStyle = '#94A3B8'; // Silver specks
-  ctx.fillRect(x - 2, headY + 10, 1.5, 1.5);
-  ctx.fillRect(x + 1, headY + 10, 1.5, 1.5);
+    // Kind Brown Eyes & Blinking (shifted gently toward approaching player)
+    ctx.fillStyle = '#451A03';
+    if (isBlinking) {
+      ctx.fillRect(x - 4 + gazeX, headY + 3, 3, 1);
+      ctx.fillRect(x + 1 + gazeX, headY + 3, 3, 1);
+    } else {
+      ctx.fillRect(x - 4 + gazeX, headY + 2.5, 3, 2.5);
+      ctx.fillRect(x + 1 + gazeX, headY + 2.5, 3, 2.5);
+      // Eye shine
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(x - 3 + gazeX, headY + 2.5, 1, 1);
+      ctx.fillRect(x + 2 + gazeX, headY + 2.5, 1, 1);
+    }
 
-  // Animated Speaking Mouth behind mustache
-  if (isSpeaking) {
-    const mouthOpen = Math.sin(now * 0.035) > 0;
-    ctx.fillStyle = '#1C1917';
-    ctx.fillRect(x - 2, headY + 7.5, 4, mouthOpen ? 2.5 : 1);
+    // Full Bushy Walrus Mustache
+    ctx.fillStyle = '#78350F';
+    ctx.fillRect(x - 5 + gazeX * 0.5, headY + 6, 10, 3);
+    ctx.fillStyle = '#5C3A21';
+    ctx.fillRect(x - 4 + gazeX * 0.5, headY + 5.5, 8, 2);
+    // Mustache tips curling down
+    ctx.fillRect(x - 6 + gazeX * 0.5, headY + 7, 2, 2);
+    ctx.fillRect(x + 4 + gazeX * 0.5, headY + 7, 2, 2);
+
+    // Neatly Trimmed Gray-Speckled Beard
+    ctx.fillStyle = '#78350F';
+    ctx.fillRect(x - 4 + gazeX * 0.4, headY + 9, 8, 3);
+    ctx.fillRect(x - 3 + gazeX * 0.4, headY + 11, 6, 2);
+    ctx.fillStyle = '#94A3B8'; // Silver specks
+    ctx.fillRect(x - 2 + gazeX * 0.4, headY + 10, 1.5, 1.5);
+    ctx.fillRect(x + 1 + gazeX * 0.4, headY + 10, 1.5, 1.5);
+
+    // Animated Speaking Mouth behind mustache
+    if (isSpeaking) {
+      const mouthOpen = Math.sin(now * 0.035) > 0;
+      ctx.fillStyle = '#1C1917';
+      ctx.fillRect(x - 2 + gazeX * 0.5, headY + 7.5, 4, mouthOpen ? 2.5 : 1);
+    }
   }
 }
 
@@ -256,8 +289,10 @@ export function drawBarkeeperLena(
   x: number,
   y: number,
   now: number,
-  isSpeaking: boolean
+  isSpeaking: boolean,
+  facing?: DirectionalPose
 ): void {
+  const { pose, isBack, gazeX } = getNpcGazeShift(facing);
   // 1. Idle Breathing & Speech Bob
   const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
   const breathe = Math.sin(now * 0.004 + x) * 1.4;
@@ -400,45 +435,60 @@ export function drawBarkeeperLena(
   ctx.fillStyle = '#FCD34D';
   ctx.fillRect(x - 4, headY, 9, 9);
 
-  // Auburn Hair Volume & Side Bangs
-  ctx.fillStyle = '#991B1B';
-  ctx.fillRect(x - 5, headY - 3, 11, 4); // Top hair
-  ctx.fillStyle = '#C2410C';
-  ctx.fillRect(x - 5, headY - 1, 3, 7); // Left swept bangs
-  ctx.fillRect(x + 3, headY - 1, 3, 5); // Right swept hair
-
-  // Piercing Emerald Eyes & Blinking
-  ctx.fillStyle = '#064E3B';
-  if (isBlinking) {
-    ctx.fillRect(x - 3 + lookDir, headY + 3, 3, 1);
-    ctx.fillRect(x + 1 + lookDir, headY + 3, 3, 1);
+  if (isBack) {
+    // Back of Lena's auburn hair + centered braided ponytail hanging over her shoulders
+    ctx.fillStyle = '#991B1B';
+    ctx.fillRect(x - 5, headY - 3, 11, 12);
+    ctx.fillStyle = '#C2410C';
+    ctx.fillRect(x - 4, headY - 2, 9, 9);
+    const braidX = pose.isPureVertical ? x - 2 : x - 6;
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(braidX, headY + 4, 4, 2);
+    ctx.fillStyle = '#EA580C';
+    ctx.fillRect(braidX + ponytailSway * 0.35, headY + 6, 4, 6);
+    ctx.fillRect(braidX + ponytailSway * 0.65, headY + 11, 3, 6);
   } else {
-    ctx.fillRect(x - 3 + lookDir, headY + 2, 2.5, 2.5);
-    ctx.fillRect(x + 1 + lookDir, headY + 2, 2.5, 2.5);
-    // Emerald iris
-    ctx.fillStyle = '#10B981';
-    ctx.fillRect(x - 2.5 + lookDir, headY + 2.5, 1.5, 1.5);
-    ctx.fillRect(x + 1.5 + lookDir, headY + 2.5, 1.5, 1.5);
-    // Pupil shine
+    // Auburn Hair Volume & Side Bangs
+    ctx.fillStyle = '#991B1B';
+    ctx.fillRect(x - 5, headY - 3, 11, 4); // Top hair
+    ctx.fillStyle = '#C2410C';
+    ctx.fillRect(x - 5, headY - 1, 3, 7); // Left swept bangs
+    ctx.fillRect(x + 3, headY - 1, 3, 5); // Right swept hair
+
+    // Piercing Emerald Eyes & Blinking (blends idle room scan with directional gaze)
+    const eyeShiftX = gazeX !== 0 ? gazeX : lookDir;
+    ctx.fillStyle = '#064E3B';
+    if (isBlinking) {
+      ctx.fillRect(x - 3 + eyeShiftX, headY + 3, 3, 1);
+      ctx.fillRect(x + 1 + eyeShiftX, headY + 3, 3, 1);
+    } else {
+      ctx.fillRect(x - 3 + eyeShiftX, headY + 2, 2.5, 2.5);
+      ctx.fillRect(x + 1 + eyeShiftX, headY + 2, 2.5, 2.5);
+      // Emerald iris
+      ctx.fillStyle = '#10B981';
+      ctx.fillRect(x - 2.5 + eyeShiftX, headY + 2.5, 1.5, 1.5);
+      ctx.fillRect(x + 1.5 + eyeShiftX, headY + 2.5, 1.5, 1.5);
+      // Pupil shine
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(x - 2 + eyeShiftX, headY + 2, 1, 1);
+      ctx.fillRect(x + 2 + eyeShiftX, headY + 2, 1, 1);
+    }
+
+    // Silver Hoop Earring at right ear
+    ctx.fillStyle = '#E2E8F0';
+    ctx.fillRect(x + 5, headY + 4, 1.5, 2.5);
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(x - 2 + lookDir, headY + 2, 1, 1);
-    ctx.fillRect(x + 2 + lookDir, headY + 2, 1, 1);
-  }
+    ctx.fillRect(x + 5, headY + 4, 1, 1); // Earring glint
 
-  // Silver Hoop Earring at right ear
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillRect(x + 5, headY + 4, 1.5, 2.5);
-  ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(x + 5, headY + 4, 1, 1); // Earring glint
-
-  // Animated Speaking Mouth
-  if (isSpeaking) {
-    const mouthOpen = Math.sin(now * 0.035) > 0;
-    ctx.fillStyle = '#18181B';
-    ctx.fillRect(x - 1.5, headY + 6.5, 3.5, mouthOpen ? 2.5 : 1);
-    // Subtle red lip color
-    ctx.fillStyle = '#F87171';
-    ctx.fillRect(x - 1, headY + 6, 2.5, 1);
+    // Animated Speaking Mouth
+    if (isSpeaking) {
+      const mouthOpen = Math.sin(now * 0.035) > 0;
+      ctx.fillStyle = '#18181B';
+      ctx.fillRect(x - 1.5 + gazeX * 0.5, headY + 6.5, 3.5, mouthOpen ? 2.5 : 1);
+      // Subtle red lip color
+      ctx.fillStyle = '#F87171';
+      ctx.fillRect(x - 1 + gazeX * 0.5, headY + 6, 2.5, 1);
+    }
   }
 }
 
@@ -450,8 +500,10 @@ export function drawVeteranJorah(
   x: number,
   y: number,
   now: number,
-  isSpeaking: boolean
+  isSpeaking: boolean,
+  facing?: DirectionalPose
 ): void {
+  const { isBack, gazeX } = getNpcGazeShift(facing);
   // 1. Heavy Measured Warrior Breathing & Speech Bob
   const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
   const breathe = Math.sin(now * 0.0028 + x) * 1.5;
@@ -597,55 +649,72 @@ export function drawVeteranJorah(
   ctx.fillStyle = '#E5B887'; // Weathered skin
   ctx.fillRect(x - 5, headY, 10, 10);
 
-  // Grizzled Graying Dark Hair
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(x - 6, headY - 3, 12, 4); // Top hair
-  ctx.fillRect(x - 6, headY, 3, 6); // Left hair side
-  ctx.fillRect(x + 4, headY, 3, 6); // Right hair side
-  // Silver hair streaks
-  ctx.fillStyle = '#94A3B8';
-  ctx.fillRect(x - 5, headY - 2, 3, 2);
-  ctx.fillRect(x + 3, headY - 2, 2, 2);
-
-  // Prominent Jagged Red Battle Scar across Left Cheek & Brow
-  ctx.fillStyle = '#991B1B';
-  ctx.fillRect(x - 3, headY + 1, 1.5, 2);
-  ctx.fillRect(x - 4, headY + 3, 1.5, 3);
-  ctx.fillRect(x - 3, headY + 6, 1.5, 2);
-
-  // Steely Blue Eyes & Blinking
-  ctx.fillStyle = '#0F172A';
-  if (isBlinking) {
-    ctx.fillRect(x - 3, headY + 3, 3, 1);
-    ctx.fillRect(x + 1, headY + 3, 3, 1);
+  if (isBack) {
+    // Rear view: cape & sheathed broadsword drawn over back torso + grizzled rear hair
+    ctx.fillStyle = '#262626';
+    ctx.fillRect(x - 10, cy - 6, 20, 17);
+    ctx.fillStyle = '#7F1D1D';
+    ctx.fillRect(x - 9, cy - 5, 18, 15);
+    ctx.fillStyle = '#29180C';
+    ctx.fillRect(x + 3, cy - 14, 4, 22);
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(x, cy - 16, 10, 2);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(x - 6, headY - 3, 12, 12);
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(x - 5, headY - 2, 3, 4);
+    ctx.fillRect(x + 2, headY - 2, 3, 4);
   } else {
-    ctx.fillRect(x - 3, headY + 2.5, 2.5, 2.5);
-    ctx.fillRect(x + 1, headY + 2.5, 2.5, 2.5);
-    // Steel-blue iris
-    ctx.fillStyle = '#38BDF8';
-    ctx.fillRect(x - 2.5, headY + 3, 1.5, 1.5);
-    ctx.fillRect(x + 1.5, headY + 3, 1.5, 1.5);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(x - 2, headY + 2.5, 1, 1);
-    ctx.fillRect(x + 2, headY + 2.5, 1, 1);
-  }
+    // Grizzled Graying Dark Hair
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(x - 6, headY - 3, 12, 4); // Top hair
+    ctx.fillRect(x - 6, headY, 3, 6); // Left hair side
+    ctx.fillRect(x + 4, headY, 3, 6); // Right hair side
+    // Silver hair streaks
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(x - 5, headY - 2, 3, 2);
+    ctx.fillRect(x + 3, headY - 2, 2, 2);
 
-  // Heavy Grizzled Beard & Mustache
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(x - 5, headY + 6, 10, 4); // Mustache
-  ctx.fillRect(x - 4, headY + 9, 8, 4); // Full beard
-  ctx.fillRect(x - 3, headY + 12, 6, 2); // Beard tip
-  // Silver beard strands
-  ctx.fillStyle = '#94A3B8';
-  ctx.fillRect(x - 3, headY + 9, 2, 3);
-  ctx.fillRect(x + 2, headY + 9, 2, 3);
-  ctx.fillRect(x - 1, headY + 11, 2, 2);
+    // Prominent Jagged Red Battle Scar across Left Cheek & Brow
+    ctx.fillStyle = '#991B1B';
+    ctx.fillRect(x - 3 + gazeX * 0.5, headY + 1, 1.5, 2);
+    ctx.fillRect(x - 4 + gazeX * 0.5, headY + 3, 1.5, 3);
+    ctx.fillRect(x - 3 + gazeX * 0.5, headY + 6, 1.5, 2);
 
-  // Animated Speaking Mouth
-  if (isSpeaking) {
-    const mouthOpen = Math.sin(now * 0.035) > 0;
-    ctx.fillStyle = '#111827';
-    ctx.fillRect(x - 2, headY + 8, 4, mouthOpen ? 2.5 : 1);
+    // Steely Blue Eyes & Blinking
+    ctx.fillStyle = '#0F172A';
+    if (isBlinking) {
+      ctx.fillRect(x - 3 + gazeX, headY + 3, 3, 1);
+      ctx.fillRect(x + 1 + gazeX, headY + 3, 3, 1);
+    } else {
+      ctx.fillRect(x - 3 + gazeX, headY + 2.5, 2.5, 2.5);
+      ctx.fillRect(x + 1 + gazeX, headY + 2.5, 2.5, 2.5);
+      // Steel-blue iris
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(x - 2.5 + gazeX, headY + 3, 1.5, 1.5);
+      ctx.fillRect(x + 1.5 + gazeX, headY + 3, 1.5, 1.5);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(x - 2 + gazeX, headY + 2.5, 1, 1);
+      ctx.fillRect(x + 2 + gazeX, headY + 2.5, 1, 1);
+    }
+
+    // Heavy Grizzled Beard & Mustache
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(x - 5 + gazeX * 0.4, headY + 6, 10, 4);
+    ctx.fillRect(x - 4 + gazeX * 0.4, headY + 9, 8, 4);
+    ctx.fillRect(x - 3 + gazeX * 0.4, headY + 12, 6, 2);
+    // Silver beard strands
+    ctx.fillStyle = '#94A3B8';
+    ctx.fillRect(x - 3 + gazeX * 0.4, headY + 9, 2, 3);
+    ctx.fillRect(x + 2 + gazeX * 0.4, headY + 9, 2, 3);
+    ctx.fillRect(x - 1 + gazeX * 0.4, headY + 11, 2, 2);
+
+    // Animated Speaking Mouth
+    if (isSpeaking) {
+      const mouthOpen = Math.sin(now * 0.035) > 0;
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(x - 2 + gazeX * 0.5, headY + 8, 4, mouthOpen ? 2.5 : 1);
+    }
   }
 }
 
@@ -658,8 +727,10 @@ export function drawGenericNpc(
   x: number,
   y: number,
   now: number,
-  isSpeaking: boolean
+  isSpeaking: boolean,
+  facing?: DirectionalPose
 ): void {
+  const { isBack, gazeX } = getNpcGazeShift(facing);
   const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
   const breathe = Math.sin(now * 0.0035 + x) * 1.5;
   const cy = y + breathe + talkBob;
@@ -681,22 +752,24 @@ export function drawGenericNpc(
   ctx.fillStyle = '#FCD34D';
   ctx.fillRect(x - 5, cy - 17, 10, 10);
   ctx.fillStyle = '#1F2937';
-  ctx.fillRect(x - 6, cy - 19, 12, 4);
+  ctx.fillRect(x - 6, cy - 19, 12, isBack ? 12 : 4);
 
-  // Eyes
-  ctx.fillStyle = '#111827';
-  if (isBlinking) {
-    ctx.fillRect(x - 3, cy - 14, 2, 1);
-    ctx.fillRect(x + 1, cy - 14, 2, 1);
-  } else {
-    ctx.fillRect(x - 3, cy - 14.5, 2, 2);
-    ctx.fillRect(x + 1, cy - 14.5, 2, 2);
-  }
-
-  if (isSpeaking) {
-    const mouthOpen = Math.sin(now * 0.035) > 0;
+  if (!isBack) {
+    // Eyes
     ctx.fillStyle = '#111827';
-    ctx.fillRect(x - 2, cy - 11, 4, mouthOpen ? 2 : 1);
+    if (isBlinking) {
+      ctx.fillRect(x - 3 + gazeX, cy - 14, 2, 1);
+      ctx.fillRect(x + 1 + gazeX, cy - 14, 2, 1);
+    } else {
+      ctx.fillRect(x - 3 + gazeX, cy - 14.5, 2, 2);
+      ctx.fillRect(x + 1 + gazeX, cy - 14.5, 2, 2);
+    }
+
+    if (isSpeaking) {
+      const mouthOpen = Math.sin(now * 0.035) > 0;
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(x - 2 + gazeX * 0.5, cy - 11, 4, mouthOpen ? 2 : 1);
+    }
   }
 }
 
@@ -709,8 +782,10 @@ export function drawMysteriousAleph(
   x: number,
   y: number,
   now: number,
-  isSpeaking: boolean
+  isSpeaking: boolean,
+  facing?: DirectionalPose
 ): void {
+  const { isBack, gazeX } = getNpcGazeShift(facing);
   // 1. Idle Anatomy: Breathing & Stance
   const talkBob = isSpeaking ? Math.sin(now * 0.02) * 2.2 : 0;
   const breathe = Math.sin(now * 0.003 + x) * 1.7;
@@ -797,42 +872,55 @@ export function drawMysteriousAleph(
   ctx.arc(x, headY + 4, 13.5, Math.PI + 0.2, -0.2);
   ctx.stroke();
 
-  // Deep Shadow inside Hood (The Void Face)
-  ctx.fillStyle = '#020617';
-  ctx.beginPath();
-  ctx.arc(x, headY + 4, 9, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Visible Pale Face peeking through shadow
-  ctx.fillStyle = '#FDE68A'; 
-  ctx.fillRect(x - 4, headY + 2, 9, 9);
-  // Chin shading
-  ctx.fillStyle = '#E5E7EB';
-  ctx.fillRect(x - 4, headY + 9, 9, 2);
-
-  // Heterochromia Piercing Eyes (Glow effect)
-  if (isBlinking) {
-    ctx.fillStyle = '#1E293B';
-    ctx.fillRect(x - 3, headY + 6, 2, 1);
-    ctx.fillRect(x + 1, headY + 6, 2, 1);
+  if (isBack) {
+    // Solid back of Aleph's void hood & indigo cloak drape over torso
+    ctx.fillStyle = '#1E1B4B';
+    ctx.beginPath();
+    ctx.arc(x, headY + 4, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(x - 10, cy - 10, 20, 22);
+    ctx.fillStyle = '#312E81';
+    ctx.fillRect(x - 2, cy - 8, 4, 18);
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(x - 8, headY + 10, 16, 1.5);
   } else {
-    // Left eye: Soul-Cyan Flare
-    ctx.fillStyle = '#22D3EE';
-    ctx.fillRect(x - 3, headY + 5.5, 2.5, 2.5);
-    // Right eye: Star-Gold Flare
-    ctx.fillStyle = '#FACC15';
-    ctx.fillRect(x + 1, headY + 5.5, 2.5, 2.5);
-    // Specular shine
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(x - 2.5, headY + 5.5, 1, 1);
-    ctx.fillRect(x + 1.5, headY + 5.5, 1, 1);
-  }
+    // Deep Shadow inside Hood (The Void Face)
+    ctx.fillStyle = '#020617';
+    ctx.beginPath();
+    ctx.arc(x + gazeX * 0.5, headY + 4, 9, 0, Math.PI * 2);
+    ctx.fill();
 
-  // Dark hair bangs visible under hood
-  ctx.fillStyle = '#171717';
-  ctx.fillRect(x - 5, headY + 1, 11, 2);
-  ctx.fillStyle = '#E2E8F0'; // Silver streak
-  ctx.fillRect(x - 4, headY + 1, 3, 1);
+    // Visible Pale Face peeking through shadow
+    ctx.fillStyle = '#FDE68A';
+    ctx.fillRect(x - 4 + gazeX * 0.5, headY + 2, 9, 9);
+    // Chin shading
+    ctx.fillStyle = '#E5E7EB';
+    ctx.fillRect(x - 4 + gazeX * 0.5, headY + 9, 9, 2);
+
+    // Heterochromia Piercing Eyes (Glow effect)
+    if (isBlinking) {
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(x - 3 + gazeX, headY + 6, 2, 1);
+      ctx.fillRect(x + 1 + gazeX, headY + 6, 2, 1);
+    } else {
+      // Left eye: Soul-Cyan Flare
+      ctx.fillStyle = '#22D3EE';
+      ctx.fillRect(x - 3 + gazeX, headY + 5.5, 2.5, 2.5);
+      // Right eye: Star-Gold Flare
+      ctx.fillStyle = '#FACC15';
+      ctx.fillRect(x + 1 + gazeX, headY + 5.5, 2.5, 2.5);
+      // Specular shine
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(x - 2.5 + gazeX, headY + 5.5, 1, 1);
+      ctx.fillRect(x + 1.5 + gazeX, headY + 5.5, 1, 1);
+    }
+
+    // Dark hair bangs visible under hood
+    ctx.fillStyle = '#171717';
+    ctx.fillRect(x - 5 + gazeX * 0.5, headY + 1, 11, 2);
+    ctx.fillStyle = '#E2E8F0'; // Silver streak
+    ctx.fillRect(x - 4 + gazeX * 0.5, headY + 1, 3, 1);
+  }
 
   // --- 6. Hands & Celestial Staff ---
   const staffX = x + 19;
@@ -890,11 +978,11 @@ export function drawMysteriousAleph(
     ctx.fill();
   });
 
-  // Speaking Mouth
-  if (isSpeaking) {
+  // Speaking Mouth (only when facing front/side)
+  if (isSpeaking && !isBack) {
     const mouthOpen = Math.sin(now * 0.035) > 0;
     ctx.fillStyle = '#111827';
-    ctx.fillRect(x - 1.5, headY + 8.5, 3.5, mouthOpen ? 2 : 1);
+    ctx.fillRect(x - 1.5 + gazeX * 0.5, headY + 8.5, 3.5, mouthOpen ? 2 : 1);
   }
 }
 
@@ -904,26 +992,37 @@ export function drawMysteriousAleph(
 export function drawNpc(
   ctx: CanvasRenderingContext2D,
   npc: NpcState,
-  now: number
+  now: number,
+  facing?: DirectionalPose
 ): void {
   const x = Math.round(npc.x);
   const y = Math.round(npc.y);
   const isSpeaking = (npc.speakingMs ?? 0) > 0;
+  const pose = facing ?? direction8ToPose('S', false);
+  const mirrorX = !pose.isPureVertical && pose.facingLeft;
+
+  ctx.save();
+  if (mirrorX) {
+    ctx.translate(x, 0);
+    ctx.scale(-1, 1);
+    ctx.translate(-x, 0);
+  }
 
   // Route to handcrafted individual NPC sprites
   if (npc.id === 'npc_bram' || npc.spriteKind === 'innkeeper') {
-    drawInnkeeperBram(ctx, x, y, now, isSpeaking);
+    drawInnkeeperBram(ctx, x, y, now, isSpeaking, pose);
   } else if (npc.id === 'npc_lena' || npc.spriteKind === 'barkeep') {
-    drawBarkeeperLena(ctx, x, y, now, isSpeaking);
+    drawBarkeeperLena(ctx, x, y, now, isSpeaking, pose);
   } else if (npc.id === 'npc_jorah' || npc.spriteKind === 'veteran') {
-    drawVeteranJorah(ctx, x, y, now, isSpeaking);
+    drawVeteranJorah(ctx, x, y, now, isSpeaking, pose);
   } else if (npc.id === 'npc_aleph' || npc.spriteKind === 'mysterious_cloak') {
-    drawMysteriousAleph(ctx, x, y, now, isSpeaking);
+    drawMysteriousAleph(ctx, x, y, now, isSpeaking, pose);
   } else {
-    drawGenericNpc(ctx, npc, x, y, now, isSpeaking);
+    drawGenericNpc(ctx, npc, x, y, now, isSpeaking, pose);
   }
+  ctx.restore();
 
-  // Distinctive Name Badge & Interaction Prompt
+  // Distinctive Name Badge & Interaction Prompt (never mirrored)
   const bob = Math.sin(now * 0.0035 + x) * 1.5;
   ctx.font = '700 10.5px "Plus Jakarta Sans", sans-serif';
   ctx.fillStyle = isSpeaking ? '#FCD34D' : '#FDE68A';
@@ -2573,6 +2672,65 @@ export function drawOriphielBoss(
 }
 
 /**
+ * Draws rear-facing hair/helm/cloak details for humanoid bosses when moving North (N, NE, NW).
+ */
+function drawHumanoidBossBackOverlay(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  bossName: string,
+  now: number
+): void {
+  const breathe = Math.sin(now * 0.0035 + x) * 1.5;
+  const cy = y - 4 + breathe;
+
+  if (bossName.includes('Elyndor')) {
+    const hairSway = Math.sin(now * 0.004) * 2.5;
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(x - 7, cy - 29, 14, 15);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(x - 6 + hairSway * 0.4, cy - 27, 12, 20);
+    ctx.fillStyle = '#FFFBEB';
+    ctx.fillRect(x - 5 + hairSway * 0.6, cy - 16, 10, 14);
+  } else if (bossName.includes('Zadkiel')) {
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(x - 6, cy - 25, 12, 13);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(x - 10, cy - 11, 20, 22);
+    ctx.fillStyle = '#D97706';
+    ctx.fillRect(x - 1, cy - 10, 2, 18);
+  } else if (bossName.includes('Sariel')) {
+    const floatBob = Math.sin(now * 0.0045 + x) * 3;
+    const scy = y - 4 + floatBob;
+    ctx.fillStyle = '#4C1D95';
+    ctx.fillRect(x - 6, scy - 28, 12, 13);
+    ctx.fillStyle = '#3B0764';
+    ctx.fillRect(x - 8, scy - 12, 16, 22);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(x - 1, scy - 11, 2, 18);
+  } else if (bossName.includes('Seraphel')) {
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(x - 6, cy - 30, 12, 14);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(x - 5, cy - 28, 10, 10);
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(x - 9, cy - 12, 18, 22);
+    ctx.fillStyle = '#EAB308';
+    ctx.fillRect(x - 2, cy - 10, 4, 18);
+  } else {
+    // Oriphiel & fallback
+    ctx.fillStyle = '#FAF8F5';
+    ctx.fillRect(x - 7, cy - 34, 14, 15);
+    ctx.fillStyle = '#FEF08A';
+    ctx.fillRect(x - 6, cy - 29, 12, 12);
+    ctx.fillStyle = '#F8FAFC';
+    ctx.fillRect(x - 12, cy - 16, 24, 28);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(x - 2, cy - 14, 4, 24);
+  }
+}
+
+/**
  * Humanoid boss sprite dispatcher for Floors 6-10
  */
 export function drawHumanoidBoss(
@@ -2581,8 +2739,20 @@ export function drawHumanoidBoss(
   y: number,
   bossName: string,
   now: number,
-  en?: EnemyState
+  en?: EnemyState,
+  facing?: DirectionalPose
 ): void {
+  const pose = facing ?? (en ? resolveEnemyDirection8(en) : direction8ToPose('S', false));
+  const mirrorX = !pose.isPureVertical && pose.facingLeft;
+  const isBack = pose.verticalPlane === 'back';
+
+  ctx.save();
+  if (mirrorX) {
+    ctx.translate(x, 0);
+    ctx.scale(-1, 1);
+    ctx.translate(-x, 0);
+  }
+
   if (bossName.includes('Elyndor')) {
     drawElyndorBoss(ctx, x, y, now, en);
   } else if (bossName.includes('Zadkiel')) {
@@ -2597,4 +2767,9 @@ export function drawHumanoidBoss(
     // Elegant fallback humanoid guardian
     drawOriphielBoss(ctx, x, y, now, en);
   }
+
+  if (isBack) {
+    drawHumanoidBossBackOverlay(ctx, x, y, bossName, now);
+  }
+  ctx.restore();
 }

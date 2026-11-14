@@ -398,8 +398,18 @@ export function App() {
   );
 
   const handleTriggerAction = useCallback(
-    (action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash', aimAngle: number) => {
-      sendWs({ type: 'player:action', action, aimAngle });
+    (
+      action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
+      aimAngle: number,
+      opts?: { aimDistance?: number; explicitAim?: boolean }
+    ) => {
+      sendWs({
+        type: 'player:action',
+        action,
+        aimAngle,
+        ...(opts?.aimDistance !== undefined ? { aimDistance: opts.aimDistance } : {}),
+        ...(opts?.explicitAim ? { explicitAim: true } : {}),
+      });
     },
     [sendWs]
   );

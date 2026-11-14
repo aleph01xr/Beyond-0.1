@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
+import {
+  findBestAutoTarget,
+  getAbilityTargetSpec,
+  getPrimaryAttackRange,
+  type AbilityAimState,
+  type AimableAction,
+} from '../shared/abilityTargeting.ts';
 import type {
+  DungeonMap,
   EnemyState,
   GameSnapshot,
   PlayerState,
@@ -49,13 +57,23 @@ const BUTTON_CONFIGS: Record<
 interface TouchControlsProps {
   player: PlayerState;
   enemies: EnemyState[];
+  map?: DungeonMap;
   latestSnapshotRef?: React.MutableRefObject<GameSnapshot | null>;
   nearInteractable: boolean;
+  abilityAimRef?: React.MutableRefObject<AbilityAimState | null>;
+  onAbilityAimUiChange?: (
+    ui: {
+      action: AimableAction;
+      cancelled: boolean;
+      source: 'touch' | 'mouse' | 'keyboard';
+    } | null
+  ) => void;
   onStickMove: (stickX: number, stickY: number, aimAngle?: number) => void;
   onAttackPress: (pressed: boolean, aimAngle?: number) => void;
   onTriggerAction: (
     action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
-    aimAngle: number
+    aimAngle: number,
+    opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
   settings: TouchSettings;
@@ -86,8 +104,11 @@ export function saveTouchSettings(s: TouchSettings): void {
 export const TouchControls: React.FC<TouchControlsProps> = ({
   player,
   enemies,
+  map,
   latestSnapshotRef,
   nearInteractable,
+  abilityAimRef,
+  onAbilityAimUiChange,
   onStickMove,
   onAttackPress,
   onTriggerAction,
@@ -106,6 +127,36 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
 
   const attackTouchIdRef = useRef<number | null>(null);
   const [attackAiming, setAttackAiming] = useState(false);
+  const attackAimingRef = useRef(false);
+  const lastStickAngleRef = useRef<number>(player.aimAngle || 0);
+  const playerRef = useRef(player);
+  playerRef.current = player;
+  const enemiesRef = useRef(enemies);
+  enemiesRef.current = enemies;
+  const mapRef = useRef(map);
+  mapRef.current = map;
+  const onAttackPressRef = useRef(onAttackPress);
+  onAttackPressRef.current = onAttackPress;
+
+  // Ability drag-to-aim tracking
+  const abilityTouchRef = useRef<{
+    id: number;
+    action: AimableAction;
+    originX: number;
+    originY: number;
+    dragDist: number;
+  } | null>(null);
+  const cancelZoneRef = useRef<HTMLDivElement | null>(null);
+  const [skillWheelUi, setSkillWheelUi] = useState<{
+    action: AimableAction;
+    originX: number;
+    originY: number;
+    knobX: number;
+    knobY: number;
+    cancelled: boolean;
+    accentColor: string;
+    label: string;
+  } | null>(null);
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
   const tacSec = Math.ceil(player.skillCooldownMs / 1000);
@@ -154,22 +205,34 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     }
   };
 
-  const getAutoTargetAngle = () => {
+  const getAutoTarget = (maxRangeOverride?: number) => {
     const liveSnap = latestSnapshotRef?.current;
-    const livePlayer = liveSnap?.players.find((p) => p.id === player.id) ?? player;
-    const liveEnemies = liveSnap?.enemies ?? enemies;
-    let nearestDist = Infinity;
-    let targetAngle = livePlayer.aimAngle;
-    const maxDist = livePlayer.heroClass === 'vanguard' ? 140 : 460;
-    for (const en of liveEnemies) {
-      if (en.hp <= 0) continue;
-      const d = Math.hypot(en.x - livePlayer.x, en.y - livePlayer.y);
-      if (d < nearestDist && d <= maxDist) {
-        nearestDist = d;
-        targetAngle = Math.atan2(en.y - livePlayer.y, en.x - livePlayer.x);
-      }
-    }
-    return targetAngle;
+    const fallbackPlayer = playerRef.current;
+    const livePlayer =
+      liveSnap?.players.find((p) => p.id === fallbackPlayer.id) ?? fallbackPlayer;
+    const liveEnemies = liveSnap?.enemies ?? enemiesRef.current;
+    const liveDummies = liveSnap?.trainingDummies;
+    const baseAngle = lastStickAngleRef.current;
+    const maxDist =
+      typeof maxRangeOverride === 'number'
+        ? maxRangeOverride
+        : getPrimaryAttackRange(livePlayer.heroClass);
+
+    return findBestAutoTarget({
+      playerX: livePlayer.x,
+      playerY: livePlayer.y,
+      maxRange: maxDist,
+      preferredAngle: baseAngle,
+      minDot: -1,
+      map: mapRef.current,
+      props: liveSnap?.props,
+      enemies: liveEnemies,
+      trainingDummies: liveDummies,
+    });
+  };
+
+  const getAutoTargetAngle = (maxRangeOverride?: number) => {
+    return getAutoTarget(maxRangeOverride)?.angle ?? lastStickAngleRef.current;
   };
 
   // Touch handlers for floating zone on the left half of screen
@@ -228,9 +291,14 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           const normMagnitude = (clampedDist - deadzone) / (maxR - deadzone);
           const normX = Math.cos(angle) * normMagnitude;
           const normY = Math.sin(angle) * normMagnitude;
-          onStickMove(normX, normY, angle);
+          lastStickAngleRef.current = angle;
+          onStickMove(normX, normY, attackAimingRef.current ? undefined : angle);
         } else {
-          onStickMove(0, 0);
+          onStickMove(
+            0,
+            0,
+            attackAimingRef.current ? undefined : lastStickAngleRef.current
+          );
         }
         break;
       }
@@ -246,7 +314,11 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         setKnobPos({ x: 0, y: 0 });
         setIsStickActive(false);
         setFloatingOrigin(null);
-        onStickMove(0, 0);
+        onStickMove(
+          0,
+          0,
+          attackAimingRef.current ? undefined : lastStickAngleRef.current
+        );
         break;
       }
     }
@@ -258,6 +330,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     if (attackTouchIdRef.current !== null) return;
     const touch = e.changedTouches[0];
     attackTouchIdRef.current = touch.identifier;
+    attackAimingRef.current = true;
     setAttackAiming(true);
     triggerHaptic(18);
     sfx.playAttack(player.heroClass);
@@ -271,6 +344,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     for (let i = 0; i < e.changedTouches.length; i++) {
       if (e.changedTouches[i].identifier === attackTouchIdRef.current) {
         attackTouchIdRef.current = null;
+        attackAimingRef.current = false;
         setAttackAiming(false);
         onAttackPress(false);
         break;
@@ -283,10 +357,244 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     if (!attackAiming) return;
     const interval = setInterval(() => {
       const angle = getAutoTargetAngle();
-      onAttackPress(true, angle);
-    }, 70);
+      onAttackPressRef.current(true, angle);
+    }, 45);
     return () => clearInterval(interval);
-  }, [attackAiming, player.x, player.y, enemies]);
+  }, [attackAiming]);
+
+  // Clear active ability aim on unmount
+  useEffect(() => {
+    return () => {
+      abilityTouchRef.current = null;
+      if (abilityAimRef) abilityAimRef.current = null;
+      onAbilityAimUiChange?.(null);
+    };
+  }, [abilityAimRef, onAbilityAimUiChange]);
+
+  const canAimAbility = (action: AimableAction): boolean => {
+    const liveSnap = latestSnapshotRef?.current;
+    const livePlayer = liveSnap?.players.find((p) => p.id === player.id) ?? player;
+    if (livePlayer.downed) return false;
+    const silenced = Boolean(
+      livePlayer.statuses && livePlayer.statuses.some((s) => s.type === 'silenced')
+    );
+    if (action !== 'dash' && silenced) {
+      sfx.playUiClick();
+      return false;
+    }
+    if (action === 'tactical' && livePlayer.skillCooldownMs > 0) return false;
+    if (action === 'ult' && livePlayer.ultCooldownMs > 0) return false;
+    if (action === 'dash' && (livePlayer.dashCooldownMs || 0) > 0) return false;
+    return true;
+  };
+
+  const handleAbilityTouchStart = (
+    action: AimableAction,
+    e: React.TouchEvent<HTMLButtonElement>
+  ) => {
+    e.stopPropagation();
+    if (abilityTouchRef.current !== null) return;
+    if (!canAimAbility(action)) return;
+
+    const touch = e.changedTouches[0];
+    const rect = e.currentTarget.getBoundingClientRect();
+    const originX = rect.left + rect.width / 2;
+    const originY = rect.top + rect.height / 2;
+    const spec = getAbilityTargetSpec(player.heroClass, action);
+    const defaultAngle =
+      action === 'dash' ? lastStickAngleRef.current : getAutoTargetAngle();
+
+    abilityTouchRef.current = {
+      id: touch.identifier,
+      action,
+      originX,
+      originY,
+      dragDist: 0,
+    };
+
+    if (abilityAimRef) {
+      abilityAimRef.current = {
+        action,
+        source: 'touch',
+        aimAngle: defaultAngle,
+        magnitude: 0,
+        aimDistance: spec.defaultDist,
+        cancelled: false,
+      };
+    }
+
+    onAbilityAimUiChange?.({ action, cancelled: false, source: 'touch' });
+    setSkillWheelUi({
+      action,
+      originX,
+      originY,
+      knobX: 0,
+      knobY: 0,
+      cancelled: false,
+      accentColor: spec.accentColor,
+      label: spec.label,
+    });
+    triggerHaptic(10);
+  };
+
+  const handleAbilityTouchMove = (e: React.TouchEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const active = abilityTouchRef.current;
+    if (!active) return;
+
+    let matched: React.Touch | null = null;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === active.id) {
+        matched = e.changedTouches[i];
+        break;
+      }
+    }
+    if (!matched) return;
+
+    const dx = matched.clientX - active.originX;
+    const dy = matched.clientY - active.originY;
+    const dist = Math.hypot(dx, dy);
+    active.dragDist = Math.max(active.dragDist, dist);
+
+    const wheelRadius = 46;
+    const deadzone = 10;
+    const clampedDist = Math.min(dist, wheelRadius);
+    const angle = Math.atan2(dy, dx);
+    const knobX = dist > 0.5 ? Math.cos(angle) * clampedDist : 0;
+    const knobY = dist > 0.5 ? Math.sin(angle) * clampedDist : 0;
+
+    // Check cancel target bounding box (with thumb forgiveness padding)
+    let isCancelled = false;
+    const cancelRect = cancelZoneRef.current?.getBoundingClientRect();
+    if (cancelRect) {
+      const pad = 14;
+      if (
+        matched.clientX >= cancelRect.left - pad &&
+        matched.clientX <= cancelRect.right + pad &&
+        matched.clientY >= cancelRect.top - pad &&
+        matched.clientY <= cancelRect.bottom + pad
+      ) {
+        isCancelled = true;
+      }
+    }
+
+    const spec = getAbilityTargetSpec(player.heroClass, active.action);
+    const prevCancelled = abilityAimRef?.current?.cancelled ?? false;
+
+    if (dist > deadzone) {
+      const mag = Math.min(1, (dist - deadzone) / (wheelRadius - deadzone));
+      const aimDistance =
+        spec.kind === 'ground_aoe'
+          ? Math.round(mag * spec.range)
+          : spec.kind === 'dash'
+          ? Math.round(Math.max(36, mag * spec.range))
+          : spec.range;
+      if (abilityAimRef?.current) {
+        abilityAimRef.current.aimAngle = angle;
+        abilityAimRef.current.magnitude = mag;
+        abilityAimRef.current.aimDistance = aimDistance;
+        abilityAimRef.current.cancelled = isCancelled;
+      }
+    } else {
+      const defaultAngle =
+        active.action === 'dash' ? lastStickAngleRef.current : getAutoTargetAngle();
+      if (abilityAimRef?.current) {
+        abilityAimRef.current.aimAngle = defaultAngle;
+        abilityAimRef.current.magnitude = 0;
+        abilityAimRef.current.aimDistance = spec.defaultDist;
+        abilityAimRef.current.cancelled = isCancelled;
+      }
+    }
+
+    if (isCancelled !== prevCancelled) {
+      if (isCancelled) triggerHaptic(14);
+      onAbilityAimUiChange?.({
+        action: active.action,
+        cancelled: isCancelled,
+        source: 'touch',
+      });
+    }
+
+    setSkillWheelUi((prev) =>
+      prev
+        ? {
+            ...prev,
+            knobX,
+            knobY,
+            cancelled: isCancelled,
+          }
+        : null
+    );
+  };
+
+  const handleAbilityTouchEnd = (
+    e: React.TouchEvent<HTMLButtonElement>,
+    forceCancel = false
+  ) => {
+    e.stopPropagation();
+    const active = abilityTouchRef.current;
+    if (!active) return;
+
+    let found = false;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === active.id) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) return;
+
+    const currentAim = abilityAimRef?.current ? { ...abilityAimRef.current } : null;
+    abilityTouchRef.current = null;
+    if (abilityAimRef) abilityAimRef.current = null;
+    setSkillWheelUi(null);
+    onAbilityAimUiChange?.(null);
+
+    if (forceCancel || currentAim?.cancelled) {
+      sfx.playUiClick();
+      triggerHaptic(8);
+      return;
+    }
+
+    const spec = getAbilityTargetSpec(player.heroClass, active.action);
+    const dragged = active.dragDist > 10;
+    const quickSearchRange =
+      spec.kind === 'cone_volley' || spec.kind === 'ground_aoe'
+        ? spec.range
+        : spec.kind === 'dash' && spec.action === 'tactical'
+        ? 160
+        : undefined;
+    const quickTarget = !dragged && active.action !== 'dash'
+      ? getAutoTarget(quickSearchRange)
+      : null;
+
+    const castAngle = dragged
+      ? currentAim?.aimAngle ?? lastStickAngleRef.current
+      : active.action === 'dash'
+      ? lastStickAngleRef.current
+      : quickTarget?.angle ?? lastStickAngleRef.current;
+    const castDist = dragged
+      ? currentAim?.aimDistance ?? spec.defaultDist
+      : spec.kind === 'ground_aoe' && player.heroClass === 'arcanist' && quickTarget
+      ? Math.round(Math.min(spec.range, quickTarget.distance))
+      : spec.defaultDist;
+
+    if (active.action === 'dash') {
+      sfx.playDash();
+      triggerHaptic(14);
+    } else if (active.action === 'tactical') {
+      sfx.playSkill('tactical');
+      triggerHaptic(16);
+    } else {
+      sfx.playSkill('ult');
+      triggerHaptic(25);
+    }
+
+    onTriggerAction(active.action, castAngle, {
+      aimDistance: castDist,
+      explicitAim: dragged,
+    });
+  };
 
   return (
     <div
@@ -477,22 +785,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             [E]
           </button>
 
-          {/* Dash Button */}
+          {/* Dash Button [C] - Hold & Drag to Aim */}
           <button
             type="button"
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              if (dashSec === 0) {
-                sfx.playDash();
-                triggerHaptic(14);
-                onTriggerAction('dash', player.aimAngle);
-              }
-            }}
+            onTouchStart={(e) => handleAbilityTouchStart('dash', e)}
+            onTouchMove={handleAbilityTouchMove}
+            onTouchEnd={(e) => handleAbilityTouchEnd(e, false)}
+            onTouchCancel={(e) => handleAbilityTouchEnd(e, true)}
             style={{ width: `${btnSpec.util + 8}px`, height: `${btnSpec.util + 8}px` }}
-            className={`rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-md cursor-pointer ${
-              dashSec > 0
+            className={`rounded-full border-2 flex flex-col items-center justify-center transition-transform shadow-md cursor-pointer ${
+              skillWheelUi?.action === 'dash'
+                ? 'scale-110 bg-[#422006]/95 border-[#FEF08A] text-[#FEF08A] ring-2 ring-[#F59E0B]/70'
+                : dashSec > 0
                 ? 'bg-[#1E1E28]/85 border-[#38364C] text-[#6E6C7D]'
-                : 'bg-[#2A2314]/95 border-[#F59E0B] text-[#FDE68A]'
+                : 'bg-[#2A2314]/95 border-[#F59E0B] text-[#FDE68A] active:scale-95'
             }`}
             aria-label="Dash Evasion"
           >
@@ -513,32 +819,25 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           }}
           className="relative flex items-end justify-end"
         >
-          {/* Tactical Skill [Q] */}
+          {/* Tactical Skill [Q] - Hold & Drag to Aim */}
           <button
             type="button"
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              if (isSilenced) {
-                sfx.playUiClick();
-                return;
-              }
-              if (tacSec === 0) {
-                sfx.playSkill('tactical');
-                triggerHaptic(16);
-                const targetAngle = getAutoTargetAngle();
-                onTriggerAction('tactical', targetAngle);
-              }
-            }}
+            onTouchStart={(e) => handleAbilityTouchStart('tactical', e)}
+            onTouchMove={handleAbilityTouchMove}
+            onTouchEnd={(e) => handleAbilityTouchEnd(e, false)}
+            onTouchCancel={(e) => handleAbilityTouchEnd(e, true)}
             style={{
               width: `${btnSpec.skill}px`,
               height: `${btnSpec.skill}px`,
             }}
-            className={`absolute top-0 left-0 rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-lg cursor-pointer ${
-              isSilenced
+            className={`absolute top-0 left-0 rounded-full border-2 flex flex-col items-center justify-center transition-transform shadow-lg cursor-pointer ${
+              skillWheelUi?.action === 'tactical'
+                ? 'scale-110 bg-[#1E1B4B]/95 border-[#38BDF8] text-white ring-2 ring-[#38BDF8]/70'
+                : isSilenced
                 ? 'bg-[#251B33]/90 border-[#A855F7] text-[#D8B4FE]'
                 : tacSec > 0
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
-                : 'bg-[#282738]/95 border-[#818CF8] text-[#C7D2FE]'
+                : 'bg-[#282738]/95 border-[#818CF8] text-[#C7D2FE] active:scale-95'
             }`}
             aria-label={heroDef.tacticalName}
           >
@@ -550,33 +849,26 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             </span>
           </button>
 
-          {/* Ultimate Ability [R] */}
+          {/* Ultimate Ability [R] - Hold & Drag to Aim */}
           <button
             type="button"
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              if (isSilenced) {
-                sfx.playUiClick();
-                return;
-              }
-              if (ultSec === 0) {
-                sfx.playSkill('ult');
-                triggerHaptic(25);
-                const targetAngle = getAutoTargetAngle();
-                onTriggerAction('ult', targetAngle);
-              }
-            }}
+            onTouchStart={(e) => handleAbilityTouchStart('ult', e)}
+            onTouchMove={handleAbilityTouchMove}
+            onTouchEnd={(e) => handleAbilityTouchEnd(e, false)}
+            onTouchCancel={(e) => handleAbilityTouchEnd(e, true)}
             style={{
               width: `${btnSpec.skill}px`,
               height: `${btnSpec.skill}px`,
               right: `${btnSpec.attack * 0.9}px`,
             }}
-            className={`absolute top-0 rounded-full border-2 flex flex-col items-center justify-center active:scale-95 transition-transform shadow-lg cursor-pointer ${
-              isSilenced
+            className={`absolute top-0 rounded-full border-2 flex flex-col items-center justify-center transition-transform shadow-lg cursor-pointer ${
+              skillWheelUi?.action === 'ult'
+                ? 'scale-110 bg-[#451A03]/95 border-[#FEF08A] text-white ring-2 ring-[#F59E0B]/80'
+                : isSilenced
                 ? 'bg-[#251B33]/90 border-[#A855F7] text-[#D8B4FE]'
                 : ultSec > 0
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
-                : 'bg-[#372A18]/95 border-[#F59E0B] text-[#FEF08A]'
+                : 'bg-[#372A18]/95 border-[#F59E0B] text-[#FEF08A] active:scale-95'
             }`}
             aria-label={heroDef.ultName}
           >
@@ -623,6 +915,62 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         </div>
       </div>
+
+      {/* MOBILE LEGENDS-STYLE SKILL AIM WHEEL & CANCEL TARGET OVERLAY */}
+      {skillWheelUi && (
+        <>
+          {/* Cancel Cast Drop Zone */}
+          <div
+            ref={cancelZoneRef}
+            className={`fixed right-36 sm:right-52 bottom-44 sm:bottom-52 z-30 w-16 h-16 rounded-full border-2 flex flex-col items-center justify-center pointer-events-none transition-all shadow-2xl ${
+              skillWheelUi.cancelled
+                ? 'scale-115 bg-[#991B1B]/95 border-[#FECACA] text-white ring-4 ring-[#EF4444]/60'
+                : 'bg-[#1E1418]/90 border-[#EF4444]/80 text-[#FCA5A5]'
+            }`}
+          >
+            <span className="text-sm font-mono font-bold leading-none">✕</span>
+            <span className="text-[8px] font-mono font-bold tracking-wider uppercase mt-0.5">
+              Cancel
+            </span>
+          </div>
+
+          {/* Floating Mini Skill Joystick Wheel centered on pressed skill button */}
+          <div
+            style={{
+              position: 'fixed',
+              left: `${skillWheelUi.originX}px`,
+              top: `${skillWheelUi.originY}px`,
+              width: '96px',
+              height: '96px',
+              marginLeft: '-48px',
+              marginTop: '-48px',
+              borderColor: skillWheelUi.cancelled
+                ? '#EF4444'
+                : skillWheelUi.accentColor,
+            }}
+            className="z-30 rounded-full border-2 bg-[#14131E]/65 backdrop-blur-[2px] flex items-center justify-center pointer-events-none shadow-2xl"
+          >
+            <div className="absolute -top-6 left-1/2 -translate-x-1/2 px-1.5 py-0.5 bg-[#12111A]/90 border border-[#3C3A52] text-[9px] font-mono whitespace-nowrap text-white">
+              {skillWheelUi.cancelled ? 'Cancel Cast' : skillWheelUi.label}
+            </div>
+            <div className="absolute inset-0 flex items-center justify-center opacity-30">
+              <div className="w-full h-px bg-white" />
+              <div className="h-full w-px bg-white absolute" />
+            </div>
+            <div
+              style={{
+                width: '30px',
+                height: '30px',
+                transform: `translate3d(${skillWheelUi.knobX}px, ${skillWheelUi.knobY}px, 0)`,
+                backgroundColor: skillWheelUi.cancelled
+                  ? '#EF4444'
+                  : skillWheelUi.accentColor,
+              }}
+              className="rounded-full border-2 border-white/90 shadow-lg"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 };

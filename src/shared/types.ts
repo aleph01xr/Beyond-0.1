@@ -117,7 +117,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     speed: 175,
     damage: 28,
     attackCooldownMs: 400,
-    range: 78,
+    range: 74,
     primaryColor: '#64748B',
     secondaryColor: '#CBD5E1',
     capeColor: '#991B1B',
@@ -147,7 +147,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     speed: 210,
     damage: 24,
     attackCooldownMs: 320,
-    range: 380,
+    range: 195,
     primaryColor: '#2D5A3C',
     secondaryColor: '#4ADE80',
     capeColor: '#1A3826',
@@ -177,7 +177,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     speed: 188,
     damage: 32,
     attackCooldownMs: 420,
-    range: 340,
+    range: 185,
     primaryColor: '#4338CA',
     secondaryColor: '#818CF8',
     capeColor: '#312E81',
@@ -207,7 +207,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     speed: 185,
     damage: 22,
     attackCooldownMs: 380,
-    range: 290,
+    range: 160,
     primaryColor: '#E2E8F0',
     secondaryColor: '#FDE047',
     capeColor: '#854D0E',
@@ -756,7 +756,13 @@ export type ClientMessage =
     }
   | { type: 'room:leave' }
   | { type: 'player:input'; input: PlayerInputState; seq?: number }
-  | { type: 'player:action'; action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash'; aimAngle: number }
+  | {
+      type: 'player:action';
+      action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash';
+      aimAngle: number;
+      aimDistance?: number;
+      explicitAim?: boolean;
+    }
   | { type: 'player:select_relic'; relicId: string }
   | { type: 'player:unequip_relic'; relicId: string }
   | { type: 'player:store_relic'; relicId: string }
