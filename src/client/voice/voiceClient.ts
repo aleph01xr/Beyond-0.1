@@ -87,7 +87,21 @@ export class VoiceClientManager {
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         const errMessage = errData.error || `Server responded with status ${res.status}`;
-        console.warn(`[VoiceClient] Token request failed (${res.status}): ${errMessage}. Falling back to Simulated Proximity Voice Mode.`);
+        console.warn(`[VoiceClient] Token request failed (${res.status}): ${errMessage}`);
+
+        // Auth failures should surface clearly instead of silent fake mode
+        if (res.status === 401 || res.status === 403) {
+          this.connectionState = 'error';
+          this.lastError =
+            res.status === 401
+              ? 'Session expired or not logged in. Please log out and log back in.'
+              : errMessage;
+          this.notify();
+          return;
+        }
+
+        // Other errors (404 room, 500, etc.) fall back to simulated for resilience
+        console.warn('[VoiceClient] Falling back to Simulated Proximity Voice Mode.');
         this.enableSimulatedMode(roomId);
         return;
       }
@@ -135,6 +149,12 @@ export class VoiceClientManager {
 
       room.on(RoomEvent.ParticipantDisconnected, (p) => {
         this.participantsState.delete(p.identity);
+        const audio = this.audioElements.get(p.identity);
+        if (audio) {
+          audio.pause();
+          audio.remove();
+          this.audioElements.delete(p.identity);
+        }
         this.notify();
       });
 
@@ -144,6 +164,34 @@ export class VoiceClientManager {
           state.isSpeaking = speakerIds.has(id);
         }
         this.notify();
+      });
+
+      // CRITICAL: Attach remote audio tracks so proximity volume actually works
+      room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
+        if (track.kind === Track.Kind.Audio) {
+          const element = track.attach();
+          element.autoplay = true;
+          element.setAttribute('playsinline', 'true');
+          // Start quiet; proximity system will raise volume when in range
+          element.volume = 0;
+          document.body.appendChild(element);
+          this.audioElements.set(participant.identity, element);
+          this.updateParticipantAudioVolume(participant.identity);
+          this.updateParticipantState(participant);
+          console.log(`[VoiceClient] Subscribed to audio from ${participant.identity}`);
+        }
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track, _publication, participant) => {
+        if (track.kind === Track.Kind.Audio) {
+          track.detach();
+          const audio = this.audioElements.get(participant.identity);
+          if (audio) {
+            audio.pause();
+            audio.remove();
+            this.audioElements.delete(participant.identity);
+          }
+        }
       });
 
       // Attempt LiveKit connection with timeout
@@ -157,7 +205,7 @@ export class VoiceClientManager {
       this.isMicEnabled = false;
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      console.warn('[VoiceClient] LiveKit connection unreachable or blocked in sandbox. Enabling robust Simulated Proximity Voice Mode.');
+      console.warn('[VoiceClient] LiveKit connection unreachable or blocked. Enabling Simulated Proximity Voice Mode.');
       this.enableSimulatedMode(roomId);
     }
   }
@@ -311,13 +359,16 @@ export class VoiceClientManager {
     }
 
     // Update simulated participant positions if present
-    const scoutPos = posMap.get('sim_adventurer_1');
     if (this.isSimulated && this.participantsState.has('sim_adventurer_1')) {
       const scoutState = this.participantsState.get('sim_adventurer_1')!;
+      const scoutPos = posMap.get('sim_adventurer_1');
       const fakePos = scoutPos || { x: myPos.x + 150, y: myPos.y + 100 };
       const dist = Math.hypot(fakePos.x - myPos.x, fakePos.y - myPos.y);
       scoutState.distance = dist;
-      scoutState.volume = dist > maxDist || this.isDeafened || this.locallyMutedUsers.has('sim_adventurer_1') ? 0 : Math.max(0, 1 - dist / maxDist);
+      scoutState.volume =
+        dist > maxDist || this.isDeafened || this.locallyMutedUsers.has('sim_adventurer_1')
+          ? 0
+          : Math.max(0, 1 - dist / maxDist);
     }
 
     if (!this.room || this.isSimulated) return;
