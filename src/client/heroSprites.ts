@@ -10,6 +10,7 @@ export interface HeroRenderOptions {
   isPreview?: boolean;
   swingProgress?: number;
   swingKind?: HeroSwingKind;
+  facingLeft?: boolean;
 }
 
 function easeOutCubic(t: number): number {
@@ -32,10 +33,10 @@ export function drawHeroSprite(
   hy: number,
   options: HeroRenderOptions
 ): void {
-  const { aimAngle, bob, moving, now } = options;
-  const facingLeft = Math.cos(aimAngle) < 0;
+  const { aimAngle, bob, moving, now, facingLeft: overrideFacingLeft } = options;
+  const facingLeft = overrideFacingLeft !== undefined ? overrideFacingLeft : (Math.cos(aimAngle) < 0);
   // Angle in local sprite space where +X is always "forward"
-  const localAim = Math.atan2(Math.sin(aimAngle), Math.max(0.05, Math.abs(Math.cos(aimAngle))));
+  const localAim = Math.atan2(Math.sin(aimAngle), facingLeft ? -Math.cos(aimAngle) : Math.cos(aimAngle));
 
   const speedMag = Math.hypot(p.vx || 0, p.vy || 0);
   const isDashing = speedMag > 290;

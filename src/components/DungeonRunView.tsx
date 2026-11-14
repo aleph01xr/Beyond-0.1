@@ -869,6 +869,87 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         )}
       </div>
 
+      {/* Dedicated Fixed Player HP & Status Effects HUD */}
+      {me && (
+        <div className="pointer-events-auto fixed top-20 sm:top-24 left-1.5 sm:left-5 z-20 w-52 sm:w-64 bg-[#191824]/95 border border-[#3A384C] p-2 sm:p-2.5 shadow-2xl backdrop-blur-sm space-y-1.5 font-mono">
+          <div className="flex items-center justify-between gap-1 text-xs">
+            <span className="font-display text-xs sm:text-sm text-white font-bold truncate">
+              {me.username}
+            </span>
+            <span className="text-[10px] text-[#FCD34D] font-bold uppercase tracking-wider">
+              {HERO_CLASSES[me.heroClass].name}
+            </span>
+          </div>
+
+          {/* HP Bar */}
+          <div className="space-y-0.5">
+            <div className="w-full h-2.5 sm:h-3 bg-[#111018] border border-[#2E2B3D] overflow-hidden relative">
+              <div
+                style={{ width: `${Math.max(0, Math.min(100, (me.hp / Math.max(1, me.maxHp)) * 100))}%` }}
+                className="h-full bg-gradient-to-r from-[#166534] via-[#22C55E] to-[#4ADE80] transition-all duration-150"
+              />
+              {me.shield > 0 && (
+                <div
+                  style={{ width: `${Math.min(100, (me.shield / 60) * 100)}%` }}
+                  className="absolute inset-0 h-full bg-[#38BDF8]/60 border-t border-[#93C5FD]"
+                />
+              )}
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-[#C9C7D8] tabular-nums">
+              <span className="font-bold text-emerald-400">
+                HP {me.hp} / {me.maxHp}
+              </span>
+              {me.shield > 0 && (
+                <span className="font-bold text-sky-300">
+                  Shield +{me.shield}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Status Effects directly below the HP bar */}
+          {me.statuses && me.statuses.length > 0 && (
+            <div className="pt-1 border-t border-[#2E2B3D] flex flex-wrap gap-1 max-h-24 overflow-y-auto custom-scrollbar">
+              {me.statuses.map((s) => {
+                const meta = getStatusEffectMeta(s.type);
+                const remainSec = (s.durationMs / 1000).toFixed(1);
+                const pct = Math.max(0, Math.min(100, (s.durationMs / s.maxDurationMs) * 100));
+                return (
+                  <div
+                    key={s.id}
+                    title={`${meta.name} (${remainSec}s): ${meta.summary}`}
+                    className="px-1.5 py-0.5 rounded-sm border shadow-xs flex items-center gap-1 text-[9px]"
+                    style={{
+                      borderColor: `${meta.color}88`,
+                      backgroundColor: `${meta.color}22`,
+                    }}
+                  >
+                    <span
+                      className="font-bold font-mono leading-none"
+                      style={{ color: meta.color }}
+                    >
+                      {meta.badge}
+                    </span>
+                    <span className="font-mono text-white/90 leading-none">
+                      {remainSec}s
+                    </span>
+                    <div className="w-4 h-1 bg-black/50 rounded-full overflow-hidden">
+                      <div
+                        className="h-full transition-all duration-100"
+                        style={{
+                          width: `${pct}%`,
+                          backgroundColor: meta.color,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* MOBILE ON-SCREEN TOUCH GAMEPAD (Virtual Joystick + Action Cluster) */}
       {me && (isTouchDevice || forceTouchGamepad) && (
         <TouchControls

@@ -648,6 +648,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       };
     }
     const floatingTexts: ActiveFloatingText[] = [];
+    const clericPulses: { x: number; y: number; bornAt: number }[] = [];
+    const playerFacingMap = new Map<string, boolean>();
     const seenEventIds = new Set<string>();
     const particleManager = new ParticleManager();
     const localPredictor = new LocalPredictionController();
@@ -716,6 +718,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           if (ev.kind === 'gold') sfx.playCoin();
           else if (ev.kind === 'heal') {
             sfx.playHeal();
+            particleManager.spawnClericHealBurst(ev.x, ev.y, now);
+          } else if (ev.kind === 'cleric_pulse') {
+            sfx.playHeal();
+            clericPulses.push({ x: ev.x, y: ev.y, bornAt: now });
             particleManager.spawnClericHealBurst(ev.x, ev.y, now);
           } else if (ev.kind === 'damage') {
             if (ev.text.toUpperCase().includes('SOUL SIPHON')) {
@@ -1212,6 +1218,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             latestSentSeq: latestInputSeqPropRef.current?.current ?? 0,
             map,
             props: snap.props,
+            npcs: snap.npcs,
             dtSec,
             nowMs: now,
             isNewSnapshot,
@@ -4068,14 +4075,14 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
           }
         } else if (p.heroClass === 'cleric') {
-          // Cleric: Radiant Aura 140px Translucent Golden Warmth Halo
+          // Cleric: Radiant Aura 140px Translucent Green Warmth Halo
           const auraPulse = Math.sin(now * 0.004 + hx) * 3;
-          ctx.fillStyle = 'rgba(253, 224, 71, 0.06)';
+          ctx.fillStyle = 'rgba(34, 197, 94, 0.08)';
           ctx.beginPath();
           ctx.arc(hx, hy, 140, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(253, 224, 71, 0.35)';
+          ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
@@ -4083,6 +4090,29 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
           particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
         }
+
+      // Render and update Cleric passive green pulse waves
+      for (let i = clericPulses.length - 1; i >= 0; i--) {
+        const pulse = clericPulses[i];
+        const age = now - pulse.bornAt;
+        if (age > 800) {
+          clericPulses.splice(i, 1);
+          continue;
+        }
+        const progress = age / 800; // 0 to 1
+        const radius = 15 + progress * 140; // expands from 15 to 155
+        const alpha = Math.max(0, 1 - progress);
+        ctx.strokeStyle = `rgba(34, 197, 94, ${alpha * 0.75})`;
+        ctx.lineWidth = 2.5 * alpha;
+        ctx.beginPath();
+        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(34, 197, 94, ${alpha * 0.12})`;
+        ctx.beginPath();
+        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
         // Floor Status Effects Visual Feedback
         if (p.statuses && p.statuses.length > 0) {
           const statusCount = p.statuses.length;
@@ -4144,6 +4174,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
         // Aim angle & articulated pixel hero sprite with 60 FPS smooth weapon swing transitions
         const ang = p.id === playerId ? aimAngleRef.current : p.aimAngle;
+        const vx = p.vx || 0;
+        const vy = p.vy || 0;
+        let facingLeft = playerFacingMap.get(p.id) ?? (Math.cos(ang) < 0);
+        const isMovingH = Math.abs(vx) > 0.5;
+        const isMovingV = Math.abs(vy) > 0.5 && !isMovingH;
+        const isStandingStill = !isMovingH && !isMovingV;
+
+        if (isMovingH) {
+          facingLeft = vx < 0;
+        } else if (isMovingV) {
+          facingLeft = Math.cos(ang) < 0;
+        } else if (isStandingStill && !playerFacingMap.has(p.id)) {
+          facingLeft = Math.cos(ang) < 0;
+        }
+        playerFacingMap.set(p.id, facingLeft);
+
         const swingState = playerWeaponSwings.get(p.id);
         const swingProgress = swingState
           ? Math.max(0, Math.min(1, (now - swingState.bornAt) / swingState.durationMs))
@@ -4155,6 +4201,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           now,
           swingProgress,
           swingKind: swingState?.kind,
+          facingLeft,
         });
 
         // Player Name Tag
@@ -4190,19 +4237,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = isLocalPlayer ? '#FCD34D' : '#7DD3FC';
         ctx.fillText(displayLabel, hx, badgeY + 1);
 
-        // Health Bar & Compact Shield Bar (replaces circle overlay on sprite)
-        const pBarW = 36;
-        const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
-        ctx.fillStyle = '#0F172A';
-        ctx.fillRect(hx - pBarW / 2 - 1, hy - 18, pBarW + 2, 5);
-        ctx.fillStyle = isLocalPlayer ? '#22C55E' : '#38BDF8';
-        ctx.fillRect(hx - pBarW / 2, hy - 17, Math.round(pBarW * pHpRatio), 3);
-        if (p.shield > 0) {
-          const pShieldRatio = Math.min(1, p.shield / 60);
+        // Health Bar & Compact Shield Bar (only for other players; local player uses screen HUD)
+        if (!isLocalPlayer) {
+          const pBarW = 36;
+          const pHpRatio = Math.max(0, p.hp / Math.max(1, p.maxHp));
           ctx.fillStyle = '#0F172A';
-          ctx.fillRect(hx - pBarW / 2 - 1, hy - 21, pBarW + 2, 3);
-          ctx.fillStyle = '#93C5FD';
-          ctx.fillRect(hx - pBarW / 2, hy - 20, Math.max(2, Math.round(pBarW * pShieldRatio)), 2);
+          ctx.fillRect(hx - pBarW / 2 - 1, hy - 18, pBarW + 2, 5);
+          ctx.fillStyle = '#38BDF8';
+          ctx.fillRect(hx - pBarW / 2, hy - 17, Math.round(pBarW * pHpRatio), 3);
+          if (p.shield > 0) {
+            const pShieldRatio = Math.min(1, p.shield / 60);
+            ctx.fillStyle = '#0F172A';
+            ctx.fillRect(hx - pBarW / 2 - 1, hy - 21, pBarW + 2, 3);
+            ctx.fillStyle = '#93C5FD';
+            ctx.fillRect(hx - pBarW / 2, hy - 20, Math.max(2, Math.round(pBarW * pShieldRatio)), 2);
+          }
         }
       }
 
@@ -4215,7 +4264,34 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
       particleManager.cleanupInactiveProjectiles(activeProjIds);
 
-      // Floating Numbers, Critical Hit Animations & Speech Bubbles
+      // Floating Numbers, Critical Hit Animations & Speech Bubbles with Vertical Stacking
+      const floatOffsets = new Array(floatingTexts.length).fill(0);
+      for (let i = 0; i < floatingTexts.length; i++) {
+        const ft = floatingTexts[i];
+        const age = now - ft.bornAt;
+        const isDialogue = ft.text.startsWith('"');
+        const duration = isDialogue ? 5500 : ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
+        if (age >= duration) continue;
+        const t = age / duration;
+        const baseFloatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
+
+        let stackSlot = 0;
+        for (let j = 0; j < i; j++) {
+          const other = floatingTexts[j];
+          const otherAge = now - other.bornAt;
+          const otherDuration = other.text.startsWith('"') ? 5500 : other.kind === 'ping' ? 2600 : other.kind === 'crit' ? 1200 : 950;
+          if (otherAge >= otherDuration) continue;
+          const otherT = otherAge / otherDuration;
+          const otherBaseFloatY = other.y - (other.text.startsWith('"') ? Math.min(10, otherT * 12) : otherT * (other.kind === 'ping' ? 20 : other.kind === 'crit' ? 36 : 28));
+          const otherFloatY = otherBaseFloatY - (floatOffsets[j] * 18);
+
+          if (Math.abs(ft.x - other.x) < 45 && Math.abs(baseFloatY - otherFloatY) < 20) {
+            stackSlot = Math.max(stackSlot, floatOffsets[j] + 1);
+          }
+        }
+        floatOffsets[i] = stackSlot;
+      }
+
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
         const age = now - ft.bornAt;
@@ -4226,8 +4302,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           continue;
         }
         const t = age / duration;
-        const alpha = Math.max(0, 1 - Math.pow(t, 4)); // 100% opacity for most of the 5.5s duration
-        const floatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
+        const alpha = Math.max(0, 1 - Math.pow(t, 4)); // 100% opacity for most of the duration
+        const baseFloatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
+        const floatY = baseFloatY - (floatOffsets[i] * 18);
 
         ctx.save();
         ctx.globalAlpha = alpha;
@@ -4289,7 +4366,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           ctx.fillStyle = '#111219';
           ctx.fillText(ft.text, ft.x + 1, floatY + 1);
-          ctx.fillStyle = ft.color;
+          ctx.fillStyle = ft.kind === 'heal' ? '#34D399' : ft.color;
           ctx.fillText(ft.text, ft.x, floatY);
         }
 

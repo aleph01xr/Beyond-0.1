@@ -76,6 +76,7 @@ export class LocalPredictionController {
     latestSentSeq: number;
     map: DungeonMap;
     props: readonly PropState[];
+    npcs?: readonly { x: number; y: number }[];
     dtSec: number;
     nowMs: number;
     isNewSnapshot: boolean;
@@ -87,6 +88,7 @@ export class LocalPredictionController {
       latestSentSeq,
       map,
       props,
+      npcs,
       dtSec,
       nowMs,
       isNewSnapshot,
@@ -158,6 +160,7 @@ export class LocalPredictionController {
               moveSpeed,
               disoriented: isDisoriented,
               timeMs: nowMs,
+              npcs,
             });
           }
         } else if (
@@ -169,6 +172,7 @@ export class LocalPredictionController {
             moveSpeed,
             disoriented: isDisoriented,
             timeMs: nowMs,
+            npcs,
           });
         }
       }
@@ -213,6 +217,7 @@ export class LocalPredictionController {
         moveSpeed,
         disoriented: isDisoriented,
         timeMs: nowMs,
+        npcs,
       });
       this.predX = simEntity.x;
       this.predY = simEntity.y;

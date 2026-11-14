@@ -1194,7 +1194,7 @@ export class GameRoom {
         p.potions -= 1;
         const healAmt = Math.round(p.maxHp * 0.45);
         p.hp = Math.min(p.maxHp, p.hp + healAmt);
-        this.emitEvent('heal', p.x, p.y - 20, `+${healAmt} HP`, '#5CD68D');
+        this.emitEvent('heal', p.x, p.y - 20, `+${healAmt}`, '#34D399');
       }
       return {};
     }
@@ -1499,7 +1499,7 @@ export class GameRoom {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
-            this.emitEvent('heal', ally.state.x, ally.state.y - 20, `+${heal} HP`, '#6EE7B7');
+            this.emitEvent('heal', ally.state.x, ally.state.y - 20, `+${heal}`, '#34D399');
           }
         }
         const smiteTargets = [...this.enemies];
@@ -1993,7 +1993,7 @@ export class GameRoom {
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
                 pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
-                this.emitEvent('heal', pr.state.x, pr.state.y - 16, `+${beaconHeal} Solar Beacon`, '#FEF08A');
+                this.emitEvent('heal', pr.state.x, pr.state.y - 16, `+${Math.round(beaconHeal)}`, '#34D399');
               }
             }
           }
@@ -2040,14 +2040,26 @@ export class GameRoom {
       for (const pr of this.players.values()) {
         const cleric = pr.state;
         if (cleric.heroClass === 'cleric' && !cleric.downed && cleric.connected) {
+          let anyMissingHp = false;
+          const targetsInRange: PlayerState[] = [];
           for (const allyPr of this.players.values()) {
             const ally = allyPr.state;
             if (!ally.downed && ally.connected && Math.hypot(ally.x - cleric.x, ally.y - cleric.y) <= 140) {
+              targetsInRange.push(ally);
+              if (ally.hp < ally.maxHp) {
+                anyMissingHp = true;
+              }
+            }
+          }
+
+          if (anyMissingHp) {
+            this.emitEvent('cleric_pulse', cleric.x, cleric.y, 'Radiant Aura', '#22C55E');
+            for (const ally of targetsInRange) {
               if (ally.hp < ally.maxHp) {
                 const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
                 const healAmt = this.computeHealingAmount(baseHeal, cleric);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
-                this.emitEvent('heal', ally.x, ally.y - 18, ` Radiant Aura +${healAmt}`, '#FDE047');
+                this.emitEvent('heal', ally.x, ally.y - 18, `+${healAmt}`, '#34D399');
               }
             }
           }
@@ -2836,7 +2848,7 @@ export class GameRoom {
               this.damagePlayer(nearest, 22 + this.floor * 2, 'elemental');
               enemy.hp = Math.min(enemy.maxHp, enemy.hp + 45);
               this.emitEvent('damage', nearest.x, nearest.y - 14, 'SOUL SIPHONED!', '#A855F7');
-              this.emitEvent('heal', enemy.x, enemy.y - enemy.radius - 16, '+45 HP', '#34D399');
+              this.emitEvent('heal', enemy.x, enemy.y - enemy.radius - 16, '+45', '#34D399');
               enemy.windupMs = isEnraged ? 650 : 950;
             } else if (patternChoice < 0.75) {
               // 3. Seeking Soul Hail (5 Homing Cyan Soul Wisps)
@@ -4550,6 +4562,8 @@ export class GameRoom {
     this.emitEvent('heal', target.x, target.y - 24, 'Revived!', '#6EE7B7');
   }
 
+  private recentStatusEvents = new Map<string, number>();
+
   private emitEvent(
     kind: FloatingEvent['kind'],
     x: number,
@@ -4557,6 +4571,22 @@ export class GameRoom {
     text: string,
     color: string
   ): void {
+    const now = Date.now();
+    if (kind === 'status' || kind === 'crit') {
+      const throttleKey = `${Math.round(x / 45)}_${Math.round(y / 45)}_${text.trim()}`;
+      const lastTime = this.recentStatusEvents.get(throttleKey) ?? 0;
+      if (now - lastTime < 2500) {
+        return;
+      }
+      this.recentStatusEvents.set(throttleKey, now);
+      if (this.recentStatusEvents.size > 150) {
+        const cutoff = now - 5000;
+        for (const [k, t] of this.recentStatusEvents.entries()) {
+          if (t < cutoff) this.recentStatusEvents.delete(k);
+        }
+      }
+    }
+
     this.pendingEvents.push({
       id: this.nextId('ev'),
       kind,
@@ -4580,11 +4610,11 @@ export class GameRoom {
   }
 
   private isWallAtWorld(wx: number, wy: number): boolean {
-    return sharedIsWallAtWorld(this.map, this.props, wx, wy);
+    return sharedIsWallAtWorld(this.map, this.props, wx, wy, this.npcs);
   }
 
   private collidesCircle(wx: number, wy: number, radius: number): boolean {
-    return sharedCollidesCircle(this.map, this.props, wx, wy, radius);
+    return sharedCollidesCircle(this.map, this.props, wx, wy, radius, this.npcs);
   }
 
   private moveWithCollision(
@@ -4593,7 +4623,7 @@ export class GameRoom {
     dy: number,
     radius: number
   ): void {
-    sharedMoveWithCollision(this.map, this.props, entity, dx, dy, radius);
+    sharedMoveWithCollision(this.map, this.props, entity, dx, dy, radius, this.npcs);
   }
 
   public getSummary(): RoomSummary {

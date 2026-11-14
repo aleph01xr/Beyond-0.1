@@ -630,7 +630,7 @@ export interface FieldZoneState {
 
 export interface FloatingEvent {
   id: string;
-  kind: 'damage' | 'crit' | 'heal' | 'gold' | 'status' | 'ping';
+  kind: 'damage' | 'crit' | 'heal' | 'gold' | 'status' | 'ping' | 'cleric_pulse';
   x: number;
   y: number;
   text: string;

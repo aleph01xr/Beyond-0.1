@@ -23,7 +23,8 @@ export function isWallAtWorld(
   map: DungeonMap,
   props: readonly PropState[],
   wx: number,
-  wy: number
+  wy: number,
+  npcs?: readonly { x: number; y: number }[]
 ): boolean {
   const tx = Math.floor(wx / TILE_SIZE);
   const ty = Math.floor(wy / TILE_SIZE);
@@ -43,6 +44,16 @@ export function isWallAtWorld(
     }
   }
 
+  // Solid collision barrier for NPCs so players cannot walk through them
+  if (npcs) {
+    for (let i = 0; i < npcs.length; i++) {
+      const npc = npcs[i];
+      if (Math.hypot(wx - npc.x, wy - npc.y) <= 20) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
@@ -52,7 +63,8 @@ export function hasLineOfSight(
   x1: number,
   y1: number,
   x2: number,
-  y2: number
+  y2: number,
+  npcs?: readonly { x: number; y: number }[]
 ): boolean {
   const dx = x2 - x1;
   const dy = y2 - y1;
@@ -62,7 +74,7 @@ export function hasLineOfSight(
   const stepX = dx / steps;
   const stepY = dy / steps;
   for (let i = 1; i < steps; i++) {
-    if (isWallAtWorld(map, props, x1 + stepX * i, y1 + stepY * i)) {
+    if (isWallAtWorld(map, props, x1 + stepX * i, y1 + stepY * i, npcs)) {
       return false;
     }
   }
@@ -95,14 +107,15 @@ export function collidesCircle(
   props: readonly PropState[],
   wx: number,
   wy: number,
-  radius: number
+  radius: number,
+  npcs?: readonly { x: number; y: number }[]
 ): boolean {
-  if (isWallAtWorld(map, props, wx, wy)) return true;
+  if (isWallAtWorld(map, props, wx, wy, npcs)) return true;
   // 8 perimeter points for smooth circular collision sliding
   for (let i = 0; i < 8; i++) {
     const cx = wx + COLLISION_COS[i] * radius;
     const cy = wy + COLLISION_SIN[i] * radius;
-    if (isWallAtWorld(map, props, cx, cy)) return true;
+    if (isWallAtWorld(map, props, cx, cy, npcs)) return true;
   }
   return false;
 }
@@ -113,17 +126,18 @@ export function moveWithCollision(
   entity: { x: number; y: number },
   dx: number,
   dy: number,
-  radius: number
+  radius: number,
+  npcs?: readonly { x: number; y: number }[]
 ): void {
   // 1. Stuck Recovery: if entity is overlapping a wall tile, push out toward open floor
-  if (collidesCircle(map, props, entity.x, entity.y, radius * 0.75)) {
+  if (collidesCircle(map, props, entity.x, entity.y, radius * 0.75, npcs)) {
     let escapeX = 0;
     let escapeY = 0;
     const probeDist = radius + 8;
     for (let i = 0; i < 8; i++) {
       const testX = entity.x + COLLISION_COS[i] * probeDist;
       const testY = entity.y + COLLISION_SIN[i] * probeDist;
-      if (!isWallAtWorld(map, props, testX, testY)) {
+      if (!isWallAtWorld(map, props, testX, testY, npcs)) {
         escapeX += COLLISION_COS[i];
         escapeY += COLLISION_SIN[i];
       }
@@ -139,8 +153,8 @@ export function moveWithCollision(
   const targetX = entity.x + dx;
   const targetY = entity.y + dy;
   if (
-    hasLineOfSight(map, props, entity.x, entity.y, targetX, targetY) &&
-    !collidesCircle(map, props, targetX, targetY, radius)
+    hasLineOfSight(map, props, entity.x, entity.y, targetX, targetY, npcs) &&
+    !collidesCircle(map, props, targetX, targetY, radius, npcs)
   ) {
     entity.x = targetX;
     entity.y = targetY;
@@ -148,16 +162,16 @@ export function moveWithCollision(
   }
 
   // 3. Wall Sliding: try X movement alone with half-step fallback
-  if (dx !== 0 && !collidesCircle(map, props, targetX, entity.y, radius)) {
+  if (dx !== 0 && !collidesCircle(map, props, targetX, entity.y, radius, npcs)) {
     entity.x = targetX;
-  } else if (dx !== 0 && !collidesCircle(map, props, entity.x + dx * 0.5, entity.y, radius)) {
+  } else if (dx !== 0 && !collidesCircle(map, props, entity.x + dx * 0.5, entity.y, radius, npcs)) {
     entity.x += dx * 0.5;
   }
 
   // 4. Wall Sliding: try Y movement alone with half-step fallback
-  if (dy !== 0 && !collidesCircle(map, props, entity.x, targetY, radius)) {
+  if (dy !== 0 && !collidesCircle(map, props, entity.x, targetY, radius, npcs)) {
     entity.y = targetY;
-  } else if (dy !== 0 && !collidesCircle(map, props, entity.x, entity.y + dy * 0.5, radius)) {
+  } else if (dy !== 0 && !collidesCircle(map, props, entity.x, entity.y + dy * 0.5, radius, npcs)) {
     entity.y += dy * 0.5;
   }
 }
@@ -260,6 +274,7 @@ export function stepPlayerMovement(
     charmVy?: number;
     disoriented?: boolean;
     timeMs?: number;
+    npcs?: readonly { x: number; y: number }[];
   }
 ): void {
   if (dtSec <= 0) return;
@@ -283,6 +298,14 @@ export function stepPlayerMovement(
   }
 
   if (entity.vx !== 0 || entity.vy !== 0) {
-    moveWithCollision(map, props, entity, entity.vx * dtSec, entity.vy * dtSec, 9);
+    moveWithCollision(
+      map,
+      props,
+      entity,
+      entity.vx * dtSec,
+      entity.vy * dtSec,
+      9,
+      options?.npcs
+    );
   }
 }
