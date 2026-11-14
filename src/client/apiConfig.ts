@@ -2,11 +2,15 @@
  * Centralized API & WebSocket backend connection configuration.
  * Supports:
  * - Unified Render deployment (relative URL fallback)
- * - Decoupled Vercel frontend pointing to Render Singapore via VITE_SERVER_URL
+ * - Decoupled Vercel / Itch.io frontend pointing to Render backend via VITE_SERVER_URL or automatic fallback
  */
 
 export const BACKEND_URL = (
-  (import.meta.env.VITE_SERVER_URL as string | undefined) || ''
+  (import.meta.env.VITE_SERVER_URL as string | undefined) ||
+  (typeof window !== 'undefined' &&
+  (window.location.hostname.includes('itch.io') || window.location.hostname.includes('vercel.app'))
+    ? 'https://beyond-game-sg.onrender.com'
+    : '')
 ).replace(/\/+$/, '');
 
 export function getApiEndpoint(path: string): string {
