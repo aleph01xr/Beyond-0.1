@@ -2109,6 +2109,7 @@ var GameRoom = class _GameRoom {
       pr.state.damageDealt = 0;
       pr.state.revives = 0;
       pr.state.readyNextFloor = false;
+      pr.state.ready = false;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
       pr.state.dashCooldownMs = 0;
@@ -2228,6 +2229,21 @@ var GameRoom = class _GameRoom {
     }
     return count;
   }
+  setPlayerReady(playerId, ready) {
+    if (this.roomId === "TAVERN-HUB") {
+      return { ok: false, reason: "Ready status is only used in expedition party lobbies." };
+    }
+    if (this.status !== "waiting") {
+      return { ok: false, reason: "Ready status can only be toggled while in the waiting lobby." };
+    }
+    const pr = this.players.get(playerId);
+    if (!pr) {
+      return { ok: false, reason: "Player is not a member of this party." };
+    }
+    const nextReady = ready === void 0 ? !Boolean(pr.state.ready) : Boolean(ready);
+    pr.state.ready = nextReady;
+    return { ok: true, ready: nextReady };
+  }
   canAcceptJoin(playerId) {
     if (this.roomId === "TAVERN-HUB") {
       if (this.hasPlayer(playerId)) return { allowed: true, isReconnect: true };
@@ -2336,6 +2352,7 @@ var GameRoom = class _GameRoom {
       damageDealt: 0,
       revives: 0,
       readyNextFloor: false,
+      ready: false,
       pendingRelicChoices: [],
       connected: true,
       isAdmin,
@@ -6245,6 +6262,24 @@ var PartyCoordinator = class {
     this.broadcastRoomList();
     return { ok: true, map: freshMap };
   }
+  setPlayerReady(client, ready) {
+    if (!client.roomId) {
+      return { ok: false, reason: "You are not in a party room." };
+    }
+    const room = this.rooms.get(client.roomId);
+    if (!room || room.roomId === "TAVERN-HUB") {
+      const reason = "Ready status is only used in expedition party lobbies.";
+      this.sendJson(client.ws, { type: "error", message: reason });
+      return { ok: false, reason };
+    }
+    const result = room.setPlayerReady(client.userId, ready);
+    if (!result.ok) {
+      this.sendJson(client.ws, { type: "error", message: result.reason });
+      return result;
+    }
+    this.markRoomDirty(room.roomId);
+    return result;
+  }
   restartExpedition(client) {
     if (!client.roomId) {
       return { ok: false, reason: "You are not in a party room." };
@@ -7937,6 +7972,8 @@ async function startServer() {
         }
       } else if (msg.type === "room:start") {
         partyCoordinator.startExpedition(client);
+      } else if (msg.type === "room:set_ready") {
+        partyCoordinator.setPlayerReady(client, msg.ready);
       } else if (msg.type === "room:return_to_lobby") {
         partyCoordinator.returnToLobby(client);
       } else if (msg.type === "room:restart") {

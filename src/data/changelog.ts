@@ -86,6 +86,29 @@ export const CATEGORY_ORDER: ChangelogCategory[] = [
 
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
+    version: 'v1.6.0',
+    releaseDate: 'November 15, 2026',
+    title: 'Party Lobby, Ready Toggles & Locked Expeditions',
+    description:
+      'Major multiplayer update introducing authoritative waiting lobbies, per-member ready toggles, host-enforced expedition locks, seamless run reconnections without duplicate characters, proximity voice chat integration near the map, and responsive PC control refinements.',
+    categories: {
+      'NEW FEATURES': [
+        'Party Lobby & Locked Expeditions: Parties now assemble in an interactive waiting lobby before the host starts the run, locking the party against new joiners across all floors (1–10).',
+        'Per-Member Ready Toggles: Party members can toggle their ready status in the lobby with live player readiness counters and green ready badges.',
+        'Proximity Voice Chat Integration: Proximity voice chat HUD control button positioned neatly near the map with smooth pulse animations and robust WebSocket token authentication.',
+      ],
+      IMPROVEMENTS: [
+        'Seamless Reconnection: Disconnected players can rejoin active expeditions using the room code, perfectly restoring their character without creating duplicates.',
+        'Host Authority & Ownership Transfer: Strict server-enforced host controls for starting and returning to lobbies, with automatic host reassignment if the host disconnects.',
+        'PC Control Refinement: Tuned desktop keyboard movement and aiming controls to eliminate stick-lock and improve input responsiveness.',
+      ],
+      'BUG FIXES': [
+        'Voice Chat Authentication: Resolved HTTP 401 token authentication errors in voice chat by passing valid session tokens directly.',
+        'Sanctuary Co-op Filtering: Fixed quick co-op room filtering to correctly target unlocked waiting lobbies with open slots.',
+      ],
+    },
+  },
+  {
     version: 'v1.5.0',
     releaseDate: 'November 12, 2026',
     title: 'Procedural Visual Effects Library Expansion',

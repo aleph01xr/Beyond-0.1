@@ -4,6 +4,8 @@ import { sfx } from '../client/sound.ts';
 import { getApiEndpoint } from '../client/apiConfig.ts';
 import type { GameSnapshot } from '../shared/types.ts';
 
+const VOICE_ICON_SRC = `${import.meta.env?.BASE_URL ?? './'}assets/aistudio/4603091-200_1d82cf7b.png`;
+
 interface VoiceHUDProps {
   roomId: string;
   tokenAuthHeader: string;
@@ -282,7 +284,7 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
 
               {/* Pixel-art microphone image with state animations */}
               <img
-                src="/assets/aistudio/4603091-200_1d82cf7b.png"
+                src={VOICE_ICON_SRC}
                 alt="Proximity Voice"
                 className={`w-6 h-6 sm:w-7 sm:h-7 object-contain pixelated invert transition-transform duration-200 group-hover:scale-110 ${
                   isConnecting
@@ -389,7 +391,7 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
               <div className="flex items-center gap-2 min-w-0">
                 <div className="relative flex items-center justify-center shrink-0">
                   <img
-                    src="/assets/aistudio/4603091-200_1d82cf7b.png"
+                    src={VOICE_ICON_SRC}
                     alt="Microphone"
                     className={`w-5 h-5 object-contain invert transition-all duration-300 ${
                       status.connectionState === 'connecting' || status.isReconnecting
