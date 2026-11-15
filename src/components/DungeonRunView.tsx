@@ -57,6 +57,7 @@ import {
 import type { PingDiagnostics } from '../client/networkStats.ts';
 
 interface DungeonRunViewProps {
+  authToken: string;
   playerId: string;
   map: DungeonMap;
   snapshot: GameSnapshot;
@@ -91,6 +92,7 @@ interface DungeonRunViewProps {
 }
 
 export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
+  authToken,
   playerId,
   map,
   snapshot,
@@ -1852,9 +1854,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {me && (
         <VoiceHUD
           roomId={snapshot.roomId}
-          tokenAuthHeader={localStorage.getItem('beyond_token') ? `Bearer ${localStorage.getItem('beyond_token')}` : ''}
+          tokenAuthHeader={authToken ? `Bearer ${authToken}` : ''}
           userId={playerId}
           username={me.username}
+          latestSnapshotRef={latestSnapshotRef}
           myPos={{ x: me.x, y: me.y }}
           otherPlayers={snapshot.players.filter(p => p.id !== playerId).map(p => ({ id: p.id, x: p.x, y: p.y, username: p.username }))}
         />

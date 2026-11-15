@@ -1,4 +1,10 @@
-import { Room, RoomEvent, Track, Participant } from 'livekit-client';
+import {
+  ConnectionState,
+  Participant,
+  Room,
+  RoomEvent,
+  Track,
+} from 'livekit-client';
 import { getApiEndpoint } from '../apiConfig.ts';
 
 export interface VoiceParticipantState {
@@ -6,27 +12,47 @@ export interface VoiceParticipantState {
   name: string;
   isSpeaking: boolean;
   isMutedLocally: boolean;
+  isMutedRemote: boolean;
   distance?: number;
   volume: number;
+  pan: number;
 }
 
 export type VoiceConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type MicMode = 'toggle' | 'hold';
+
+interface RemoteAudioPipeline {
+  element: HTMLAudioElement;
+  source?: MediaStreamAudioSourceNode;
+  panner?: StereoPannerNode;
+  gain?: GainNode;
+  usingWebAudio: boolean;
+}
+
+const MAX_HEAR_DISTANCE_PX = 600;
+const STEREO_PAN_SPAN_PX = 360;
 
 export class VoiceClientManager {
   private room: Room | null = null;
   private currentRoomId: string | null = null;
+  private currentAuthHeader = '';
   private isMicEnabled = false;
   private isDeafened = false;
-  private isSimulated = false;
-  private simulatedInterval: any = null;
+  private micMode: MicMode = 'toggle';
   private locallyMutedUsers = new Set<string>();
   private listeners: (() => void)[] = [];
   private participantsState = new Map<string, VoiceParticipantState>();
-  private audioElements = new Map<string, HTMLAudioElement>();
+  private audioPipelines = new Map<string, RemoteAudioPipeline>();
+  private speakingIds = new Set<string>();
+  private audioCtx: AudioContext | null = null;
   private abortController: AbortController | null = null;
+  private attemptSeq = 0;
 
   public connectionState: VoiceConnectionState = 'disconnected';
+  public isReconnecting = false;
+  public canPlaybackAudio = true;
   public lastError: string | null = null;
+  public micError: string | null = null;
   public httpStatus: number | null = null;
 
   constructor() {}
@@ -44,76 +70,146 @@ export class VoiceClientManager {
     }
   }
 
-  public async connect(roomId: string, tokenAuthHeader: string, userId: string, username: string) {
-    if (this.connectionState === 'connected' && this.currentRoomId === roomId) {
+  public getSpeakingParticipantIds(): ReadonlySet<string> {
+    return this.speakingIds;
+  }
+
+  public getMicMode(): MicMode {
+    return this.micMode;
+  }
+
+  public setMicMode(mode: MicMode) {
+    if (this.micMode === mode) return;
+    this.micMode = mode;
+    if (mode === 'hold' && this.isMicEnabled) {
+      void this.setMicrophoneEnabled(false);
+    }
+    this.notify();
+  }
+
+  private ensureAudioContext(): AudioContext | null {
+    if (typeof window === 'undefined') return null;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!this.audioCtx || this.audioCtx.state === 'closed') {
+      this.audioCtx = new AudioCtx();
+    }
+    if (this.audioCtx.state === 'suspended') {
+      this.audioCtx.resume().catch(() => {});
+    }
+    return this.audioCtx;
+  }
+
+  public async unlockAudio(): Promise<void> {
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume();
+      } catch {
+        // ignore
+      }
+    }
+    if (this.room) {
+      try {
+        await this.room.startAudio();
+        this.canPlaybackAudio = this.room.canPlaybackAudio;
+      } catch {
+        // ignore
+      }
+    }
+    for (const pipeline of this.audioPipelines.values()) {
+      if (pipeline.element.paused) {
+        pipeline.element.play().catch(() => {});
+      }
+    }
+    this.notify();
+  }
+
+  public async connect(
+    roomId: string,
+    tokenAuthHeader: string,
+    _userId: string,
+    _username: string
+  ) {
+    if (
+      this.connectionState === 'connected' &&
+      this.currentRoomId === roomId &&
+      this.currentAuthHeader === tokenAuthHeader
+    ) {
       return;
     }
+
+    const attemptId = ++this.attemptSeq;
 
     if (this.abortController) {
       this.abortController.abort();
     }
-    this.abortController = new AbortController();
+    const controller = new AbortController();
+    this.abortController = controller;
 
     await this.disconnectInternal();
+    if (attemptId !== this.attemptSeq) return;
 
     this.currentRoomId = roomId;
-    this.connectionState = 'connecting';
-    this.isSimulated = false;
+    this.currentAuthHeader = tokenAuthHeader;
+    this.isReconnecting = false;
     this.lastError = null;
+    this.micError = null;
     this.httpStatus = null;
+
+    if (!tokenAuthHeader) {
+      this.connectionState = 'error';
+      this.httpStatus = 401;
+      this.lastError = 'Authentication required for voice chat (missing session token).';
+      console.warn('[VoiceClient] Connection aborted: missing Authorization header.');
+      this.notify();
+      return;
+    }
+
+    this.connectionState = 'connecting';
     this.notify();
 
     console.log(`[VoiceClient] Requesting voice token for room: ${roomId}`);
 
+    const fetchTimeoutId = window.setTimeout(() => controller.abort(), 10000);
+
     try {
-      // 1. Fetch token with 4-second timeout
-      const fetchPromise = fetch(getApiEndpoint('/api/voice/token'), {
+      const res = await fetch(getApiEndpoint('/api/voice/token'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(tokenAuthHeader ? { Authorization: tokenAuthHeader } : {}),
+          Authorization: tokenAuthHeader,
         },
         body: JSON.stringify({ roomId }),
-        signal: this.abortController.signal,
+        signal: controller.signal,
       });
 
-      const timeoutPromise = new Promise<Response>((_, reject) =>
-        setTimeout(() => reject(new Error('Voice connection timeout')), 4000)
-      );
+      window.clearTimeout(fetchTimeoutId);
+      if (attemptId !== this.attemptSeq) return;
 
-      const res = await Promise.race([fetchPromise, timeoutPromise]);
       this.httpStatus = res.status;
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        const errMessage = errData.error || `Server responded with status ${res.status}`;
+        const errMessage = errData.error || `Server responded with HTTP ${res.status}`;
         console.warn(`[VoiceClient] Token request failed (${res.status}): ${errMessage}`);
-
-        // Auth failures should surface clearly instead of silent fake mode
-        if (res.status === 401 || res.status === 403) {
-          this.connectionState = 'error';
-          this.lastError =
-            res.status === 401
-              ? 'Session expired or not logged in. Please log out and log back in.'
-              : errMessage;
-          this.notify();
-          return;
-        }
-
-        // Other errors (404 room, 500, etc.) fall back to simulated for resilience
-        console.warn('[VoiceClient] Falling back to Simulated Proximity Voice Mode.');
-        this.enableSimulatedMode(roomId);
+        this.connectionState = 'error';
+        this.lastError = errMessage;
+        this.notify();
         return;
       }
 
-      const data = (await res.json()) as { token: string; url: string };
-      if (!data || !data.token || !data.url) {
-        throw new Error('Invalid token response');
+      const data = (await res.json()) as { token?: string; url?: string };
+      if (!data?.token || !data?.url) {
+        throw new Error('Invalid voice token payload received from server.');
       }
 
-      if (this.currentRoomId !== roomId || this.abortController.signal.aborted) {
+      if (attemptId !== this.attemptSeq || controller.signal.aborted || this.currentRoomId !== roomId) {
         return;
       }
+
+      console.log(`[VoiceClient] Voice token acquired. Connecting to LiveKit for room: ${roomId}`);
 
       const room = new Room({
         adaptiveStream: true,
@@ -128,124 +224,222 @@ export class VoiceClientManager {
       this.room = room;
 
       room.on(RoomEvent.Connected, () => {
-        if (this.currentRoomId !== roomId) return;
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
         this.connectionState = 'connected';
-        this.isSimulated = false;
+        this.isReconnecting = false;
         this.lastError = null;
-        console.log(`[VoiceClient] LiveKit connected successfully to room: ${roomId}`);
-        this.notify();
-      });
+        this.canPlaybackAudio = room.canPlaybackAudio;
+        console.log(`[VoiceClient] LiveKit connected to room: ${roomId}`);
 
-      room.on(RoomEvent.Disconnected, () => {
-        if (this.currentRoomId === roomId && !this.isSimulated) {
-          console.log('[VoiceClient] LiveKit disconnected. Falling back to Simulated Proximity Voice Mode.');
-          this.enableSimulatedMode(roomId);
-        }
-      });
-
-      room.on(RoomEvent.ParticipantConnected, (p) => {
-        this.updateParticipantState(p);
-      });
-
-      room.on(RoomEvent.ParticipantDisconnected, (p) => {
-        this.participantsState.delete(p.identity);
-        const audio = this.audioElements.get(p.identity);
-        if (audio) {
-          audio.pause();
-          audio.remove();
-          this.audioElements.delete(p.identity);
-        }
-        this.notify();
-      });
-
-      room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
-        const speakerIds = new Set(speakers.map((s) => s.identity));
-        for (const [id, state] of this.participantsState.entries()) {
-          state.isSpeaking = speakerIds.has(id);
-        }
-        this.notify();
-      });
-
-      // CRITICAL: Attach remote audio tracks so proximity volume actually works
-      room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-        if (track.kind === Track.Kind.Audio) {
-          const element = track.attach();
-          element.autoplay = true;
-          element.setAttribute('playsinline', 'true');
-          // Start quiet; proximity system will raise volume when in range
-          element.volume = 0;
-          document.body.appendChild(element);
-          this.audioElements.set(participant.identity, element);
-          this.updateParticipantAudioVolume(participant.identity);
+        // Sync any participants & tracks already present in the room
+        for (const participant of room.remoteParticipants.values()) {
           this.updateParticipantState(participant);
-          console.log(`[VoiceClient] Subscribed to audio from ${participant.identity}`);
+          for (const pub of participant.trackPublications.values()) {
+            if (pub.track && pub.track.kind === Track.Kind.Audio && pub.isSubscribed) {
+              this.attachRemoteAudioTrack(pub.track, participant);
+            }
+          }
+        }
+        this.notify();
+      });
+
+      room.on(RoomEvent.Reconnecting, () => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.isReconnecting = true;
+        console.warn(`[VoiceClient] Reconnecting to LiveKit room: ${roomId}`);
+        this.notify();
+      });
+
+      room.on(RoomEvent.Reconnected, () => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.isReconnecting = false;
+        this.connectionState = 'connected';
+        this.lastError = null;
+        console.log(`[VoiceClient] Reconnected to LiveKit room: ${roomId}`);
+        this.notify();
+      });
+
+      room.on(RoomEvent.Disconnected, (reason) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        console.warn('[VoiceClient] Disconnected from LiveKit room. Reason:', reason);
+        this.isReconnecting = false;
+        this.connectionState = 'disconnected';
+        this.isMicEnabled = false;
+        this.cleanupAllAudioPipelines();
+        this.participantsState.clear();
+        this.speakingIds.clear();
+        this.notify();
+      });
+
+      room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.canPlaybackAudio = room.canPlaybackAudio;
+        this.notify();
+      });
+
+      room.on(RoomEvent.ParticipantConnected, (participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.updateParticipantState(participant);
+      });
+
+      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.participantsState.delete(participant.identity);
+        this.speakingIds.delete(participant.identity);
+        this.cleanupRemoteAudioPipeline(participant.identity);
+        this.notify();
+      });
+
+      room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        if (track.kind === Track.Kind.Audio) {
+          this.attachRemoteAudioTrack(track, participant);
+          this.updateParticipantState(participant);
         }
       });
 
       room.on(RoomEvent.TrackUnsubscribed, (track, _publication, participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
         if (track.kind === Track.Kind.Audio) {
-          track.detach();
-          const audio = this.audioElements.get(participant.identity);
-          if (audio) {
-            audio.pause();
-            audio.remove();
-            this.audioElements.delete(participant.identity);
-          }
+          this.cleanupRemoteAudioPipeline(participant.identity);
         }
       });
 
-      // Attempt LiveKit connection with timeout
-      const connectPromise = room.connect(data.url, data.token);
-      const connectTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('LiveKit WebSocket timeout')), 4500)
-      );
+      room.on(RoomEvent.TrackMuted, (_pub, participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.updateParticipantState(participant);
+      });
 
-      await Promise.race([connectPromise, connectTimeout]);
+      room.on(RoomEvent.TrackUnmuted, (_pub, participant) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        this.updateParticipantState(participant);
+      });
+
+      room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+        if (attemptId !== this.attemptSeq || this.room !== room) return;
+        const nextSpeaking = new Set(speakers.map((s) => s.identity));
+        this.speakingIds = nextSpeaking;
+        for (const [id, state] of this.participantsState.entries()) {
+          state.isSpeaking = nextSpeaking.has(id);
+        }
+        this.notify();
+      });
+
+      await room.connect(data.url, data.token);
+
+      if (attemptId !== this.attemptSeq) {
+        room.removeAllListeners();
+        await room.disconnect().catch(() => {});
+        return;
+      }
+
+      // Always join voice rooms with the microphone disabled by default
       await room.localParticipant.setMicrophoneEnabled(false);
       this.isMicEnabled = false;
-    } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      console.warn('[VoiceClient] LiveKit connection unreachable or blocked. Enabling Simulated Proximity Voice Mode.');
-      this.enableSimulatedMode(roomId);
+      this.canPlaybackAudio = room.canPlaybackAudio;
+
+      if (room.state === ConnectionState.Connected) {
+        this.connectionState = 'connected';
+      }
+      this.notify();
+    } catch (err: unknown) {
+      window.clearTimeout(fetchTimeoutId);
+      if (attemptId !== this.attemptSeq) return;
+      const e = err as { name?: string; message?: string };
+      if (e?.name === 'AbortError') {
+        if (controller.signal.aborted && this.connectionState === 'connecting') {
+          this.connectionState = 'error';
+          this.lastError = 'Voice server request timed out. Please retry.';
+          this.notify();
+        }
+        return;
+      }
+      console.error('[VoiceClient] LiveKit connection failed:', err);
+      await this.disconnectInternal();
+      this.connectionState = 'error';
+      this.lastError = e?.message || 'Failed to connect to LiveKit voice server.';
+      this.notify();
     }
   }
 
-  private enableSimulatedMode(roomId: string) {
-    if (this.currentRoomId !== roomId) return;
-    this.isSimulated = true;
-    this.connectionState = 'connected';
-    this.lastError = null;
-    this.httpStatus = 200;
+  private attachRemoteAudioTrack(track: Track, participant: Participant) {
+    const identity = participant.identity;
+    this.cleanupRemoteAudioPipeline(identity);
 
-    // Seed simulated party participant for robust testing of proximity audio & speaking indicators
-    this.participantsState.set('sim_adventurer_1', {
-      identity: 'sim_adventurer_1',
-      name: 'Party Scout',
-      isSpeaking: false,
-      isMutedLocally: false,
-      distance: 120,
-      volume: 0.8,
+    const element = track.attach() as HTMLAudioElement;
+    element.autoplay = true;
+    element.setAttribute('playsinline', 'true');
+    element.style.display = 'none';
+    document.body.appendChild(element);
+
+    const pipeline: RemoteAudioPipeline = {
+      element,
+      usingWebAudio: false,
+    };
+
+    try {
+      const ctx = this.ensureAudioContext();
+      if (ctx && track.mediaStreamTrack) {
+        const stream = new MediaStream([track.mediaStreamTrack]);
+        const source = ctx.createMediaStreamSource(stream);
+        const panner =
+          typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : undefined;
+        const gain = ctx.createGain();
+
+        if (panner) {
+          source.connect(panner);
+          panner.connect(gain);
+        } else {
+          source.connect(gain);
+        }
+        gain.connect(ctx.destination);
+
+        // Keep HTMLAudioElement muted so Chromium decodes the WebRTC track without double playback
+        element.muted = true;
+        pipeline.source = source;
+        pipeline.panner = panner;
+        pipeline.gain = gain;
+        pipeline.usingWebAudio = true;
+      }
+    } catch (err) {
+      console.warn('[VoiceClient] Web Audio routing unavailable, falling back to HTMLAudioElement:', err);
+    }
+
+    element.play().catch(() => {
+      // Browser autoplay restriction; resolved when unlockAudio() runs on gesture
     });
 
-    // Simulate periodic speech activity for testing speaking indicators & distance attenuation
-    if (this.simulatedInterval) clearInterval(this.simulatedInterval);
-    this.simulatedInterval = setInterval(() => {
-      const scout = this.participantsState.get('sim_adventurer_1');
-      if (scout) {
-        scout.isSpeaking = Math.random() > 0.6;
-        this.notify();
-      }
-    }, 2500);
+    this.audioPipelines.set(identity, pipeline);
+    this.applyAudioPipelineState(identity);
+  }
 
-    console.log('[VoiceClient] Simulated Proximity Voice Mode active.');
-    this.notify();
+  private cleanupRemoteAudioPipeline(identity: string) {
+    const pipeline = this.audioPipelines.get(identity);
+    if (!pipeline) return;
+    try {
+      pipeline.source?.disconnect();
+      pipeline.panner?.disconnect();
+      pipeline.gain?.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      pipeline.element.pause();
+      pipeline.element.srcObject = null;
+      pipeline.element.remove();
+    } catch {
+      // ignore
+    }
+    this.audioPipelines.delete(identity);
+  }
+
+  private cleanupAllAudioPipelines() {
+    for (const identity of Array.from(this.audioPipelines.keys())) {
+      this.cleanupRemoteAudioPipeline(identity);
+    }
   }
 
   private async disconnectInternal() {
-    if (this.simulatedInterval) {
-      clearInterval(this.simulatedInterval);
-      this.simulatedInterval = null;
-    }
     if (this.room) {
       try {
         this.room.removeAllListeners();
@@ -255,16 +449,14 @@ export class VoiceClientManager {
       }
       this.room = null;
     }
-    for (const audio of this.audioElements.values()) {
-      audio.pause();
-      audio.remove();
-    }
-    this.audioElements.clear();
+    this.cleanupAllAudioPipelines();
     this.participantsState.clear();
-    this.isSimulated = false;
+    this.speakingIds.clear();
+    this.isReconnecting = false;
   }
 
   public async disconnect() {
+    this.attemptSeq++;
     if (this.abortController) {
       this.abortController.abort();
       this.abortController = null;
@@ -272,7 +464,11 @@ export class VoiceClientManager {
     await this.disconnectInternal();
     this.connectionState = 'disconnected';
     this.currentRoomId = null;
+    this.currentAuthHeader = '';
     this.isMicEnabled = false;
+    this.lastError = null;
+    this.micError = null;
+    this.httpStatus = null;
     this.notify();
   }
 
@@ -281,54 +477,53 @@ export class VoiceClientManager {
   }
 
   public async toggleMicrophone(): Promise<boolean> {
-    if (!this.isConnected) return false;
+    if (!this.room || !this.isConnected) return false;
     if (this.isDeafened) return false;
 
-    if (this.isSimulated) {
-      this.isMicEnabled = !this.isMicEnabled;
-      this.notify();
-      return this.isMicEnabled;
-    }
-
-    if (!this.room) return false;
+    await this.unlockAudio();
     const nextState = !this.isMicEnabled;
-    try {
-      await this.room.localParticipant.setMicrophoneEnabled(nextState);
-      this.isMicEnabled = nextState;
-      this.notify();
-    } catch (err) {
-      console.error('[VoiceClient] Failed to toggle microphone:', err);
-    }
+    await this.setMicrophoneEnabled(nextState);
     return this.isMicEnabled;
   }
 
   public async setMicrophoneEnabled(enabled: boolean): Promise<void> {
-    if (!this.isConnected) return;
+    if (!this.room || !this.isConnected) return;
     if (this.isDeafened && enabled) return;
 
-    if (this.isSimulated) {
-      this.isMicEnabled = enabled;
-      this.notify();
-      return;
+    if (enabled) {
+      await this.unlockAudio();
     }
 
-    if (!this.room) return;
     try {
+      this.micError = null;
       await this.room.localParticipant.setMicrophoneEnabled(enabled);
-      this.isMicEnabled = enabled;
+      this.isMicEnabled = this.room.localParticipant.isMicrophoneEnabled;
+      if (!this.isMicEnabled) {
+        this.speakingIds.delete(this.room.localParticipant.identity);
+      }
       this.notify();
-    } catch (err) {
-      console.error('[VoiceClient] Failed to set microphone enabled:', err);
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      console.error('[VoiceClient] Failed to set microphone state:', err);
+      if (e?.name === 'NotAllowedError' || e?.name === 'PermissionDeniedError') {
+        this.micError = 'Microphone permission denied. Allow mic access in browser settings.';
+      } else if (e?.name === 'NotFoundError' || e?.name === 'DevicesNotFoundError') {
+        this.micError = 'No microphone device found.';
+      } else {
+        this.micError = e?.message || 'Unable to access microphone.';
+      }
+      this.isMicEnabled = false;
+      this.notify();
     }
   }
 
   public setDeafened(deafened: boolean) {
     this.isDeafened = deafened;
     if (deafened && this.isMicEnabled) {
-      this.setMicrophoneEnabled(false);
+      void this.setMicrophoneEnabled(false);
     }
-    for (const [id, audio] of this.audioElements.entries()) {
-      audio.muted = deafened || this.locallyMutedUsers.has(id);
+    for (const identity of this.audioPipelines.keys()) {
+      this.applyAudioPipelineState(identity);
     }
     this.notify();
   }
@@ -339,7 +534,7 @@ export class VoiceClientManager {
     } else {
       this.locallyMutedUsers.add(identity);
     }
-    this.updateParticipantAudioVolume(identity);
+    this.applyAudioPipelineState(identity);
     this.notify();
   }
 
@@ -347,95 +542,109 @@ export class VoiceClientManager {
     return this.locallyMutedUsers.has(identity);
   }
 
+  private applyAudioPipelineState(identity: string) {
+    const pipeline = this.audioPipelines.get(identity);
+    if (!pipeline) return;
+    const state = this.participantsState.get(identity);
+    const muted = this.isDeafened || this.locallyMutedUsers.has(identity);
+    const targetVolume = muted ? 0 : (state?.volume ?? 1);
+    const targetPan = state?.pan ?? 0;
+
+    if (pipeline.usingWebAudio && pipeline.gain) {
+      pipeline.element.muted = true;
+      pipeline.gain.gain.value = targetVolume;
+      if (pipeline.panner) {
+        pipeline.panner.pan.value = targetPan;
+      }
+    } else {
+      pipeline.element.muted = muted || targetVolume <= 0;
+      pipeline.element.volume = Math.max(0, Math.min(1, targetVolume));
+    }
+  }
+
   public updateProximityVolumes(
     myPos: { x: number; y: number },
     otherPlayers: { id: string; x: number; y: number }[]
   ) {
-    const maxDist = 600; // 600 world pixels hearing radius
+    if (!this.room || !this.isConnected) return;
 
     const posMap = new Map<string, { x: number; y: number }>();
     for (const p of otherPlayers) {
       posMap.set(p.id, { x: p.x, y: p.y });
     }
 
-    // Update simulated participant positions if present
-    if (this.isSimulated && this.participantsState.has('sim_adventurer_1')) {
-      const scoutState = this.participantsState.get('sim_adventurer_1')!;
-      const scoutPos = posMap.get('sim_adventurer_1');
-      const fakePos = scoutPos || { x: myPos.x + 150, y: myPos.y + 100 };
-      const dist = Math.hypot(fakePos.x - myPos.x, fakePos.y - myPos.y);
-      scoutState.distance = dist;
-      scoutState.volume =
-        dist > maxDist || this.isDeafened || this.locallyMutedUsers.has('sim_adventurer_1')
-          ? 0
-          : Math.max(0, 1 - dist / maxDist);
-    }
-
-    if (!this.room || this.isSimulated) return;
-
     for (const [identity, participant] of this.room.remoteParticipants.entries()) {
       const remotePos = posMap.get(identity);
-      const audio = this.audioElements.get(identity);
+      const isLocallyMuted = this.locallyMutedUsers.has(identity);
 
-      let volume = 1.0;
-      let dist = 0;
+      let volume = 0;
+      let dist: number | undefined = undefined;
+      let pan = 0;
 
       if (remotePos) {
         dist = Math.hypot(remotePos.x - myPos.x, remotePos.y - myPos.y);
-        if (dist > maxDist || this.isDeafened || this.locallyMutedUsers.has(identity)) {
+        if (dist > MAX_HEAR_DISTANCE_PX || this.isDeafened || isLocallyMuted) {
           volume = 0;
         } else {
-          volume = Math.max(0, 1 - dist / maxDist);
+          volume = Math.max(0, Math.min(1, 1 - dist / MAX_HEAR_DISTANCE_PX));
         }
+        pan = Math.max(-1, Math.min(1, (remotePos.x - myPos.x) / STEREO_PAN_SPAN_PX));
       } else {
-        volume = this.isDeafened || this.locallyMutedUsers.has(identity) ? 0 : 0.5;
+        // Player exists in voice room but has no world coordinate in current snapshot
+        volume = 0;
       }
 
-      if (audio) {
-        audio.volume = volume;
-      }
-
-      const state = this.participantsState.get(identity) || {
+      const existing = this.participantsState.get(identity);
+      const nextState: VoiceParticipantState = {
         identity,
         name: participant.name || identity,
-        isSpeaking: participant.isSpeaking,
-        isMutedLocally: this.locallyMutedUsers.has(identity),
+        isSpeaking: this.speakingIds.has(identity) || participant.isSpeaking,
+        isMutedLocally: isLocallyMuted,
+        isMutedRemote: !participant.isMicrophoneEnabled,
+        distance: dist,
         volume,
+        pan,
       };
-      state.distance = dist;
-      state.volume = volume;
-      state.isMutedLocally = this.locallyMutedUsers.has(identity);
-      this.participantsState.set(identity, state);
+
+      this.participantsState.set(identity, nextState);
+      this.applyAudioPipelineState(identity);
+
+      if (
+        !existing ||
+        existing.isMutedRemote !== nextState.isMutedRemote ||
+        Math.round((existing.distance ?? -1) / 25) !== Math.round((dist ?? -1) / 25)
+      ) {
+        this.notify();
+      }
     }
   }
 
   private updateParticipantState(p: Participant) {
+    const existing = this.participantsState.get(p.identity);
     this.participantsState.set(p.identity, {
       identity: p.identity,
       name: p.name || p.identity,
-      isSpeaking: p.isSpeaking,
+      isSpeaking: this.speakingIds.has(p.identity) || p.isSpeaking,
       isMutedLocally: this.locallyMutedUsers.has(p.identity),
-      volume: 1.0,
+      isMutedRemote: !p.isMicrophoneEnabled,
+      distance: existing?.distance,
+      volume: existing?.volume ?? 0,
+      pan: existing?.pan ?? 0,
     });
     this.notify();
-  }
-
-  private updateParticipantAudioVolume(identity: string) {
-    const audio = this.audioElements.get(identity);
-    if (audio) {
-      const isMuted = this.isDeafened || this.locallyMutedUsers.has(identity);
-      audio.muted = isMuted;
-    }
   }
 
   public getStatus() {
     return {
       connectionState: this.connectionState,
       isConnected: this.isConnected,
+      isReconnecting: this.isReconnecting,
+      canPlaybackAudio: this.canPlaybackAudio,
       isMicEnabled: this.isMicEnabled,
       isDeafened: this.isDeafened,
-      isSimulated: this.isSimulated,
+      micMode: this.micMode,
       lastError: this.lastError,
+      micError: this.micError,
       httpStatus: this.httpStatus,
       participants: Array.from(this.participantsState.values()),
     };

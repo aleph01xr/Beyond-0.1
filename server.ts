@@ -883,6 +883,7 @@ async function startServer() {
     const session = sessionsByToken.get(token);
     const userId = session && session.expiresAt > Date.now() ? session.userId : null;
     if (!userId) {
+      console.warn('[Voice] Token request rejected: invalid or missing session token.');
       res.status(401).json({ error: 'Authentication required for voice chat.' });
       return;
     }
@@ -892,35 +893,50 @@ async function startServer() {
       return;
     }
 
-    const roomId = String(req.body?.roomId || '').trim();
-    if (!roomId) {
+    const rawRoomId = String(req.body?.roomId || '').trim();
+    if (!rawRoomId) {
       res.status(400).json({ error: 'Room ID required.' });
       return;
     }
 
-    const room = rooms.get(roomId);
+    const room = rooms.get(rawRoomId) || rooms.get(rawRoomId.toUpperCase());
     if (!room) {
-      console.warn(`[Voice] Token request rejected: Room ${roomId} not found.`);
+      console.warn(`[Voice] Token request rejected: Room ${rawRoomId} not found.`);
       res.status(404).json({ error: 'Game room not found.' });
       return;
     }
 
-    // Resilient room membership check: allow if room has player, or connected via WS transport index, or is Tavern Hub
-    const isMemberViaWs = Array.from(roomClientIndex.getRoomClients(roomId)).some(c => c.userId === acc.id);
-    const isMember = room.hasPlayer(acc.id) || isMemberViaWs || roomId === 'TAVERN-HUB';
+    const resolvedRoomId = room.roomId;
+    const isMemberViaWs = Array.from(roomClientIndex.getRoomClients(resolvedRoomId)).some(
+      (c) => c.userId === acc.id
+    );
+    const isMember = room.hasPlayer(acc.id) || isMemberViaWs;
 
     if (!isMember) {
-      console.warn(`[Voice] Token request rejected: Player ${acc.username} (${acc.id}) is not a member of room ${roomId}.`);
+      console.warn(
+        `[Voice] Token request rejected: Player ${acc.username} (${acc.id}) is not a member of room ${resolvedRoomId}.`
+      );
       res.status(403).json({ error: 'Forbidden: You are not a member of this room.' });
       return;
     }
 
-    console.log(`[Voice] Validated membership for user ${acc.username} in room ${roomId}. Generating token...`);
+    const apiKey = (process.env.LIVEKIT_API_KEY || '').trim();
+    const apiSecret = (process.env.LIVEKIT_API_SECRET || '').trim();
+    const rawUrl = (process.env.LIVEKIT_URL || '').trim();
+    const livekitUrl = rawUrl
+      .replace(/^https:\/\//i, 'wss://')
+      .replace(/^http:\/\//i, 'ws://');
 
-    // Fallback to default LiveKit test sandbox credentials if env vars are not explicitly set
-    const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
-    const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
-    const livekitUrl = process.env.LIVEKIT_URL || 'wss://demo.livekit.io';
+    if (!apiKey || !apiSecret || !livekitUrl) {
+      console.warn('[Voice] LiveKit environment variables are missing on server.');
+      res.status(503).json({
+        error:
+          'Voice chat is not configured on the server (missing LIVEKIT_URL, LIVEKIT_API_KEY, or LIVEKIT_API_SECRET).',
+      });
+      return;
+    }
+
+    console.log(`[Voice] Generating LiveKit token for ${acc.username} in room ${resolvedRoomId}`);
 
     try {
       const at = new AccessToken(apiKey, apiSecret, {
@@ -929,12 +945,12 @@ async function startServer() {
       });
       at.addGrant({
         roomJoin: true,
-        room: roomId,
+        room: resolvedRoomId,
         canPublish: true,
         canSubscribe: true,
       });
       const jwtToken = await at.toJwt();
-      console.log(`[Voice] Successfully generated token for user ${acc.username} in room ${roomId}.`);
+      console.log(`[Voice] Token issued for ${acc.username} in room ${resolvedRoomId}`);
       res.json({ token: jwtToken, url: livekitUrl });
     } catch (err) {
       console.error('[Voice] Failed to generate LiveKit access token:', err);
@@ -957,19 +973,38 @@ async function startServer() {
       return;
     }
 
-    const { roomId, reportedUserId, reason } = req.body || {};
+    const roomId = String(req.body?.roomId || '').trim();
+    const reportedUserId = String(req.body?.reportedUserId || '').trim();
+    const reason = String(req.body?.reason || '').trim();
+
     if (!roomId || !reportedUserId || !reason) {
       res.status(400).json({ error: 'roomId, reportedUserId, and reason are required.' });
       return;
     }
+    if (reason.length > 500) {
+      res.status(400).json({ error: 'Report reason must be 500 characters or less.' });
+      return;
+    }
+    if (reportedUserId === userId) {
+      res.status(400).json({ error: 'You cannot report yourself.' });
+      return;
+    }
 
-    const room = rooms.get(roomId);
+    const room = rooms.get(roomId) || rooms.get(roomId.toUpperCase());
     if (!room || !room.hasPlayer(userId)) {
       res.status(403).json({ error: 'Invalid room or membership.' });
       return;
     }
 
-    console.log(`[VoiceReport] Player ${reporterAcc.username} reported user ID ${reportedUserId} in room ${roomId} for: ${reason}`);
+    const reportedKnown = accountsById.has(reportedUserId) || room.hasPlayer(reportedUserId);
+    if (!reportedKnown) {
+      res.status(400).json({ error: 'Reported player was not found.' });
+      return;
+    }
+
+    console.log(
+      `[VoiceReport] Player ${reporterAcc.username} reported user ${reportedUserId} in room ${room.roomId}: ${reason}`
+    );
 
     if (dbPool) {
       try {
@@ -985,10 +1020,40 @@ async function startServer() {
         );
         await dbPool.query(
           `INSERT INTO voice_reports (room_id, reporter_id, reported_id, reason) VALUES ($1, $2, $3, $4);`,
-          [roomId, userId, reportedUserId, String(reason)]
+          [room.roomId, userId, reportedUserId, reason]
         );
       } catch (err) {
-        console.error('Failed to persist voice report to PostgreSQL:', err);
+        console.error('[VoiceReport] Failed to persist report to PostgreSQL:', err);
+        res.status(500).json({ error: 'Failed to save report to database.' });
+        return;
+      }
+    } else {
+      try {
+        if (!fs.existsSync(DATA_DIR)) {
+          fs.mkdirSync(DATA_DIR, { recursive: true });
+        }
+        const reportsFile = path.join(DATA_DIR, 'voice_reports.json');
+        let existing: unknown[] = [];
+        if (fs.existsSync(reportsFile)) {
+          try {
+            existing = JSON.parse(fs.readFileSync(reportsFile, 'utf8'));
+            if (!Array.isArray(existing)) existing = [];
+          } catch {
+            existing = [];
+          }
+        }
+        existing.push({
+          roomId: room.roomId,
+          reporterId: userId,
+          reportedId: reportedUserId,
+          reason,
+          createdAt: new Date().toISOString(),
+        });
+        fs.writeFileSync(reportsFile, JSON.stringify(existing, null, 2), 'utf8');
+      } catch (err) {
+        console.error('[VoiceReport] Failed to persist report locally:', err);
+        res.status(500).json({ error: 'Failed to save report.' });
+        return;
       }
     }
 

@@ -57,6 +57,7 @@ import {
   drawPrimaryAttackRangeIndicator,
 } from '../client/abilityIndicator.ts';
 import { sfx, soundManager } from '../client/sound.ts';
+import { voiceManager } from '../client/voice/voiceClient.ts';
 import {
   HERO_CLASSES,
   TILE_SIZE,
@@ -4593,6 +4594,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         // Name text
         ctx.fillStyle = isLocalPlayer ? '#FCD34D' : '#7DD3FC';
         ctx.fillText(displayLabel, hx, badgeY + 1);
+
+        // Live Proximity Voice Speaking Indicator beside player nameplate
+        const speakingSet = voiceManager.getSpeakingParticipantIds();
+        const isSpeakingNow =
+          speakingSet.has(p.id) &&
+          (isLocalPlayer || !voiceManager.isUserMutedLocally(p.id));
+        if (isSpeakingNow) {
+          const iconX = hx + labelWidth / 2 + 10;
+          const iconY = badgeY - 3;
+          const pulse = (Math.sin(now * 0.015) + 1) * 0.5;
+          ctx.fillStyle = '#10B981';
+          ctx.fillRect(iconX, iconY - 2, 3, 5);
+          ctx.fillRect(iconX + 3, iconY - 4, 2, 9);
+          ctx.fillStyle = `rgba(110, 231, 183, ${(0.45 + pulse * 0.55).toFixed(2)})`;
+          ctx.fillRect(iconX + 6, iconY - 2 - Math.round(pulse * 2), 2, 5 + Math.round(pulse * 4));
+        }
 
         // Health Bar & Compact Shield Bar (only for other players; local player uses screen HUD)
         if (!isLocalPlayer) {

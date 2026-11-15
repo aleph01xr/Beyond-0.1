@@ -458,6 +458,7 @@ export function App() {
   if (screen === 'PLAYING' && dungeonMap && snapshot) {
     return (
       <DungeonRunView
+        authToken={token || ''}
         playerId={playerId}
         map={dungeonMap}
         snapshot={snapshot}
