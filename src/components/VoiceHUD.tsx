@@ -12,6 +12,9 @@ interface VoiceHUDProps {
   latestSnapshotRef?: React.MutableRefObject<GameSnapshot | null>;
   myPos: { x: number; y: number };
   otherPlayers: { id: string; x: number; y: number; username: string }[];
+  hasTouchControls?: boolean;
+  mapWidth?: number;
+  mapHeight?: number;
 }
 
 export const VoiceHUD: React.FC<VoiceHUDProps> = ({
@@ -22,6 +25,9 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
   latestSnapshotRef,
   myPos,
   otherPlayers,
+  hasTouchControls = false,
+  mapWidth = 64,
+  mapHeight = 48,
 }) => {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [optedOut, setOptedOut] = useState(false);
@@ -31,6 +37,18 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
   const [reportError, setReportError] = useState<string | null>(null);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [, setTick] = useState(0);
+  const [viewport, setViewport] = useState(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    h: typeof window !== 'undefined' ? window.innerHeight : 720,
+  }));
+
+  useEffect(() => {
+    const onResize = () => {
+      setViewport({ w: window.innerWidth, h: window.innerHeight });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = voiceManager.subscribe(() => {
@@ -157,13 +175,41 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
     e.stopPropagation();
   };
 
+  // Compute exact minimap outer bounds (mirrors GameCanvas.tsx) so VoiceHUD sits neatly near the map
+  // without overlapping the minimap, top header, or mobile LV/skills cluster.
+  const isMobileScreen = viewport.w < 640;
+  let mmScale = 2.5;
+  if (isMobileScreen) {
+    const targetMaxW = Math.min(100, Math.floor(viewport.w * 0.24));
+    mmScale = Math.max(1.0, Math.min(1.5, targetMaxW / Math.max(1, mapWidth)));
+  }
+  const mmW = mapWidth * mmScale;
+  const mmH = mapHeight * mmScale;
+  const mmPad = isMobileScreen ? 4 : 6;
+  const mmRightOffset = isMobileScreen ? 8 : 20;
+  const mmY = isMobileScreen ? 42 : 74;
+  const mmFrameBottom = mmY + mmH + mmPad;
+  const mmFrameRightEdgeOffset = mmW + mmRightOffset + mmPad;
+  const isShortLandscapeTouch = hasTouchControls && viewport.h < 460;
+
+  const hudAnchorStyle: React.CSSProperties = isShortLandscapeTouch
+    ? {
+        top: `${Math.max(88, Math.round(mmFrameBottom - 40))}px`,
+        right: `${Math.round(mmFrameRightEdgeOffset + 8)}px`,
+      }
+    : {
+        top: `${Math.round(mmFrameBottom + 6)}px`,
+        right: `${mmRightOffset}px`,
+      };
+
   return (
     <>
-      {/* Floating Voice Chat Bar - Clear of mobile TouchControls and desktop action bar */}
+      {/* Floating Voice Chat Bar - Anchored near radar minimap with subtle lowered opacity */}
       <div
         onTouchStart={stopGameLeak}
         onMouseDown={stopGameLeak}
-        className="fixed top-12 right-2 sm:top-auto sm:bottom-5 sm:right-5 z-20 pointer-events-auto flex items-center gap-1.5"
+        style={hudAnchorStyle}
+        className="fixed z-20 pointer-events-auto flex items-center gap-1.5 opacity-65 hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200"
       >
         {status.connectionState === 'connected' && !status.canPlaybackAudio && (
           <button
@@ -179,63 +225,95 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => {
-            sfx.playUiClick();
-            void voiceManager.unlockAudio();
-            setVoiceOpen((v) => !v);
-          }}
-          className={`stone-button text-[10px] sm:text-xs py-1 px-2.5 flex items-center gap-1.5 shadow-xl transition-all ${
-            status.connectionState === 'connected'
-              ? status.isReconnecting
-                ? 'bg-[#3A3319] text-[#FDE047] border-[#EAB308]'
-                : status.isMicEnabled
-                  ? 'bg-[#166534] text-white border-[#22C55E]'
-                  : 'bg-[#1F1E2E] text-[#E6E4EE] border-[#4A4760]'
-              : status.connectionState === 'connecting'
-                ? 'bg-[#3A3319] text-[#FDE047] border-[#EAB308]'
-                : status.connectionState === 'error'
-                  ? 'bg-[#7F1D1D] text-[#FCA5A5] border-[#EF4444]'
-                  : 'bg-[#191824] text-[#9E9CAE] border-[#38354A]'
-          }`}
-          title={
-            status.lastError
-              ? `Voice Error: ${status.lastError}`
-              : 'Proximity Voice Chat Controls'
-          }
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              status.connectionState === 'connected'
-                ? status.isReconnecting
-                  ? 'bg-amber-400 animate-pulse'
-                  : status.isMicEnabled
-                    ? 'bg-emerald-400 animate-ping'
-                    : 'bg-emerald-400'
-                : status.connectionState === 'connecting'
-                  ? 'bg-amber-400 animate-pulse'
-                  : status.connectionState === 'error'
-                    ? 'bg-rose-500'
-                    : 'bg-slate-500'
-            }`}
-          />
-          <span className="font-mono whitespace-nowrap">
-            {status.connectionState === 'connected'
-              ? status.isReconnecting
-                ? 'RECONNECTING'
-                : status.isMicEnabled
-                  ? 'MIC LIVE'
-                  : 'CONNECTED'
-              : status.connectionState === 'connecting'
-                ? 'CONNECTING'
-                : status.connectionState === 'error'
-                  ? 'VOICE ERROR'
+        {(() => {
+          const isConnecting =
+            status.connectionState === 'connecting' || status.isReconnecting;
+          const isConnected =
+            status.connectionState === 'connected' && !status.isReconnecting;
+          const isLive = isConnected && status.isMicEnabled;
+          const isError = status.connectionState === 'error';
+
+          const statusLabel = isConnected
+            ? status.isMicEnabled
+              ? 'Proximity Voice: Mic Live (Click for Controls)'
+              : 'Proximity Voice: Connected (Click for Controls)'
+            : status.connectionState === 'connecting'
+              ? 'Proximity Voice: Connecting...'
+              : status.isReconnecting
+                ? 'Proximity Voice: Reconnecting...'
+                : isError
+                  ? `Voice Error: ${status.lastError || 'Unavailable'}`
                   : optedOut
-                    ? 'VOICE OFF'
-                    : 'DISCONNECTED'}
-          </span>
-        </button>
+                    ? 'Proximity Voice: Off (Click to Join)'
+                    : 'Proximity Voice: Disconnected (Click for Controls)';
+
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                sfx.playUiClick();
+                void voiceManager.unlockAudio();
+                setVoiceOpen((v) => !v);
+              }}
+              aria-label={statusLabel}
+              title={statusLabel}
+              className={`group relative w-9 h-9 sm:w-10 sm:h-10 p-0 flex items-center justify-center border-2 shadow-lg transition-all duration-200 cursor-pointer active:scale-95 ${
+                isLive
+                  ? 'bg-[#14532D]/80 border-[#22C55E] shadow-[0_0_12px_rgba(34,197,94,0.4)]'
+                  : isConnected
+                    ? 'bg-[#1F1E2E]/75 border-[#5B5775] hover:border-[#D9AA52]'
+                    : isConnecting
+                      ? 'bg-[#2E250E]/80 border-[#FACC15] shadow-[0_0_12px_rgba(250,204,21,0.35)]'
+                      : isError
+                        ? 'bg-[#450A0A]/80 border-[#EF4444] shadow-[0_0_10px_rgba(239,68,68,0.35)]'
+                        : 'bg-[#191824]/70 border-[#38354A] hover:border-[#6B668A] opacity-80'
+              }`}
+            >
+              {/* Animated connecting / live outer ping ring */}
+              {(isConnecting || isLive) && (
+                <span
+                  className={`absolute -inset-1 border-2 animate-ping pointer-events-none ${
+                    isConnecting
+                      ? 'border-[#FACC15]/70'
+                      : 'border-[#4ADE80]/70'
+                  }`}
+                />
+              )}
+
+              {/* Pixel-art microphone image with state animations */}
+              <img
+                src="/assets/aistudio/4603091-200_1d82cf7b.png"
+                alt="Proximity Voice"
+                className={`w-6 h-6 sm:w-7 sm:h-7 object-contain pixelated invert transition-transform duration-200 group-hover:scale-110 ${
+                  isConnecting
+                    ? 'animate-pulse scale-110 drop-shadow-[0_0_6px_rgba(250,204,21,0.95)]'
+                    : isLive
+                      ? 'animate-bounce drop-shadow-[0_0_6px_rgba(74,222,128,0.95)]'
+                      : isError
+                        ? 'opacity-90 drop-shadow-[0_0_5px_rgba(248,113,113,0.9)]'
+                        : isConnected
+                          ? 'opacity-90'
+                          : 'opacity-50'
+                }`}
+              />
+
+              {/* Compact state corner pip */}
+              <span
+                className={`absolute -top-1 -right-1 w-2.5 h-2.5 border border-[#111018] ${
+                  isLive
+                    ? 'bg-[#22C55E] animate-pulse'
+                    : isConnected
+                      ? 'bg-[#34D399]'
+                      : isConnecting
+                        ? 'bg-[#FACC15] animate-pulse'
+                        : isError
+                          ? 'bg-[#EF4444] animate-ping'
+                          : 'bg-[#64748B]'
+                }`}
+              />
+            </button>
+          );
+        })()}
 
         {/* Quick Mic Button (Toggle or Hold-to-Talk depending on mode) */}
         {status.connectionState === 'connected' && !status.isReconnecting && (
@@ -309,19 +387,22 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
             {/* Connection Status & Error / Retry Banner */}
             <div className="bg-[#12111A] p-2.5 border border-[#353347] flex items-center justify-between gap-2 text-xs">
               <div className="flex items-center gap-2 min-w-0">
-                <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                    status.connectionState === 'connected'
-                      ? status.isReconnecting
-                        ? 'bg-amber-400 animate-pulse'
-                        : 'bg-emerald-400'
-                      : status.connectionState === 'connecting'
-                        ? 'bg-amber-400 animate-pulse'
-                        : status.connectionState === 'error'
-                          ? 'bg-rose-500'
-                          : 'bg-slate-500'
-                  }`}
-                />
+                <div className="relative flex items-center justify-center shrink-0">
+                  <img
+                    src="/assets/aistudio/4603091-200_1d82cf7b.png"
+                    alt="Microphone"
+                    className={`w-5 h-5 object-contain invert transition-all duration-300 ${
+                      status.connectionState === 'connecting' || status.isReconnecting
+                        ? 'animate-pulse scale-110 filter drop-shadow-[0_0_8px_rgba(250,204,21,0.9)]'
+                        : status.connectionState === 'connected'
+                          ? 'animate-bounce filter drop-shadow-[0_0_8px_rgba(34,197,94,0.9)]'
+                          : 'opacity-70'
+                    }`}
+                  />
+                  {status.connectionState === 'connecting' && (
+                    <span className="absolute -inset-1 rounded-full border border-amber-400 animate-ping opacity-75 pointer-events-none" />
+                  )}
+                </div>
                 <div className="min-w-0">
                   <div className="font-bold text-white uppercase">
                     Status:{' '}

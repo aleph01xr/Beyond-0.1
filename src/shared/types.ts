@@ -797,13 +797,17 @@ export type ClientMessage =
   | { type: 'player:reset_attributes' }
   | { type: 'player:dialogue_close' }
   | { type: 'player:dialogue_pick'; optionId: string }
+  | { type: 'room:resync' }
   | { type: 'ping'; t: number };
+
+import type { SnapshotDelta } from './snapshotDelta.ts';
 
 export type ServerMessage =
   | { type: 'lobby:rooms'; rooms: RoomSummary[]; onlineCount: number }
   | { type: 'room:joined'; roomId: string; playerId: string; map: DungeonMap; snapshot: GameSnapshot; chat: ChatMessage[] }
   | { type: 'room:map'; map: DungeonMap }
-  | { type: 'room:tick'; snapshot: GameSnapshot }
+  | { type: 'room:tick'; snapshot: GameSnapshot; seq?: number }
+  | { type: 'room:delta'; delta: SnapshotDelta }
   | { type: 'chat:message'; message: ChatMessage }
   | { type: 'room:left' }
   | { type: 'error'; message: string }

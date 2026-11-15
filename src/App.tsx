@@ -13,6 +13,7 @@ import {
   ReliableInputDispatcher,
   type PingDiagnostics,
 } from './client/networkStats.ts';
+import { applySnapshotDelta } from './shared/snapshotDelta.ts';
 import type {
   ChatMessage,
   ClientMessage,
@@ -57,6 +58,8 @@ export function App() {
   );
 
   const latestSnapshotRef = useRef<GameSnapshot | null>(null);
+  const snapshotSeqRef = useRef<number>(0);
+  const lastResyncRequestAtRef = useRef<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
   const activeRoomIdRef = useRef<string | null>(null);
   const activePlayerIdRef = useRef<string>('');
@@ -175,6 +178,25 @@ export function App() {
           return;
         }
 
+        const applyIncomingSnapshot = (nextSnap: GameSnapshot) => {
+          // Canvas always consumes latest 40Hz snapshot via ref with zero React re-render overhead
+          latestSnapshotRef.current = nextSnap;
+          const now = performance.now();
+          const nextHudKey = buildSnapshotHudKey(
+            nextSnap,
+            activePlayerIdRef.current,
+            dungeonMapRef.current
+          );
+          if (
+            nextHudKey !== lastHudKeyRef.current ||
+            now - lastHudSyncAtRef.current >= HUD_MAX_STALE_MS
+          ) {
+            lastHudKeyRef.current = nextHudKey;
+            lastHudSyncAtRef.current = now;
+            setSnapshot(nextSnap);
+          }
+        };
+
         if (msg.type === 'lobby:rooms') {
           const lobbyKey = buildLobbyRoomsKey(msg.rooms, msg.onlineCount);
           if (lobbyKey !== lastLobbyKeyRef.current) {
@@ -186,6 +208,8 @@ export function App() {
           activeRoomIdRef.current = msg.roomId;
           activePlayerIdRef.current = msg.playerId;
           dungeonMapRef.current = msg.map;
+          snapshotSeqRef.current = 0;
+          lastResyncRequestAtRef.current = 0;
           lastHudKeyRef.current = buildSnapshotHudKey(msg.snapshot, msg.playerId, msg.map);
           lastHudSyncAtRef.current = performance.now();
           inputDispatcherRef.current.reset();
@@ -204,24 +228,35 @@ export function App() {
           sendPingProbe();
         } else if (msg.type === 'room:map') {
           dungeonMapRef.current = msg.map;
+          snapshotSeqRef.current = 0;
+          lastResyncRequestAtRef.current = 0;
           lastHudKeyRef.current = '';
           setDungeonMap(msg.map);
         } else if (msg.type === 'room:tick') {
-          // Canvas always consumes latest 20Hz snapshot via ref with zero React re-render overhead
-          latestSnapshotRef.current = msg.snapshot;
-          const now = performance.now();
-          const nextHudKey = buildSnapshotHudKey(
-            msg.snapshot,
-            activePlayerIdRef.current,
-            dungeonMapRef.current
-          );
+          snapshotSeqRef.current = typeof msg.seq === 'number' ? msg.seq : 0;
+          lastResyncRequestAtRef.current = 0;
+          applyIncomingSnapshot(msg.snapshot);
+        } else if (msg.type === 'room:delta') {
+          const prevSnap = latestSnapshotRef.current;
           if (
-            nextHudKey !== lastHudKeyRef.current ||
-            now - lastHudSyncAtRef.current >= HUD_MAX_STALE_MS
+            prevSnap &&
+            snapshotSeqRef.current > 0 &&
+            msg.delta.baseSeq === snapshotSeqRef.current
           ) {
-            lastHudKeyRef.current = nextHudKey;
-            lastHudSyncAtRef.current = now;
-            setSnapshot(msg.snapshot);
+            const reconstructed = applySnapshotDelta(prevSnap, msg.delta);
+            snapshotSeqRef.current = msg.delta.seq;
+            applyIncomingSnapshot(reconstructed);
+          } else {
+            const now = performance.now();
+            if (
+              snapshotSeqRef.current > 0 &&
+              now - lastResyncRequestAtRef.current > 180
+            ) {
+              lastResyncRequestAtRef.current = now;
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'room:resync' } satisfies ClientMessage));
+              }
+            }
           }
         } else if (msg.type === 'chat:message') {
           setChatMessages((prev) => {
@@ -232,6 +267,8 @@ export function App() {
           activeRoomIdRef.current = null;
           activePlayerIdRef.current = '';
           dungeonMapRef.current = null;
+          snapshotSeqRef.current = 0;
+          lastResyncRequestAtRef.current = 0;
           lastHudKeyRef.current = '';
           latestSnapshotRef.current = null;
           inputDispatcherRef.current.reset();

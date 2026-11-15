@@ -1930,6 +1930,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           latestSnapshotRef={latestSnapshotRef}
           myPos={{ x: me.x, y: me.y }}
           otherPlayers={snapshot.players.filter(p => p.id !== playerId).map(p => ({ id: p.id, x: p.x, y: p.y, username: p.username }))}
+          hasTouchControls={Boolean(isTouchDevice || forceTouchGamepad)}
+          mapWidth={map.width}
+          mapHeight={map.height}
         />
       )}
     </div>

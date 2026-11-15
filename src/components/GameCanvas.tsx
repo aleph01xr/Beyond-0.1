@@ -1013,12 +1013,29 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const particleManager = new ParticleManager();
     const localPredictor = new LocalPredictionController();
     let lastSeenSnapshot: GameSnapshot | null = null;
+    let lastSnapshotAt = performance.now();
     let screenShake = 0;
     let lastMyAttackAnim = 0;
     let lastPlayerHp: number | null = null;
     let lastPlayerShield: number | null = null;
     let lastPlayerDowned = false;
     let lastRenderTime = performance.now();
+
+    // Offscreen caches to eliminate per-frame gradient allocations & 3,000+ minimap fillRect calls
+    const torchGlowCanvas = document.createElement('canvas');
+    torchGlowCanvas.width = 136;
+    torchGlowCanvas.height = 136;
+    const torchGlowCtx = torchGlowCanvas.getContext('2d');
+    if (torchGlowCtx) {
+      const grad = torchGlowCtx.createRadialGradient(68, 68, 2, 68, 68, 68);
+      grad.addColorStop(0, 'rgba(255, 196, 98, 0.25)');
+      grad.addColorStop(1, 'rgba(255, 140, 50, 0)');
+      torchGlowCtx.fillStyle = grad;
+      torchGlowCtx.fillRect(0, 0, 136, 136);
+    }
+
+    let minimapTilesCanvas: HTMLCanvasElement | null = null;
+    let minimapCachedScale = -1;
 
     const resize = () => {
       canvas.width = window.innerWidth;
@@ -1053,7 +1070,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         return;
       }
       const isNewSnapshot = snap !== lastSeenSnapshot;
-      lastSeenSnapshot = snap;
+      if (isNewSnapshot) {
+        lastSeenSnapshot = snap;
+        lastSnapshotAt = now;
+      }
 
       const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
       let bossAimAngle = 0;
@@ -1557,8 +1577,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       hasInitWorldEffects = true;
 
       // Client-side prediction with server reconciliation for local player;
-      // dt-normalized exponential smoothing for remote players & enemies
-      const remoteBlend = computeExpSmoothingFactor(45, dtSec);
+      // snapshot-age velocity lead + dt-normalized exponential smoothing for remote players & enemies
+      const snapAgeSec = Math.min(0.04, Math.max(0, (now - lastSnapshotAt) / 1000));
+      const remoteBlend = computeExpSmoothingFactor(38, dtSec);
       const oneWaySec = Math.max(0.005, ((pingMsPropRef.current?.current ?? 18) * 0.5) / 1000);
       const activeLocalInput: PlayerInputState = localInputPropRef.current?.current ?? {
         up: keysRef.current.up,
@@ -1591,12 +1612,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (!cur || Math.hypot(p.x - cur.x, p.y - cur.y) > 100) {
           smoothedPlayers.set(p.id, { x: p.x, y: p.y });
         } else {
-          if (Math.hypot(p.vx, p.vy) > 10) {
-            cur.x += p.vx * dtSec;
-            cur.y += p.vy * dtSec;
-          }
-          cur.x += (p.x - cur.x) * remoteBlend;
-          cur.y += (p.y - cur.y) * remoteBlend;
+          const hasVel = Math.hypot(p.vx, p.vy) > 10;
+          const targetX = hasVel ? p.x + p.vx * snapAgeSec : p.x;
+          const targetY = hasVel ? p.y + p.vy * snapAgeSec : p.y;
+          cur.x += (targetX - cur.x) * remoteBlend;
+          cur.y += (targetY - cur.y) * remoteBlend;
         }
       }
 
@@ -1605,12 +1625,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (!cur || Math.hypot(en.x - cur.x, en.y - cur.y) > 100) {
           smoothedEnemies.set(en.id, { x: en.x, y: en.y });
         } else {
-          if (Math.hypot(en.vx, en.vy) > 10) {
-            cur.x += en.vx * dtSec;
-            cur.y += en.vy * dtSec;
-          }
-          cur.x += (en.x - cur.x) * remoteBlend;
-          cur.y += (en.y - cur.y) * remoteBlend;
+          const hasVel = Math.hypot(en.vx, en.vy) > 10;
+          const targetX = hasVel ? en.x + en.vx * snapAgeSec : en.x;
+          const targetY = hasVel ? en.y + en.vy * snapAgeSec : en.y;
+          cur.x += (targetX - cur.x) * remoteBlend;
+          cur.y += (targetY - cur.y) * remoteBlend;
         }
       }
 
@@ -1767,13 +1786,14 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ) {
           continue;
         }
-        const g = ctx.createRadialGradient(t.x, t.y, 2, t.x, t.y, 68 * flicker);
-        g.addColorStop(0, 'rgba(255, 196, 98, 0.25)');
-        g.addColorStop(1, 'rgba(255, 140, 50, 0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, 68 * flicker, 0, Math.PI * 2);
-        ctx.fill();
+        const glowRadius = 68 * flicker;
+        ctx.drawImage(
+          torchGlowCanvas,
+          t.x - glowRadius,
+          t.y - glowRadius,
+          glowRadius * 2,
+          glowRadius * 2
+        );
 
         ctx.fillStyle = '#5C4033';
         ctx.fillRect(t.x - 2, t.y - 2, 4, 8);
@@ -4761,12 +4781,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // Enhanced Projectiles & Combat Trails
+      // Enhanced Projectiles & Combat Trails (smoothly extrapolated at display refresh rate)
+      const projLeadSec = Math.min(0.032, Math.max(0, (now - lastSnapshotAt) / 1000));
       const activeProjIds = new Set<string>();
       for (const proj of snap.projectiles) {
         activeProjIds.add(proj.id);
-        drawEnhancedProjectile(ctx, proj, now);
-        particleManager.spawnProjectileWake(proj, now);
+        const drawProj =
+          projLeadSec > 0 && proj.style !== 'slash' && (proj.vx !== 0 || proj.vy !== 0)
+            ? {
+                ...proj,
+                x: proj.x + proj.vx * projLeadSec,
+                y: proj.y + proj.vy * projLeadSec,
+              }
+            : proj;
+        drawEnhancedProjectile(ctx, drawProj, now);
+        particleManager.spawnProjectileWake(drawProj, now);
       }
       particleManager.cleanupInactiveProjectiles(activeProjIds);
 
@@ -4927,29 +4956,39 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       ctx.textAlign = 'right';
       ctx.fillText('N ▲', mmX + mmW + pad - 5, mmY - pad - 6);
 
-      // 3. Inner Map Viewport
-      ctx.fillStyle = '#111018';
-      ctx.fillRect(mmX, mmY, mmW, mmH);
+      // 3 & 4. Cached Inner Map Viewport + Corridor Pathways (1 drawImage vs 3,072 fillRect calls/frame)
+      if (!minimapTilesCanvas || minimapCachedScale !== mmScale) {
+        minimapCachedScale = mmScale;
+        const offscreen = document.createElement('canvas');
+        offscreen.width = Math.max(1, Math.ceil(mmW));
+        offscreen.height = Math.max(1, Math.ceil(mmH));
+        const offCtx = offscreen.getContext('2d');
+        if (offCtx) {
+          offCtx.fillStyle = '#111018';
+          offCtx.fillRect(0, 0, mmW, mmH);
+          offCtx.fillStyle = '#1E1D2A';
+          for (let ty = 0; ty < map.height; ty++) {
+            for (let tx = 0; tx < map.width; tx++) {
+              if (map.tiles[ty * map.width + tx] > 0) {
+                offCtx.fillRect(tx * mmScale, ty * mmScale, mmScale, mmScale);
+              }
+            }
+          }
+        }
+        minimapTilesCanvas = offscreen;
+      }
+
+      if (minimapTilesCanvas) {
+        ctx.drawImage(minimapTilesCanvas, mmX, mmY, mmW, mmH);
+      } else {
+        ctx.fillStyle = '#111018';
+        ctx.fillRect(mmX, mmY, mmW, mmH);
+      }
       ctx.strokeStyle = '#2A2836';
       ctx.lineWidth = 1;
       ctx.strokeRect(mmX, mmY, mmW, mmH);
 
-      const flagMap = new Map(
-        snap.roomClearedFlags.map((f) => [f.id, f])
-      );
-
-      // 4. Corridor Pathways & Walkable Tiles
-      const tileW = mmScale;
-      const tileH = mmScale;
-      ctx.fillStyle = '#1E1D2A';
-      for (let ty = 0; ty < map.height; ty++) {
-        for (let tx = 0; tx < map.width; tx++) {
-          const tileCode = map.tiles[ty * map.width + tx];
-          if (tileCode > 0) {
-            ctx.fillRect(mmX + tx * tileW, mmY + ty * tileH, tileW, tileH);
-          }
-        }
-      }
+      const flagMap = new Map(snap.roomClearedFlags.map((f) => [f.id, f]));
 
       // 5. Rooms
       for (const room of map.rooms) {

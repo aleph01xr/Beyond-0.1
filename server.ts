@@ -13,13 +13,20 @@ import {
   broadcastSerialized,
   RoomClientIndex,
   sendJsonMessage,
+  sendRawFrame,
   type ManagedWsClient,
   type SendFrameOptions,
 } from './src/server/wsTransport.ts';
+import {
+  cloneSnapshotBaseline,
+  computeSnapshotDelta,
+} from './src/shared/snapshotDelta.ts';
+import { SERVER_TICK_MS } from './src/client/networkStats.ts';
 import type {
   AccountRecord,
   ClientMessage,
   DifficultyTier,
+  GameSnapshot,
   HeroClassId,
   ServerMessage,
   UserProfile,
@@ -100,16 +107,35 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
   };
 }
 
-function saveAccountsToFile(): void {
+let fileSaveInFlight = false;
+let fileSaveQueued = false;
+let fileDataDirReady = false;
+
+async function flushAccountsToFile(): Promise<void> {
+  if (fileSaveInFlight) {
+    fileSaveQueued = true;
+    return;
+  }
+  fileSaveInFlight = true;
   try {
-    if (!fs.existsSync(DATA_DIR)) {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
-    }
-    const list = Array.from(accountsById.values());
-    fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(list, null, 2), 'utf8');
+    do {
+      fileSaveQueued = false;
+      if (!fileDataDirReady) {
+        await fs.promises.mkdir(DATA_DIR, { recursive: true });
+        fileDataDirReady = true;
+      }
+      const list = Array.from(accountsById.values());
+      await fs.promises.writeFile(ACCOUNTS_FILE, JSON.stringify(list, null, 2), 'utf8');
+    } while (fileSaveQueued);
   } catch (err) {
     console.error('Failed to save accounts to file:', err);
+  } finally {
+    fileSaveInFlight = false;
   }
+}
+
+function saveAccountsToFile(): void {
+  void flushAccountsToFile();
 }
 
 // Lock map to prevent concurrent writes to the same account
@@ -479,9 +505,16 @@ interface ConnectedClient extends ManagedWsClient {
   roomId: string | null;
   droppedTicks: number;
   totalDroppedTicks: number;
+  needsKeyframe?: boolean;
+}
+
+interface RoomDeltaState {
+  seq: number;
+  lastBaseline: GameSnapshot | null;
 }
 
 const rooms = new Map<string, GameRoom>();
+const roomDeltaStates = new Map<string, RoomDeltaState>();
 const clients = new Set<ConnectedClient>();
 const roomClientIndex = new RoomClientIndex<ConnectedClient>();
 
@@ -604,6 +637,7 @@ function leaveCurrentRoom(client: ConnectedClient): void {
       room.removePlayer(client.userId);
       if (room.getPlayerCount() === 0 && oldRoomId !== 'TAVERN-HUB') {
         rooms.delete(oldRoomId);
+        roomDeltaStates.delete(oldRoomId);
       }
     }
   }
@@ -1156,6 +1190,7 @@ async function startServer() {
     server,
     path: '/ws',
     maxPayload: 64 * 1024,
+    perMessageDeflate: false,
   });
 
   wss.on('connection', (ws, req) => {
@@ -1191,11 +1226,12 @@ async function startServer() {
       roomId: null,
       droppedTicks: 0,
       totalDroppedTicks: 0,
+      needsKeyframe: false,
     };
     clients.add(client);
     broadcastRoomList();
 
-    ws.on('message', async (raw) => {
+    ws.on('message', (raw) => {
       let msg: ClientMessage;
       try {
         msg = JSON.parse(String(raw)) as ClientMessage;
@@ -1250,6 +1286,7 @@ async function startServer() {
           storage: acc.storedRelics || [],
         });
         roomClientIndex.assignRoom(client, room.roomId);
+        client.needsKeyframe = true;
 
         sendJson(ws, {
           type: 'room:joined',
@@ -1306,6 +1343,7 @@ async function startServer() {
           storage: acc.storedRelics || [],
         });
         roomClientIndex.assignRoom(client, room.roomId);
+        client.needsKeyframe = true;
 
         sendJson(ws, {
           type: 'room:joined',
@@ -1331,12 +1369,18 @@ async function startServer() {
 
       if (msg.type === 'player:input') {
         room.updateInput(acc.id, msg.input, msg.seq);
+      } else if (msg.type === 'room:resync') {
+        client.needsKeyframe = true;
       } else if (msg.type === 'player:action') {
         const res = room.performAction(acc.id, msg.action, msg.aimAngle, {
           aimDistance: typeof msg.aimDistance === 'number' && Number.isFinite(msg.aimDistance) ? msg.aimDistance : undefined,
           explicitAim: Boolean(msg.explicitAim),
         });
         if (res.floorChanged) {
+          roomDeltaStates.delete(room.roomId);
+          for (const c of roomClientIndex.getRoomClients(room.roomId)) {
+            c.needsKeyframe = true;
+          }
           broadcastToRoom(room.roomId, {
             type: 'room:map',
             map: res.floorChanged,
@@ -1377,7 +1421,7 @@ async function startServer() {
               : 'vanguard';
           acc.lockedClass = validClass;
           acc.preferredClass = validClass;
-          await persistAccount(acc);
+          persistAccount(acc).catch(console.error);
           room.changeClass(acc.id, validClass);
           broadcastToRoom(room.roomId, {
             type: 'chat:message',
@@ -1504,6 +1548,10 @@ async function startServer() {
         }
       } else if (msg.type === 'room:restart') {
         const freshMap = room.restartRun();
+        roomDeltaStates.delete(room.roomId);
+        for (const c of roomClientIndex.getRoomClients(room.roomId)) {
+          c.needsKeyframe = true;
+        }
         broadcastToRoom(room.roomId, { type: 'room:map', map: freshMap });
         broadcastRoomList();
       } else if (msg.type === 'player:spend_attribute') {
@@ -1517,26 +1565,28 @@ async function startServer() {
               acc[attr] = oldAttr + 1;
               acc.attributePoints = oldPoints - 1;
               
-              try {
-                await persistAccount(acc);
-                room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
-                
-                // Force immediate update in game engine runtime state
-                room.updatePlayerAttributes(
-                  acc.id,
-                  acc.strength || 0,
-                  acc.vitality || 0,
-                  acc.dexterity || 0,
-                  acc.intelligence || 0,
-                  acc.faith || 0,
-                  acc.attributePoints || 0
-                );
-              } catch (err) {
-                // Rollback on failure
-                acc[attr] = oldAttr;
-                acc.attributePoints = oldPoints;
-                sendJson(ws, { type: 'error', message: 'Failed to save attribute allocation. Please try again.' });
-              }
+              void (async () => {
+                try {
+                  await persistAccount(acc);
+                  room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
+                  
+                  // Force immediate update in game engine runtime state
+                  room.updatePlayerAttributes(
+                    acc.id,
+                    acc.strength || 0,
+                    acc.vitality || 0,
+                    acc.dexterity || 0,
+                    acc.intelligence || 0,
+                    acc.faith || 0,
+                    acc.attributePoints || 0
+                  );
+                } catch {
+                  // Rollback on failure
+                  acc[attr] = oldAttr;
+                  acc.attributePoints = oldPoints;
+                  sendJson(ws, { type: 'error', message: 'Failed to save attribute allocation. Please try again.' });
+                }
+              })();
             } else {
               sendJson(ws, { type: 'error', message: `${attr.toUpperCase()} is already at maximum level.` });
             }
@@ -1547,7 +1597,7 @@ async function startServer() {
           const amount = Math.floor(Number(msg.amount));
           if (Number.isFinite(amount) && amount > 0) {
             acc.attributePoints = (acc.attributePoints || 0) + amount;
-            await persistAccount(acc).catch(err => console.error('Failed to persist admin attribute points:', err));
+            persistAccount(acc).catch(err => console.error('Failed to persist admin attribute points:', err));
             room.addPlayerAttributePoints(acc.id, amount);
           }
         }
@@ -1588,26 +1638,28 @@ async function startServer() {
         acc.intelligence = 0;
         acc.faith = 0;
         
-        try {
-          await persistAccount(acc);
-          
-          // Sync with room state
-          room.updatePlayerAttributes(
-            acc.id,
-            acc.strength,
-            acc.vitality,
-            acc.dexterity,
-            acc.intelligence,
-            acc.faith,
-            acc.attributePoints
-          );
-          
-          room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
-        } catch (err) {
-          // Rollback
-          Object.assign(acc, oldState);
-          sendJson(ws, { type: 'error', message: 'Failed to reset attributes. Please try again.' });
-        }
+        void (async () => {
+          try {
+            await persistAccount(acc);
+            
+            // Sync with room state
+            room.updatePlayerAttributes(
+              acc.id,
+              acc.strength || 0,
+              acc.vitality || 0,
+              acc.dexterity || 0,
+              acc.intelligence || 0,
+              acc.faith || 0,
+              acc.attributePoints || 0
+            );
+            
+            room.pushSystemChat(`${acc.username} has reclaimed ${spent} attribute points through Aleph.`);
+          } catch {
+            // Rollback
+            Object.assign(acc, oldState);
+            sendJson(ws, { type: 'error', message: 'Failed to reset attributes. Please try again.' });
+          }
+        })();
         
         // Keep Aleph dialogue active with confirmation of reclaimed points
         const aleph = room.npcs.find(n => n.id === 'npc_aleph');
@@ -1664,13 +1716,18 @@ async function startServer() {
     });
   });
 
-  const TICK_MS = 50;
-  setInterval(() => {
+  const TICK_MS = SERVER_TICK_MS; // 40 Hz (25ms) drift-free authoritative simulation loop
+  let nextTickAt = performance.now() + TICK_MS;
+
+  const runServerTick = () => {
     const tickStart = performance.now();
+    let anyStatusChanged = false;
+
     for (const [roomId, room] of rooms.entries()) {
       if (room.getPlayerCount() === 0) {
         if (roomId !== 'TAVERN-HUB') {
           rooms.delete(roomId);
+          roomDeltaStates.delete(roomId);
         }
         continue;
       }
@@ -1678,14 +1735,89 @@ async function startServer() {
       room.tick(TICK_MS);
       if (roomClientIndex.getRoomClientCount(roomId) > 0) {
         const snapshot = room.buildNetworkSnapshot();
-        broadcastToRoom(roomId, { type: 'room:tick', snapshot }, { droppable: true });
+        let deltaState = roomDeltaStates.get(roomId);
+        if (!deltaState) {
+          deltaState = { seq: 0, lastBaseline: null };
+          roomDeltaStates.set(roomId, deltaState);
+        }
+        const nextSeq = deltaState.seq + 1;
+
+        const roomClients = Array.from(roomClientIndex.getRoomClients(roomId));
+        const keyframeTargets: ConnectedClient[] = [];
+        const deltaTargets: ConnectedClient[] = [];
+
+        if (!deltaState.lastBaseline) {
+          for (const c of roomClients) keyframeTargets.push(c);
+        } else {
+          for (const c of roomClients) {
+            if (c.needsKeyframe) keyframeTargets.push(c);
+            else deltaTargets.push(c);
+          }
+        }
+
+        if (keyframeTargets.length > 0) {
+          const rawKeyframe = JSON.stringify({
+            type: 'room:tick',
+            snapshot,
+            seq: nextSeq,
+          } satisfies ServerMessage);
+          for (const c of keyframeTargets) {
+            const outcome = sendRawFrame(c, rawKeyframe, { droppable: true });
+            if (outcome === 'sent') {
+              c.needsKeyframe = false;
+            } else if (outcome === 'closed_overflow') {
+              roomClientIndex.removeFromRoom(c, roomId);
+              clients.delete(c);
+            }
+          }
+        }
+
+        if (deltaTargets.length > 0 && deltaState.lastBaseline) {
+          const delta = computeSnapshotDelta(
+            deltaState.lastBaseline,
+            snapshot,
+            deltaState.seq,
+            nextSeq
+          );
+          const stats = broadcastSerialized(
+            deltaTargets,
+            { type: 'room:delta', delta },
+            { droppable: true }
+          );
+          if (stats.closedCount > 0) {
+            for (const c of deltaTargets) {
+              if (c.ws.readyState !== WebSocket.OPEN) {
+                roomClientIndex.removeFromRoom(c, roomId);
+                clients.delete(c);
+              }
+            }
+          }
+        }
+
+        deltaState.seq = nextSeq;
+        deltaState.lastBaseline = cloneSnapshotBaseline(snapshot);
       }
       if (room.status !== prevStatus) {
-        broadcastRoomList();
+        anyStatusChanged = true;
       }
     }
-    lastTickDurationMs = Math.round((performance.now() - tickStart) * 10) / 10;
-  }, TICK_MS);
+
+    if (anyStatusChanged) {
+      broadcastRoomList();
+    }
+
+    const nowAfter = performance.now();
+    lastTickDurationMs = Math.round((nowAfter - tickStart) * 10) / 10;
+
+    nextTickAt += TICK_MS;
+    if (nowAfter - nextTickAt > TICK_MS * 4) {
+      nextTickAt = nowAfter + TICK_MS;
+    }
+    const delayMs = Math.max(1, Math.round(nextTickAt - nowAfter));
+    setTimeout(runServerTick, delayMs);
+  };
+
+  setTimeout(runServerTick, TICK_MS);
 
   const distPath = path.resolve(__dirname, 'dist');
   const isProd =

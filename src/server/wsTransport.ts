@@ -20,6 +20,7 @@ export interface ManagedWsClient {
   roomId: string | null;
   droppedTicks?: number;
   totalDroppedTicks?: number;
+  needsKeyframe?: boolean;
 }
 
 export interface SendFrameOptions {
@@ -87,6 +88,7 @@ export function sendRawFrame(
     if (isManaged) {
       target.droppedTicks = (target.droppedTicks ?? 0) + 1;
       target.totalDroppedTicks = (target.totalDroppedTicks ?? 0) + 1;
+      target.needsKeyframe = true;
       if (target.droppedTicks >= maxConsecutiveDrops) {
         closeCongestedSocket(ws);
         return 'closed_overflow';

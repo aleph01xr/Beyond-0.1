@@ -4961,6 +4961,103 @@ async function runRegressionTests() {
     assert.ok(angleDeltaRad(Math.PI - 0.05, -Math.PI + 0.05) < 0.11, 'Angle delta handles +/-PI wrap cleanly');
   });
 
+  // --- Test 82: Full-Stack Latency Optimization (40Hz Tick Cadence, Wire Delta Compression & Backpressure Keyframe Recovery) ---
+  await test('82. Full-stack latency optimization: 40Hz tick cadence, wire delta compression fidelity, and backpressure keyframe recovery', async () => {
+    const {
+      SERVER_TICK_MS,
+      CLIENT_INPUT_CONTINUOUS_INTERVAL_MS,
+    } = await import('./src/client/networkStats.ts');
+    const {
+      cloneSnapshotBaseline,
+      computeSnapshotDelta,
+      applySnapshotDelta,
+    } = await import('./src/shared/snapshotDelta.ts');
+    const {
+      sendRawFrame,
+      WS_TICK_BACKPRESSURE_HIGH_WATER_BYTES,
+    } = await import('./src/server/wsTransport.ts');
+
+    assert.strictEqual(SERVER_TICK_MS, 25, 'Server must tick at 40Hz (25ms)');
+    assert.strictEqual(CLIENT_INPUT_CONTINUOUS_INTERVAL_MS, 20, 'Continuous input interval must run at 50Hz (20ms)');
+
+    const room = new GameRoom({
+      roomId: 'DELTA-F3',
+      name: 'Delta Benchmark',
+      hostName: 'Hero1',
+      difficulty: 'Normal',
+      seed: 1337,
+      initialFloor: 3,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p1', 'Hero1', 'ranger');
+
+    // Capture baseline tick 1
+    room.tick(SERVER_TICK_MS);
+    const snap1 = room.buildNetworkSnapshot();
+    const baseline1 = cloneSnapshotBaseline(snap1);
+
+    // Tick 2: player moves + shoots projectile (majority of props/rooms/idle enemies unchanged)
+    room.updateInput('p1', { up: false, down: false, left: false, right: true, attack: true, aimAngle: 0.4 }, 10);
+    room.tick(SERVER_TICK_MS);
+    const snap2 = room.buildNetworkSnapshot();
+
+    const delta12 = computeSnapshotDelta(baseline1, snap2, 1, 2);
+    assert.strictEqual(delta12.props, undefined, 'Unchanged dungeon props must be omitted on delta ticks');
+    assert.strictEqual(delta12.npcs, undefined, 'Unchanged NPCs must be omitted on delta ticks');
+    assert.strictEqual(delta12.roomClearedFlags, undefined, 'Unchanged room flags must be omitted on delta ticks');
+
+    const fullWireBytes = Buffer.byteLength(JSON.stringify({ type: 'room:tick', snapshot: snap2, seq: 2 }), 'utf8');
+    const deltaWireBytes = Buffer.byteLength(JSON.stringify({ type: 'room:delta', delta: delta12 }), 'utf8');
+    assert.ok(
+      deltaWireBytes < fullWireBytes * 0.45,
+      `Expected wire delta (${deltaWireBytes}B) to be <45% of full snapshot (${fullWireBytes}B)`
+    );
+
+    const reconstructed2 = applySnapshotDelta(baseline1, delta12);
+    assert.deepStrictEqual(
+      reconstructed2,
+      snap2,
+      'Reconstructed delta snapshot must match full server snapshot identically'
+    );
+
+    // Tick 3: open a chest/prop mutation + spawn/kill enemy -> baseline clone isolation prevents silent diff loss
+    const baseline2 = cloneSnapshotBaseline(snap2);
+    if (room.props.length > 0) {
+      room.props[0].opened = true;
+    }
+    if (room.enemies.length > 0) {
+      room.enemies.pop();
+    }
+    room.tick(SERVER_TICK_MS);
+    const snap3 = room.buildNetworkSnapshot();
+    const delta23 = computeSnapshotDelta(baseline2, snap3, 2, 3);
+    const reconstructed3 = applySnapshotDelta(reconstructed2, delta23);
+    assert.deepStrictEqual(
+      reconstructed3,
+      snap3,
+      'Mutated props and removed enemies must reconstruct cleanly without mutating prior baseline'
+    );
+
+    // Dropped tick under backpressure must automatically flag client for full keyframe resync
+    const slowClient = {
+      userId: 'u_slow',
+      username: 'Slow',
+      roomId: 'DELTA-F3',
+      droppedTicks: 0,
+      totalDroppedTicks: 0,
+      needsKeyframe: false,
+      ws: {
+        readyState: 1,
+        bufferedAmount: WS_TICK_BACKPRESSURE_HIGH_WATER_BYTES + 1024,
+        send() {},
+        close() {},
+      },
+    };
+    const outcome = sendRawFrame(slowClient, '{"type":"room:delta"}', { droppable: true });
+    assert.strictEqual(outcome, 'dropped_backpressure');
+    assert.strictEqual(slowClient.needsKeyframe, true, 'Backpressure skip must flag client for next-tick keyframe resync');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

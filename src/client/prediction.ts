@@ -25,7 +25,7 @@ export interface PredictionStepResult {
 
 const MIN_BLEND_ERROR_PX = 1.5;
 const HARD_SNAP_ERROR_PX = 48;
-const ERROR_DECAY_RATE = 16;
+const ERROR_DECAY_RATE = 18;
 const MAX_PENDING_STEPS = 45;
 
 /**
@@ -167,7 +167,7 @@ export class LocalPredictionController {
           hasMovementInput(liveInput) &&
           (Math.hypot(me.vx, me.vy) > 5 || ackSeq >= latestSentSeq)
         ) {
-          const leadSec = Math.min(0.12, Math.max(0.01, oneWayLatencySec + 0.015));
+          const leadSec = Math.min(0.10, Math.max(0.008, oneWayLatencySec + 0.012));
           stepPlayerMovement(reconciled, liveInput, map, props, leadSec, {
             moveSpeed,
             disoriented: isDisoriented,
