@@ -96,7 +96,10 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
   const handleQuickStart = () => {
     sfx.playUiClick();
     const joinable = rooms.find(
-      (r) => r.status === 'playing' && r.playerCount < r.maxPlayers
+      (r) =>
+        r.roomId !== 'TAVERN-HUB' &&
+        r.status === 'waiting' &&
+        r.playerCount < r.maxPlayers
     );
     if (joinable) {
       onJoinRoom(joinable.roomId, selectedClass);
@@ -359,25 +362,46 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     No Open Parties in the Sanctuary
                   </p>
                   <p className="text-xs sm:text-sm text-[#9B99AB] max-w-md mx-auto">
-                    Start a new party using the form on this page. Other players on mobile or desktop can join your room code in real time!
+                    Create a new party lobby using the form on this page. Other players on mobile or desktop can join your room code before the host starts!
                   </p>
                 </div>
               ) : (
                 <div className="divide-y divide-[#2C2B3B] border border-[#2F2E3E] bg-[#20202B]">
                   {rooms.map((room) => {
                     const isFull = room.playerCount >= room.maxPlayers;
+                    const isLocked = room.status === 'playing';
+                    const isEnded = room.status === 'victory' || room.status === 'defeat';
+                    const joinDisabled = isFull || isLocked || isEnded;
+                    const statusLabel =
+                      room.status === 'waiting'
+                        ? 'Waiting Lobby'
+                        : room.status === 'playing'
+                          ? 'In Progress (Locked)'
+                          : room.status === 'victory'
+                            ? 'Victory'
+                            : 'Fallen';
+                    const statusColor =
+                      room.status === 'waiting'
+                        ? 'text-[#6EE7B7]'
+                        : room.status === 'playing'
+                          ? 'text-[#FCA5A5]'
+                          : 'text-[#FDE68A]';
+
                     return (
                       <div
                         key={room.roomId}
                         className="p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 hover:bg-[#252533] transition-colors"
                       >
                         <div className="space-y-1">
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-2.5">
                             <span className="font-display text-base sm:text-lg text-white">
                               {room.name}
                             </span>
                             <span className="font-mono text-xs text-[#D9AA52] tabular-nums">
                               {room.roomId}
+                            </span>
+                            <span className={`font-mono text-[11px] font-semibold ${statusColor}`}>
+                              {statusLabel}
                             </span>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs text-[#9E9CAE] font-mono tabular-nums">
@@ -385,7 +409,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                             <span aria-hidden="true">·</span>
                             <span>{room.difficulty}</span>
                             <span aria-hidden="true">·</span>
-                            <span>Floor {room.floor}</span>
+                            <span>{room.status === 'waiting' ? 'Lobby' : `Floor ${room.floor}`}</span>
                             <span aria-hidden="true">·</span>
                             <span>
                               {room.playerCount}/{room.maxPlayers} Heroes
@@ -395,14 +419,16 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                         <button
                           type="button"
-                          disabled={isFull}
+                          disabled={joinDisabled}
                           onClick={() => {
                             sfx.playUiClick();
                             onJoinRoom(room.roomId, selectedClass);
                           }}
-                          className={`stone-button px-5 py-2 h-auto text-xs ${isFull ? 'stone-button-dark opacity-50' : 'stone-button-blue'}`}
+                          className={`stone-button px-5 py-2 h-auto text-xs ${
+                            joinDisabled ? 'stone-button-dark opacity-50' : 'stone-button-blue'
+                          }`}
                         >
-                          {isFull ? 'Full' : 'Join'}
+                          {isLocked ? 'In Progress' : isEnded ? 'Ended' : isFull ? 'Full' : 'Join Lobby'}
                         </button>
                       </div>
                     );
@@ -549,7 +575,7 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                   type="submit"
                   className="stone-button stone-button-gold w-full h-14 text-xl shadow-lg"
                 >
-                  Enter the Beyond
+                  Create Party Lobby
                 </button>
               </form>
             </section>

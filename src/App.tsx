@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DungeonRunView } from './components/DungeonRunView.tsx';
 import { LoginScreen } from './components/LoginScreen.tsx';
+import { PartyLobbyView } from './components/PartyLobbyView.tsx';
 import { SanctuaryLobby } from './components/SanctuaryLobby.tsx';
 import { getApiEndpoint, getWsUrl } from './client/apiConfig.ts';
 import {
@@ -30,6 +31,27 @@ import type {
 type ScreenState = 'AUTH' | 'LOBBY' | 'PLAYING';
 
 const SESSION_TOKEN_KEY = 'beyond_session_token';
+const ACTIVE_ROOM_KEY = 'beyond_active_room_id';
+
+function saveActiveRoomId(roomId: string | null): void {
+  try {
+    if (roomId && roomId !== 'TAVERN-HUB') {
+      sessionStorage.setItem(ACTIVE_ROOM_KEY, roomId);
+    } else {
+      sessionStorage.removeItem(ACTIVE_ROOM_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function loadSavedActiveRoomId(): string | null {
+  try {
+    return sessionStorage.getItem(ACTIVE_ROOM_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export function App() {
   const [token, setToken] = useState<string | null>(() => {
@@ -61,7 +83,7 @@ export function App() {
   const snapshotSeqRef = useRef<number>(0);
   const lastResyncRequestAtRef = useRef<number>(0);
   const wsRef = useRef<WebSocket | null>(null);
-  const activeRoomIdRef = useRef<string | null>(null);
+  const activeRoomIdRef = useRef<string | null>(loadSavedActiveRoomId());
   const activePlayerIdRef = useRef<string>('');
   const dungeonMapRef = useRef<DungeonMap | null>(null);
   const lastHudKeyRef = useRef<string>('');
@@ -206,6 +228,7 @@ export function App() {
           }
         } else if (msg.type === 'room:joined') {
           activeRoomIdRef.current = msg.roomId;
+          saveActiveRoomId(msg.roomId);
           activePlayerIdRef.current = msg.playerId;
           dungeonMapRef.current = msg.map;
           snapshotSeqRef.current = 0;
@@ -265,6 +288,7 @@ export function App() {
           });
         } else if (msg.type === 'room:left') {
           activeRoomIdRef.current = null;
+          saveActiveRoomId(null);
           activePlayerIdRef.current = '';
           dungeonMapRef.current = null;
           snapshotSeqRef.current = 0;
@@ -291,6 +315,16 @@ export function App() {
             .catch(() => {});
         } else if (msg.type === 'error') {
           setErrorBanner(msg.message);
+          if (
+            msg.message.includes('was not found or has closed') &&
+            screenRef.current !== 'PLAYING'
+          ) {
+            activeRoomIdRef.current = null;
+            saveActiveRoomId(null);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'lobby:subscribe' } satisfies ClientMessage));
+            }
+          }
         } else if (msg.type === 'pong') {
           const rtt = performance.now() - msg.t;
           if (Number.isFinite(rtt) && rtt >= 0 && rtt < 15000) {
@@ -362,6 +396,7 @@ export function App() {
       wsRef.current = null;
     }
     activeRoomIdRef.current = null;
+    saveActiveRoomId(null);
     setToken(null);
     setUser(null);
     setScreen('AUTH');
@@ -480,19 +515,64 @@ export function App() {
     [sendWs]
   );
 
+  const handleStartExpedition = useCallback(() => {
+    setErrorBanner(null);
+    sendWs({ type: 'room:start' });
+  }, [sendWs]);
+
+  const handleToggleReady = useCallback(
+    (ready?: boolean) => {
+      setErrorBanner(null);
+      sendWs({
+        type: 'room:set_ready',
+        ...(ready !== undefined ? { ready } : {}),
+      });
+    },
+    [sendWs]
+  );
+
+  const handleReturnToPartyLobby = useCallback(() => {
+    setErrorBanner(null);
+    sendWs({ type: 'room:return_to_lobby' });
+  }, [sendWs]);
+
   const handleRestartRun = useCallback(() => {
+    setErrorBanner(null);
     sendWs({ type: 'room:restart' });
   }, [sendWs]);
 
   const handleLeaveRoom = useCallback(() => {
+    setErrorBanner(null);
     sendWs({ type: 'room:leave' });
   }, [sendWs]);
+
+  const handleDismissError = useCallback(() => {
+    setErrorBanner(null);
+  }, []);
 
   if (screen === 'AUTH' || !user) {
     return <LoginScreen onAuthenticated={handleAuthenticated} />;
   }
 
   if (screen === 'PLAYING' && dungeonMap && snapshot) {
+    if (snapshot.roomId !== 'TAVERN-HUB' && snapshot.status === 'waiting') {
+      return (
+        <PartyLobbyView
+          playerId={playerId}
+          snapshot={snapshot}
+          chatMessages={chatMessages}
+          errorBanner={errorBanner}
+          onDismissError={handleDismissError}
+          onStartExpedition={handleStartExpedition}
+          onToggleReady={handleToggleReady}
+          onLeaveRoom={handleLeaveRoom}
+          onReturnToTavern={() => handleJoinRoom('TAVERN-HUB', selectedClass)}
+          onSendChat={handleSendChat}
+          onSendCommand={sendWs}
+        />
+      );
+    }
+
     return (
       <DungeonRunView
         authToken={token || ''}
@@ -509,6 +589,7 @@ export function App() {
         onSendChat={handleSendChat}
         onRestartRun={handleRestartRun}
         onLeaveRoom={handleLeaveRoom}
+        onReturnToPartyLobby={handleReturnToPartyLobby}
         onSendAdminCommand={sendWs}
         pingMs={pingDiagnostics.pingMs}
         pingDiagnostics={pingDiagnostics}
@@ -517,6 +598,8 @@ export function App() {
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
         onReturnToTavern={() => handleJoinRoom('TAVERN-HUB', selectedClass)}
+        errorBanner={errorBanner}
+        onDismissError={handleDismissError}
         rooms={rooms}
       />
     );

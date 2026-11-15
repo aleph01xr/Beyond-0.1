@@ -14,6 +14,8 @@ export type SnapshotScalarFields = Partial<
     GameSnapshot,
     | 'roomId'
     | 'roomName'
+    | 'hostId'
+    | 'hostName'
     | 'difficulty'
     | 'status'
     | 'floor'
@@ -54,6 +56,7 @@ export interface SnapshotDelta {
   trainingDummies?: TrainingDummyState[];
   roomClearedFlags?: GameSnapshot['roomClearedFlags'];
   events?: FloatingEvent[];
+  lastRunSummary?: GameSnapshot['lastRunSummary'];
 }
 
 function shallowEqualValues(a: unknown, b: unknown): boolean {
@@ -196,6 +199,8 @@ function applyEntityDiff<T extends { id: string }>(
 const SCALAR_KEYS = [
   'roomId',
   'roomName',
+  'hostId',
+  'hostName',
   'difficulty',
   'status',
   'floor',
@@ -218,7 +223,7 @@ const SCALAR_KEYS = [
  * room objects on subsequent server ticks never corrupts delta diff comparisons.
  */
 export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
-  return {
+  const baseline: GameSnapshot = {
     ...snap,
     players: snap.players.map((p) => {
       const copy: PlayerState = {
@@ -248,6 +253,15 @@ export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
     events: [],
     roomClearedFlags: snap.roomClearedFlags.map((f) => ({ ...f })),
   };
+  if (snap.lastRunSummary !== undefined) {
+    baseline.lastRunSummary = snap.lastRunSummary
+      ? {
+          ...snap.lastRunSummary,
+          players: snap.lastRunSummary.players.map((lp) => ({ ...lp })),
+        }
+      : null;
+  }
+  return baseline;
 }
 
 export function computeSnapshotDelta(
@@ -313,6 +327,12 @@ export function computeSnapshotDelta(
     delta.events = next.events;
   }
 
+  const prevRun = prev.lastRunSummary ?? null;
+  const nextRun = next.lastRunSummary ?? null;
+  if (!shallowEqualValues(prevRun, nextRun)) {
+    delta.lastRunSummary = nextRun;
+  }
+
   return delta;
 }
 
@@ -330,7 +350,7 @@ export function applySnapshotDelta(prev: GameSnapshot, delta: SnapshotDelta): Ga
     delta.enemiesRemoved
   );
 
-  return {
+  const next: GameSnapshot = {
     ...prev,
     ...(delta.scalars ?? {}),
     players,
@@ -345,4 +365,8 @@ export function applySnapshotDelta(prev: GameSnapshot, delta: SnapshotDelta): Ga
       delta.roomClearedFlags !== undefined ? delta.roomClearedFlags : prev.roomClearedFlags,
     events: delta.events ?? [],
   };
+  if (delta.lastRunSummary !== undefined) {
+    next.lastRunSummary = delta.lastRunSummary;
+  }
+  return next;
 }

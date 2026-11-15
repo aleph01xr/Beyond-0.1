@@ -93,6 +93,9 @@ interface DungeonRunViewProps {
   }) => void;
   onJoinRoom?: (roomId: string, heroClass: HeroClassId) => void;
   onReturnToTavern?: () => void;
+  onReturnToPartyLobby?: () => void;
+  errorBanner?: string | null;
+  onDismissError?: () => void;
   rooms?: RoomSummary[];
 }
 
@@ -119,6 +122,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onCreateRoom,
   onJoinRoom,
   onReturnToTavern,
+  onReturnToPartyLobby,
+  errorBanner,
+  onDismissError,
   rooms = [],
 }) => {
   const [chatOpen, setChatOpen] = useState(false);
@@ -135,6 +141,33 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const [partyOpen, setPartyOpen] = useState(false);
   const [isMuted, setIsMuted] = useState(() => sfx.isMuted());
   const [isFullscreen, toggleFullscreen] = useFullscreenState();
+  const [partyNotice, setPartyNotice] = useState<string | null>(null);
+  const lastSystemChatIdRef = useRef<string | null>(
+    chatMessages.length > 0 ? chatMessages[chatMessages.length - 1].id : null
+  );
+
+  useEffect(() => {
+    if (chatMessages.length === 0) return;
+    const latest = chatMessages[chatMessages.length - 1];
+    if (latest.id !== lastSystemChatIdRef.current) {
+      lastSystemChatIdRef.current = latest.id;
+      if (
+        latest.system &&
+        (latest.text.includes('disconnected') ||
+          latest.text.includes('reconnected') ||
+          latest.text.includes('Host ownership') ||
+          latest.text.includes('started the expedition'))
+      ) {
+        setPartyNotice(latest.text);
+      }
+    }
+  }, [chatMessages]);
+
+  useEffect(() => {
+    if (!partyNotice) return;
+    const t = window.setTimeout(() => setPartyNotice(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [partyNotice]);
 
   // Cinematic Chapter & Floor Introductions
   const [cinematicIntro, setCinematicIntro] = useState<{
@@ -916,6 +949,38 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         );
       })()}
 
+      {/* Error & Party Event Notification Banners */}
+      {errorBanner && (
+        <div
+          role="alert"
+          className="pointer-events-auto fixed top-14 sm:top-16 left-1/2 -translate-x-1/2 z-50 max-w-md w-[92vw] px-3.5 py-2.5 bg-[#341F24]/95 border border-[#8E3B46] text-xs sm:text-sm text-[#FECACA] shadow-2xl flex items-center justify-between gap-3"
+        >
+          <span>{errorBanner}</span>
+          {onDismissError && (
+            <button
+              type="button"
+              onClick={onDismissError}
+              className="text-[11px] font-mono text-[#FCA5A5] hover:text-white cursor-pointer shrink-0"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
+      {!errorBanner && partyNotice && (
+        <div className="pointer-events-auto fixed top-14 sm:top-16 left-1/2 -translate-x-1/2 z-40 max-w-md w-[92vw] px-3.5 py-2 bg-[#1D1C2B]/95 border border-[#D9AA52]/70 text-xs font-mono text-[#FDE68A] shadow-xl flex items-center justify-between gap-3">
+          <span>{partyNotice}</span>
+          <button
+            type="button"
+            onClick={() => setPartyNotice(null)}
+            className="text-[11px] text-[#A9A7BA] hover:text-white cursor-pointer shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Collapsible Co-op Party Dropdown Menu */}
       <div className="pointer-events-auto fixed top-9 sm:top-14 left-1.5 sm:left-5 z-20">
         <button
@@ -932,21 +997,33 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         </button>
 
         {partyOpen && (
-          <aside className="mt-1 space-y-1 w-44 sm:w-56 max-h-[45dvh] overflow-y-auto custom-scrollbar bg-[#1A1A24]/95 border border-[#323044] p-1.5 sm:p-2 shadow-2xl animate-in fade-in duration-150">
+          <aside className="mt-1 space-y-1 w-48 sm:w-60 max-h-[45dvh] overflow-y-auto custom-scrollbar bg-[#1A1A24]/95 border border-[#323044] p-1.5 sm:p-2 shadow-2xl animate-in fade-in duration-150">
             {snapshot.players.map((p) => {
               const cDef = HERO_CLASSES[p.heroClass];
               const hpPct = Math.max(0, Math.min(100, (p.hp / Math.max(1, p.maxHp)) * 100));
+              const memberIsHost =
+                !isTavern &&
+                (snapshot.hostId ? snapshot.hostId === p.id : snapshot.hostName === p.username);
               return (
                 <div
                   key={p.id}
-                  className="bg-[#242332] border border-[#3E3C50] px-2 py-1.5 space-y-1"
+                  className={`bg-[#242332] border px-2 py-1.5 space-y-1 ${
+                    !p.connected ? 'border-[#6E2932] opacity-75' : 'border-[#3E3C50]'
+                  }`}
                 >
                   <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs">
-                    <span className="font-display text-xs text-white truncate">
-                      {p.username} {p.id === playerId ? '(You)' : ''}
+                    <span className="font-display text-xs text-white truncate flex items-center gap-1">
+                      <span className="truncate">
+                        {p.username} {p.id === playerId ? '(You)' : ''}
+                      </span>
+                      {memberIsHost && (
+                        <span className="px-1 py-0.2 bg-[#D9AA52]/20 border border-[#D9AA52]/60 text-[#FDE68A] font-mono text-[8px] font-bold shrink-0">
+                          HOST
+                        </span>
+                      )}
                     </span>
                     <span className="font-mono text-[9px] text-[#B3B1C4] tabular-nums whitespace-nowrap">
-                      {cDef.name}
+                      {!p.connected ? 'OFFLINE' : cDef.name}
                     </span>
                   </div>
 
@@ -1556,43 +1633,77 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               ))}
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  onRestartRun();
-                }}
-                className="stone-button stone-button-gold px-8 py-3 text-lg"
-              >
-                Play Again
-              </button>
-              {!isTavern && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sfx.playUiClick();
-                    if (onReturnToTavern) {
-                      onReturnToTavern();
-                    } else if (onJoinRoom) {
-                      onJoinRoom('TAVERN-HUB', me.heroClass);
-                    }
-                  }}
-                  className="stone-button stone-button-blue px-6 py-3"
-                >
-                  Return to Tavern
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  sfx.playUiClick();
-                  onLeaveRoom();
-                }}
-                className="stone-button stone-button-dark px-6 py-3"
-              >
-                Exit to Lobby
-              </button>
+            <div className="flex flex-col items-center justify-center gap-3 pt-1">
+              {(() => {
+                const isHost = Boolean(
+                  snapshot.hostId
+                    ? snapshot.hostId === playerId
+                    : snapshot.hostName === me?.username
+                );
+
+                if (isTavern || isHost) {
+                  return (
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      {!isTavern && onReturnToPartyLobby && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sfx.playUiClick('confirm');
+                            onReturnToPartyLobby();
+                          }}
+                          className="stone-button stone-button-gold px-7 py-3 text-base"
+                        >
+                          Return to Party Lobby
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sfx.playUiClick();
+                          onRestartRun();
+                        }}
+                        className={`stone-button ${
+                          !isTavern && onReturnToPartyLobby
+                            ? 'stone-button-blue px-6 py-3'
+                            : 'stone-button-gold px-8 py-3 text-lg'
+                        }`}
+                      >
+                        Play Again
+                      </button>
+                      {!isTavern && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sfx.playUiClick();
+                            onLeaveRoom();
+                          }}
+                          className="stone-button stone-button-dark px-6 py-3"
+                        >
+                          Leave Party
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    <p className="text-xs font-mono text-[#FDE68A] text-center">
+                      Waiting for host ({snapshot.hostName || 'Party Host'}) to return to the party lobby or restart...
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sfx.playUiClick();
+                        onLeaveRoom();
+                      }}
+                      className="stone-button stone-button-dark px-6 py-3"
+                    >
+                      Leave Party
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

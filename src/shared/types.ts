@@ -463,6 +463,7 @@ export interface PlayerState {
   damageDealt: number;
   revives: number;
   readyNextFloor: boolean;
+  ready?: boolean;
   pendingRelicChoices: string[];
   connected: boolean;
   isAdmin?: boolean;
@@ -645,16 +646,35 @@ export interface ChatMessage {
   system?: boolean;
 }
 
+export type RoomStatus = 'waiting' | 'playing' | 'victory' | 'defeat';
+
+export interface LastRunPlayerSummary {
+  id: string;
+  username: string;
+  heroClass: HeroClassId;
+  level: number;
+  kills: number;
+  revives: number;
+}
+
+export interface LastRunSummary {
+  outcome: 'victory' | 'defeat';
+  floor: number;
+  elapsedSec: number;
+  players: LastRunPlayerSummary[];
+}
+
 export interface RoomSummary {
   roomId: string;
   name: string;
+  hostId?: string;
   hostName: string;
   difficulty: DifficultyTier;
   floor: number;
   seed: number;
   playerCount: number;
   maxPlayers: number;
-  status: 'playing' | 'victory' | 'defeat';
+  status: RoomStatus;
 }
 
 export interface DialogueOption {
@@ -688,11 +708,14 @@ export interface TrainingDummyState {
 export interface GameSnapshot {
   roomId: string;
   roomName: string;
+  hostId?: string;
+  hostName?: string;
   difficulty: DifficultyTier;
-  status: 'playing' | 'victory' | 'defeat';
+  status: RoomStatus;
   floor: number;
   seed: number;
   elapsedSec: number;
+  lastRunSummary?: LastRunSummary | null;
   bossDefeated: boolean;
   bossRoomCleared?: boolean;
   bossWards?: number;
@@ -772,6 +795,9 @@ export type ClientMessage =
   | { type: 'player:change_class'; heroClass: HeroClassId }
   | { type: 'player:ping'; label: string; x: number; y: number }
   | { type: 'chat:send'; text: string }
+  | { type: 'room:start' }
+  | { type: 'room:set_ready'; ready?: boolean }
+  | { type: 'room:return_to_lobby' }
   | { type: 'room:restart' }
   | { type: 'admin:godmode'; enabled?: boolean }
   | { type: 'admin:toggle_speed'; enabled?: boolean }

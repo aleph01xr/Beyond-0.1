@@ -5058,6 +5058,583 @@ async function runRegressionTests() {
     assert.strictEqual(slowClient.needsKeyframe, true, 'Backpressure skip must flag client for next-tick keyframe resync');
   });
 
+  // --- Test 83: Party Lobby Lifecycle, Waiting Inactivity, & Server Join Locks (Edge Cases 1-6) ---
+  await test('83. Party lobby stays inactive until host starts, enforces 4-player cap and active lock through Floor 5+', async () => {
+    const { PartyCoordinator } = await import('./src/server/partyCoordinator.ts');
+    const { RoomClientIndex } = await import('./src/server/wsTransport.ts');
+
+    type MockClient = {
+      ws: {
+        readyState: number;
+        bufferedAmount: number;
+        send: (data: string) => void;
+        close: () => void;
+      };
+      userId: string;
+      username: string;
+      roomId: string | null;
+      needsKeyframe?: boolean;
+      messages: any[];
+    };
+
+    const rooms = new Map<string, GameRoom>();
+    const roomClientIndex = new RoomClientIndex<MockClient>();
+    const roomDeltaStates = new Map<string, { seq: number; lastBaseline: any }>();
+    const dirtyNonPlayingRooms = new Set<string>();
+    let seqCode = 1;
+
+    const coordinator = new PartyCoordinator<MockClient>({
+      rooms,
+      roomClientIndex,
+      roomDeltaStates,
+      dirtyNonPlayingRooms,
+      disconnectGraceMs: 25,
+      generateRoomCode: () => `BYND-T${seqCode++}`,
+      sendJson: (ws, msg) => ws.send(JSON.stringify(msg)),
+      broadcastToRoom: (roomId, msg) => {
+        const raw = JSON.stringify(msg);
+        for (const c of roomClientIndex.getRoomClients(roomId)) {
+          c.ws.send(raw);
+        }
+      },
+      broadcastRoomList: () => {},
+    });
+
+    const mkClient = (id: string, username: string): MockClient => {
+      const messages: any[] = [];
+      return {
+        userId: id,
+        username,
+        roomId: null,
+        needsKeyframe: false,
+        messages,
+        ws: {
+          readyState: 1,
+          bufferedAmount: 0,
+          send: (data: string) => {
+            messages.push(JSON.parse(data));
+          },
+          close: () => {},
+        },
+      };
+    };
+
+    const c1 = mkClient('u1', 'HostHero');
+    const c2 = mkClient('u2', 'AllyTwo');
+    const c3 = mkClient('u3', 'AllyThree');
+    const c4 = mkClient('u4', 'AllyFour');
+    const c5 = mkClient('u5', 'OutsiderFive');
+
+    // Case 1: Player creates a party -> starts in 'waiting', dungeon simulation inactive
+    const room = coordinator.createParty(
+      c1,
+      { id: 'u1', username: 'HostHero', heroClass: 'vanguard' },
+      { name: 'Test Party', difficulty: 'Normal', seed: 4242 }
+    );
+    assert.strictEqual(room.status, 'waiting', 'New party must start in waiting state');
+    assert.strictEqual(room.enemies.length, 0, 'Waiting lobby must not spawn active dungeon enemies');
+    assert.strictEqual(room.getElapsedSec(), 0, 'Waiting lobby elapsed timer must stay at 0');
+
+    const initPos = { x: room.getPlayerState('u1')!.x, y: room.getPlayerState('u1')!.y };
+    room.updateInput('u1', { up: false, down: false, left: false, right: true, attack: true, aimAngle: 0 }, 1);
+    room.tick(100);
+    assert.strictEqual(room.getPlayerState('u1')!.x, initPos.x, 'Waiting lobby must not simulate player movement');
+    assert.strictEqual(room.projectiles.length, 0, 'Waiting lobby must not simulate combat projectiles');
+
+    // Case 2: Three more players join -> all 4 remain in waiting lobby; 5th rejected for full (4/4)
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(c2, { id: 'u2', username: 'AllyTwo', heroClass: 'ranger' }, room.roomId).ok,
+      true
+    );
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(c3, { id: 'u3', username: 'AllyThree', heroClass: 'arcanist' }, room.roomId).ok,
+      true
+    );
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(c4, { id: 'u4', username: 'AllyFour', heroClass: 'cleric' }, room.roomId).ok,
+      true
+    );
+    assert.strictEqual(room.status, 'waiting', 'Party must remain in waiting after 4 players join');
+    assert.strictEqual(room.getPlayerCount(), 4);
+
+    const fullReject = coordinator.joinOrReconnectRoom(
+      c5,
+      { id: 'u5', username: 'OutsiderFive', heroClass: 'vanguard' },
+      room.roomId
+    );
+    assert.strictEqual(fullReject.ok, false);
+    assert.strictEqual(c5.messages[c5.messages.length - 1]?.message, 'That expedition party is already full (4/4).');
+
+    // Also verify a 3-player expedition locks out a 4th outsider once started (Cases 3-6)
+    coordinator.leaveRoomExplicit(c4);
+    assert.strictEqual(room.getPlayerCount(), 3);
+
+    // Case 3: Host starts the expedition -> all members enter Floor 1 together & party locks
+    const startRes = coordinator.startExpedition(c1);
+    assert.strictEqual(startRes.ok, true);
+    assert.strictEqual(room.status, 'playing');
+    assert.strictEqual(room.isPartyLocked(), true);
+    assert.strictEqual(room.floor, 1);
+    assert.ok(room.enemies.length > 0, 'Starting expedition must populate Floor 1 dungeon enemies');
+    for (const uid of ['u1', 'u2', 'u3']) {
+      assert.ok(room.hasPlayer(uid), `Member ${uid} must spawn inside Floor 1 expedition`);
+    }
+
+    // Case 4: Outsider trying to join locked active expedition is rejected with exact message
+    const midRunReject = coordinator.joinOrReconnectRoom(
+      c5,
+      { id: 'u5', username: 'OutsiderFive', heroClass: 'vanguard' },
+      room.roomId
+    );
+    assert.strictEqual(midRunReject.ok, false);
+    if (!midRunReject.ok) {
+      assert.strictEqual(midRunReject.reason, 'This expedition is already in progress.');
+    }
+    assert.strictEqual(room.hasPlayer('u5'), false, 'Rejected outsider must never be added to dungeon');
+
+    // Cases 5 & 6: Party advances to Floor 5 -> party stays locked & rejects new joiners
+    room.loadFloor(5, room.getPlayerCount());
+    assert.strictEqual(room.floor, 5);
+    assert.strictEqual(room.status, 'playing');
+    assert.strictEqual(room.isPartyLocked(), true);
+
+    const floor5Reject = coordinator.joinOrReconnectRoom(
+      c4,
+      { id: 'u4', username: 'AllyFour', heroClass: 'cleric' },
+      room.roomId
+    );
+    assert.strictEqual(floor5Reject.ok, false);
+    if (!floor5Reject.ok) {
+      assert.strictEqual(floor5Reject.reason, 'This expedition is already in progress.');
+    }
+    assert.strictEqual(room.hasPlayer('u4'), false, 'Floor 5 locked expedition must reject new players');
+
+    coordinator.disposeAllTimers();
+  });
+
+  // --- Test 84: Reconnection Without Duplication, Host Authorization & Ownership Transfer (Edge Cases 7-9) ---
+  await test('84. Reconnection restores character without duplication, non-hosts are rejected, and host disconnect transfers ownership', async () => {
+    const { PartyCoordinator } = await import('./src/server/partyCoordinator.ts');
+    const { RoomClientIndex } = await import('./src/server/wsTransport.ts');
+
+    type MockClient = {
+      ws: {
+        readyState: number;
+        bufferedAmount: number;
+        send: (data: string) => void;
+        close: () => void;
+      };
+      userId: string;
+      username: string;
+      roomId: string | null;
+      needsKeyframe?: boolean;
+      messages: any[];
+    };
+
+    const rooms = new Map<string, GameRoom>();
+    const roomClientIndex = new RoomClientIndex<MockClient>();
+    const roomDeltaStates = new Map<string, { seq: number; lastBaseline: any }>();
+    const dirtyNonPlayingRooms = new Set<string>();
+    let seqCode = 1;
+
+    const coordinator = new PartyCoordinator<MockClient>({
+      rooms,
+      roomClientIndex,
+      roomDeltaStates,
+      dirtyNonPlayingRooms,
+      disconnectGraceMs: 25,
+      generateRoomCode: () => `BYND-R${seqCode++}`,
+      sendJson: (ws, msg) => ws.send(JSON.stringify(msg)),
+      broadcastToRoom: (roomId, msg) => {
+        const raw = JSON.stringify(msg);
+        for (const c of roomClientIndex.getRoomClients(roomId)) {
+          c.ws.send(raw);
+        }
+      },
+      broadcastRoomList: () => {},
+    });
+
+    const mkClient = (id: string, username: string): MockClient => {
+      const messages: any[] = [];
+      return {
+        userId: id,
+        username,
+        roomId: null,
+        needsKeyframe: false,
+        messages,
+        ws: {
+          readyState: 1,
+          bufferedAmount: 0,
+          send: (data: string) => messages.push(JSON.parse(data)),
+          close: () => {},
+        },
+      };
+    };
+
+    const host = mkClient('host_1', 'OriginalHost');
+    const ally = mkClient('ally_2', 'FaithfulAlly');
+
+    const room = coordinator.createParty(
+      host,
+      { id: 'host_1', username: 'OriginalHost', heroClass: 'vanguard' },
+      { name: 'Reconnect & Host Test', difficulty: 'Heroic', seed: 9191 }
+    );
+    coordinator.joinOrReconnectRoom(
+      ally,
+      { id: 'ally_2', username: 'FaithfulAlly', heroClass: 'cleric' },
+      room.roomId
+    );
+
+    // Case 9 (waiting lobby): Non-host cannot start expedition directly
+    const nonHostStart = coordinator.startExpedition(ally);
+    assert.strictEqual(nonHostStart.ok, false);
+    assert.strictEqual(room.status, 'waiting', 'Non-host start attempt must leave party in waiting');
+
+    // Host starts expedition
+    assert.strictEqual(coordinator.startExpedition(host).ok, true);
+
+    // Mutate ally's run state (gold, relics, hp, kills, position)
+    const allyState = room.getPlayerState('ally_2')!;
+    allyState.gold = 340;
+    allyState.relics.push('crimson_fang');
+    allyState.kills = 12;
+    allyState.hp = 64;
+    allyState.x += 48;
+
+    // Case 7: Ally disconnects and reconnects on a new socket -> character restored, zero duplicates
+    coordinator.handleSocketDisconnect(ally);
+    assert.strictEqual(room.isPlayerConnected('ally_2'), false);
+    assert.strictEqual(room.getPlayerCount(), 2, 'Active run must retain disconnected player slot');
+
+    const allyReconnected = mkClient('ally_2', 'FaithfulAlly');
+    const rejoinRes = coordinator.joinOrReconnectRoom(
+      allyReconnected,
+      { id: 'ally_2', username: 'FaithfulAlly', heroClass: 'cleric' },
+      room.roomId
+    );
+    assert.strictEqual(rejoinRes.ok, true);
+    assert.strictEqual(room.getPlayerCount(), 2, 'Reconnecting must NEVER create a duplicate character');
+    const restored = room.getPlayerState('ally_2')!;
+    assert.strictEqual(restored.connected, true);
+    assert.strictEqual(restored.gold, 340);
+    assert.deepStrictEqual(restored.relics, ['crimson_fang']);
+    assert.strictEqual(restored.kills, 12);
+    assert.strictEqual(restored.hp, 64);
+
+    // Case 9 (active expedition): Non-host cannot restart or return to lobby
+    assert.strictEqual(coordinator.restartExpedition(allyReconnected).ok, false);
+    assert.strictEqual(coordinator.returnToLobby(allyReconnected).ok, false);
+
+    // Case 8: Host permanently disconnects -> ownership transfers after grace period
+    coordinator.handleSocketDisconnect(host);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.strictEqual(room.hostId, 'ally_2', 'Host ID must transfer to connected party member');
+    assert.strictEqual(room.hostName, 'FaithfulAlly', 'Host name must update on transfer');
+    assert.ok(
+      room.chat.some((m) => m.system && m.text.includes('Host ownership transferred to FaithfulAlly')),
+      'Ownership transfer must emit system notification'
+    );
+
+    // Former host cannot start/restart as host anymore if rejoining as regular member
+    const hostRejoin = mkClient('host_1', 'OriginalHost');
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(hostRejoin, { id: 'host_1', username: 'OriginalHost', heroClass: 'vanguard' }, room.roomId).ok,
+      true
+    );
+    assert.strictEqual(coordinator.restartExpedition(hostRejoin).ok, false, 'Demoted original host must no longer have host authority');
+    assert.strictEqual(coordinator.restartExpedition(allyReconnected).ok, true, 'New host must be authorized to restart');
+
+    coordinator.disposeAllTimers();
+  });
+
+  // --- Test 85: Victory & Defeat Return to Unlocked Waiting Lobby + Second Fresh Run + Delta Sync (Edge Cases 10-12) ---
+  await test('85. Victory and defeat return party to unlocked waiting lobby, preserve permanent stats, start fresh 2nd run, and delta-sync metadata', async () => {
+    const { PartyCoordinator } = await import('./src/server/partyCoordinator.ts');
+    const { RoomClientIndex } = await import('./src/server/wsTransport.ts');
+    const { cloneSnapshotBaseline, computeSnapshotDelta, applySnapshotDelta } = await import('./src/shared/snapshotDelta.ts');
+
+    type MockClient = {
+      ws: {
+        readyState: number;
+        bufferedAmount: number;
+        send: (data: string) => void;
+        close: () => void;
+      };
+      userId: string;
+      username: string;
+      roomId: string | null;
+      needsKeyframe?: boolean;
+      messages: any[];
+    };
+
+    const rooms = new Map<string, GameRoom>();
+    const roomClientIndex = new RoomClientIndex<MockClient>();
+    const roomDeltaStates = new Map<string, { seq: number; lastBaseline: any }>();
+    const dirtyNonPlayingRooms = new Set<string>();
+    let seqCode = 1;
+
+    const coordinator = new PartyCoordinator<MockClient>({
+      rooms,
+      roomClientIndex,
+      roomDeltaStates,
+      dirtyNonPlayingRooms,
+      disconnectGraceMs: 25,
+      generateRoomCode: () => `BYND-E${seqCode++}`,
+      sendJson: (ws, msg) => ws.send(JSON.stringify(msg)),
+      broadcastToRoom: (roomId, msg) => {
+        const raw = JSON.stringify(msg);
+        for (const c of roomClientIndex.getRoomClients(roomId)) {
+          c.ws.send(raw);
+        }
+      },
+      broadcastRoomList: () => {},
+    });
+
+    const mkClient = (id: string, username: string): MockClient => ({
+      userId: id,
+      username,
+      roomId: null,
+      needsKeyframe: false,
+      messages: [],
+      ws: {
+        readyState: 1,
+        bufferedAmount: 0,
+        send: () => {},
+        close: () => {},
+      },
+    });
+
+    const host = mkClient('h1', 'RunHost');
+    const ally = mkClient('a2', 'RunAlly');
+    const newcomer = mkClient('n3', 'LateJoiner');
+
+    const room = coordinator.createParty(
+      host,
+      {
+        id: 'h1',
+        username: 'RunHost',
+        heroClass: 'vanguard',
+        savedStats: {
+          level: 12,
+          xp: 45,
+          strength: 10,
+          vitality: 8,
+          dexterity: 0,
+          intelligence: 0,
+          faith: 0,
+          attributePoints: 4,
+          storage: ['crimson_fang'],
+        },
+      },
+      { name: 'Victory & Defeat Test', difficulty: 'Normal', seed: 3131 }
+    );
+    coordinator.joinOrReconnectRoom(ally, { id: 'a2', username: 'RunAlly', heroClass: 'ranger' }, room.roomId);
+    assert.strictEqual(coordinator.startExpedition(host).ok, true);
+
+    // Accumulate run-specific rewards in Floor 10 victory
+    room.loadFloor(10, 2);
+    const p1 = room.getPlayerState('h1')!;
+    const p2 = room.getPlayerState('a2')!;
+    p1.gold = 999;
+    p1.relics = ['sunfire_signet', 'bastion_pauldron'];
+    p1.kills = 25;
+    p2.kills = 19;
+
+    // Case 10: Reach Victory via Floor 10 portal -> host returns party to unlocked waiting lobby
+    room.map.portalActive = true;
+    p1.x = room.map.portalPos.x;
+    p1.y = room.map.portalPos.y;
+    p2.x = room.map.portalPos.x;
+    p2.y = room.map.portalPos.y;
+    room.performAction('h1', 'interact');
+    room.performAction('a2', 'interact');
+    assert.strictEqual(room.status, 'victory');
+
+    // Baseline before return-to-lobby for delta compression verification
+    const victorySnap = room.buildNetworkSnapshot();
+    const baselineVictory = cloneSnapshotBaseline(victorySnap);
+
+    // Newcomer still cannot bypass into ended run until returned to waiting lobby
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(newcomer, { id: 'n3', username: 'LateJoiner', heroClass: 'cleric' }, room.roomId).ok,
+      false
+    );
+
+    // Host returns to lobby
+    assert.strictEqual(coordinator.returnToLobby(host).ok, true);
+    assert.strictEqual(room.status, 'waiting', 'Victory return-to-lobby must restore waiting status');
+    assert.strictEqual(room.isPartyLocked(), false, 'Party must be unlocked in waiting lobby');
+    assert.strictEqual(room.lastRunSummary?.outcome, 'victory');
+
+    // Verify permanent progression preserved while run-specific state reset
+    assert.strictEqual(p1.level, 12, 'Permanent level must be preserved');
+    assert.strictEqual(p1.strength, 10, 'Permanent attributes must be preserved');
+    assert.deepStrictEqual(p1.storage, ['crimson_fang'], 'Permanent vault storage must be preserved');
+    assert.strictEqual(p1.gold, 0, 'Run gold must reset');
+    assert.deepStrictEqual(p1.relics, [], 'Run relics must reset');
+    assert.strictEqual(p1.kills, 0, 'Run kill counter must reset');
+
+    // Verify delta compression accurately reflects lastRunSummary + waiting status
+    const waitingSnap = room.buildNetworkSnapshot();
+    const deltaVicToWait = computeSnapshotDelta(baselineVictory, waitingSnap, 1, 2);
+    const reconstructedWait = applySnapshotDelta(baselineVictory, deltaVicToWait);
+    assert.deepStrictEqual(reconstructedWait, waitingSnap);
+
+    // New player CAN now join the unlocked party
+    assert.strictEqual(
+      coordinator.joinOrReconnectRoom(newcomer, { id: 'n3', username: 'LateJoiner', heroClass: 'cleric' }, room.roomId).ok,
+      true,
+      'Unlocked lobby after victory must allow new members to join'
+    );
+    assert.strictEqual(room.getPlayerCount(), 3);
+
+    // Case 11 & 12: Start 2nd expedition together -> trigger Defeat -> return to waiting lobby -> start 3rd fresh run
+    assert.strictEqual(coordinator.startExpedition(host).ok, true);
+    assert.strictEqual(room.status, 'playing');
+    assert.strictEqual(room.floor, 1);
+    assert.strictEqual(room.getPlayerCount(), 3);
+
+    // Simulate party wipe on Floor 2 -> Defeat
+    room.loadFloor(2, 3);
+    for (const prState of [room.getPlayerState('h1')!, room.getPlayerState('a2')!, room.getPlayerState('n3')!]) {
+      prState.downed = true;
+      prState.hp = 0;
+    }
+    room.tick(25);
+    assert.strictEqual(room.status, 'defeat', 'All connected players downed must transition room to defeat');
+
+    assert.strictEqual(coordinator.returnToLobby(host).ok, true);
+    assert.strictEqual(room.status, 'waiting', 'Defeat return-to-lobby must unlock party back to waiting');
+    assert.strictEqual(room.lastRunSummary?.outcome, 'defeat');
+
+    // Host starts another fresh expedition with all 3 players together
+    assert.strictEqual(coordinator.startExpedition(host).ok, true);
+    assert.strictEqual(room.status, 'playing');
+    assert.strictEqual(room.floor, 1);
+    assert.strictEqual(room.isPartyLocked(), true);
+    for (const uid of ['h1', 'a2', 'n3']) {
+      const ps = room.getPlayerState(uid)!;
+      assert.strictEqual(ps.downed, false);
+      assert.strictEqual(ps.hp, ps.maxHp);
+    }
+
+    coordinator.disposeAllTimers();
+  });
+
+  // --- Test 86: Waiting Lobby Per-Member Ready Toggle, HUD Key Invalidation & Lifecycle Reset ---
+  await test('86. Party waiting lobby supports per-member Ready toggle, delta sync, HUD key refresh, and resets on run start', async () => {
+    const { PartyCoordinator } = await import('./src/server/partyCoordinator.ts');
+    const { RoomClientIndex } = await import('./src/server/wsTransport.ts');
+    const { cloneSnapshotBaseline, computeSnapshotDelta, applySnapshotDelta } = await import(
+      './src/shared/snapshotDelta.ts'
+    );
+    const { buildSnapshotHudKey } = await import('./src/client/networkStats.ts');
+
+    type MockClient = {
+      ws: {
+        readyState: number;
+        bufferedAmount: number;
+        send: (data: string) => void;
+        close: () => void;
+      };
+      userId: string;
+      username: string;
+      roomId: string | null;
+      needsKeyframe?: boolean;
+      messages: any[];
+    };
+
+    const rooms = new Map<string, GameRoom>();
+    const roomClientIndex = new RoomClientIndex<MockClient>();
+    const roomDeltaStates = new Map<string, { seq: number; lastBaseline: any }>();
+    const dirtyNonPlayingRooms = new Set<string>();
+    const mkClient = (userId: string, username: string): MockClient => {
+      const msgs: any[] = [];
+      return {
+        userId,
+        username,
+        roomId: null,
+        messages: msgs,
+        ws: {
+          readyState: 1,
+          bufferedAmount: 0,
+          send: (raw: string) => msgs.push(JSON.parse(raw)),
+          close: () => {},
+        },
+      };
+    };
+
+    const coordinator = new PartyCoordinator<MockClient>({
+      rooms,
+      roomClientIndex,
+      roomDeltaStates,
+      dirtyNonPlayingRooms,
+      generateRoomCode: () => 'BYND-RDY1',
+      sendJson: (ws, msg) => ws.send(JSON.stringify(msg)),
+      broadcastToRoom: (roomId, msg) => {
+        for (const c of roomClientIndex.getRoomClients(roomId)) {
+          c.ws.send(JSON.stringify(msg));
+        }
+      },
+      broadcastRoomList: () => {},
+    });
+
+    const host = mkClient('r1', 'HostReady');
+    const ally = mkClient('r2', 'AllyReady');
+    const room = coordinator.createParty(
+      host,
+      { id: 'r1', username: 'HostReady', heroClass: 'vanguard' },
+      { name: 'Ready Check Lobby', difficulty: 'Normal', seed: 6001 }
+    );
+    coordinator.joinOrReconnectRoom(
+      ally,
+      { id: 'r2', username: 'AllyReady', heroClass: 'cleric' },
+      room.roomId
+    );
+
+    assert.strictEqual(room.getPlayerState('r1')!.ready, false);
+    assert.strictEqual(room.getPlayerState('r2')!.ready, false);
+
+    const snapBefore = room.buildNetworkSnapshot();
+    const baseline = cloneSnapshotBaseline(snapBefore);
+    const hudKeyBefore = buildSnapshotHudKey(snapBefore, 'r1', room.map);
+
+    dirtyNonPlayingRooms.clear();
+    const toggleRes = coordinator.setPlayerReady(ally);
+    assert.strictEqual(toggleRes.ok, true);
+    if (toggleRes.ok) {
+      assert.strictEqual(toggleRes.ready, true);
+    }
+    assert.strictEqual(room.getPlayerState('r2')!.ready, true);
+    assert.strictEqual(room.getPlayerState('r1')!.ready, false);
+    assert.strictEqual(dirtyNonPlayingRooms.has(room.roomId), true, 'Toggling ready must mark waiting room dirty for snapshot push');
+
+    const snapAfterAllyReady = room.buildNetworkSnapshot();
+    const hudKeyAfter = buildSnapshotHudKey(snapAfterAllyReady, 'r1', room.map);
+    assert.notStrictEqual(hudKeyBefore, hudKeyAfter, 'Host HUD key must update immediately when ally toggles Ready');
+
+    const delta = computeSnapshotDelta(baseline, snapAfterAllyReady, 1, 2);
+    const reconstructed = applySnapshotDelta(baseline, delta);
+    assert.deepStrictEqual(reconstructed, snapAfterAllyReady, 'Delta compression must faithfully transport player ready toggle');
+
+    // Host toggles own ready on, ally toggles explicit false
+    assert.strictEqual(coordinator.setPlayerReady(host, true).ok, true);
+    assert.strictEqual(room.getPlayerState('r1')!.ready, true);
+    assert.strictEqual(coordinator.setPlayerReady(ally, false).ok, true);
+    assert.strictEqual(room.getPlayerState('r2')!.ready, false);
+
+    // Starting expedition resets ready state and disallows room:set_ready mid-run
+    assert.strictEqual(coordinator.startExpedition(host).ok, true);
+    assert.strictEqual(room.status, 'playing');
+    assert.strictEqual(room.getPlayerState('r1')!.ready, false);
+    assert.strictEqual(room.getPlayerState('r2')!.ready, false);
+
+    const midRunReady = coordinator.setPlayerReady(ally, true);
+    assert.strictEqual(midRunReady.ok, false, 'Cannot toggle waiting lobby ready while expedition is active');
+
+    coordinator.disposeAllTimers();
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

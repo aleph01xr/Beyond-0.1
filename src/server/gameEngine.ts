@@ -17,6 +17,7 @@ import {
   type FloorBlessingId,
   type GameSnapshot,
   type HeroClassId,
+  type LastRunSummary,
   type NpcState,
   type PlayerInputState,
   type PlayerState,
@@ -25,6 +26,7 @@ import {
   type ProjectileState,
   type PropState,
   type RoomNode,
+  type RoomStatus,
   type RoomSummary,
   type TrainingDummyState,
 } from '../shared/types.ts';
@@ -57,12 +59,13 @@ const MAX_FLOORS_FOR_VICTORY = 10;
 export class GameRoom {
   public readonly roomId: string;
   public readonly name: string;
+  public hostId: string;
   public hostName: string;
   public readonly difficulty: DifficultyTier;
   public readonly baseSeed: number;
   public readonly maxPlayers: number;
 
-  public status: 'playing' | 'victory' | 'defeat' = 'playing';
+  public status: RoomStatus = 'playing';
   public floor = 1;
   public map!: DungeonMap;
   public enemies: EnemyState[] = [];
@@ -74,10 +77,12 @@ export class GameRoom {
   public pendingEvents: FloatingEvent[] = [];
   public chat: ChatMessage[] = [];
   public spawnPoint = { x: 256, y: 256 };
+  public lastRunSummary: LastRunSummary | null = null;
 
   private players = new Map<string, PlayerRuntime>();
   private entitySeq = 1;
   private startedAt = Date.now();
+  private endedAt: number | null = null;
   private zoneTickAccumMs = 0;
   private statusDotAccumMs = 0;
   private clericAuraAccumMs = 0;
@@ -86,17 +91,21 @@ export class GameRoom {
   public onKillCallback?: (playerId: string) => void;
   public onReviveCallback?: (playerId: string) => void;
   public onProgressionUpdateCallback?: (playerId: string, state: PlayerState) => void;
+  public onChatMessageCallback?: (msg: ChatMessage) => void;
 
   constructor(opts: {
     roomId: string;
     name: string;
     hostName: string;
+    hostId?: string;
     difficulty: DifficultyTier;
     seed?: number;
     initialFloor?: number;
+    initialStatus?: RoomStatus;
   }) {
     this.roomId = opts.roomId;
     this.name = opts.name;
+    this.hostId = opts.hostId || '';
     this.hostName = opts.hostName;
     this.difficulty = opts.difficulty;
     this.maxPlayers = opts.roomId === 'TAVERN-HUB' ? 50 : 4;
@@ -104,8 +113,24 @@ export class GameRoom {
       opts.seed && opts.seed > 0
         ? Math.floor(opts.seed)
         : Math.floor(100000 + Math.random() * 899999);
-    const startFloor = opts.initialFloor !== undefined ? opts.initialFloor : (opts.roomId === 'TAVERN-HUB' ? 0 : 1);
-    this.loadFloor(startFloor, 1);
+    const startFloor =
+      opts.initialFloor !== undefined ? opts.initialFloor : opts.roomId === 'TAVERN-HUB' ? 0 : 1;
+    this.status = opts.roomId === 'TAVERN-HUB' ? 'playing' : (opts.initialStatus ?? 'playing');
+
+    if (this.status === 'waiting') {
+      this.floor = startFloor;
+      const preview = generateDungeonFloor(startFloor, this.baseSeed, this.difficulty, 1);
+      this.map = preview.map;
+      this.spawnPoint = preview.spawnPoint;
+      this.enemies = [];
+      this.props = [];
+      this.npcs = [];
+      this.trainingDummies = [];
+      this.projectiles = [];
+      this.zones = [];
+    } else {
+      this.loadFloor(startFloor, 1);
+    }
   }
 
   public static computePlayerMaxHp(
@@ -562,14 +587,12 @@ export class GameRoom {
     this.pushSystemChat(`[ADMIN] Enemy AI processing ${state ? 'RESUMED' : 'PAUSED'}.`);
   }
 
-  public restartRun(): DungeonMap {
-    this.status = 'playing';
-    this.startedAt = Date.now();
+  private resetPlayersForNewRun(): void {
     for (const pr of this.players.values()) {
-      // Preserve: level, xp, nextXp, strength, vitality, dexterity, intelligence, faith, attributePoints
+      // Preserve: level, xp, nextXp, strength, vitality, dexterity, intelligence, faith, attributePoints, storage
 
       // Clear run-specific temporary state and relics BEFORE recalculating HP
-      pr.state.shield = 0;
+      pr.state.shield = 15;
       pr.state.gold = 0;
       pr.state.potions = 2;
       pr.state.relics = [];
@@ -582,10 +605,31 @@ export class GameRoom {
       pr.state.kills = 0;
       pr.state.damageDealt = 0;
       pr.state.revives = 0;
+      pr.state.readyNextFloor = false;
+      pr.state.ready = false;
       pr.state.skillCooldownMs = 0;
       pr.state.ultCooldownMs = 0;
+      pr.state.dashCooldownMs = 0;
+      pr.state.attackAnimMs = 0;
+      pr.state.hasteMs = 0;
+      pr.state.slowedMs = 0;
+      pr.state.stunnedMs = 0;
+      pr.state.burnedMs = 0;
+      pr.state.frozenMs = 0;
+      pr.state.shockedMs = 0;
+      pr.state.poisonedMs = 0;
+      pr.state.bleedingMs = 0;
+      pr.state.silencedMs = 0;
+      pr.input = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        attack: false,
+        aimAngle: 0,
+      };
 
-      // Recalculate HP based on preserved permanent stats (relics are now empty, removing Bastion Pauldron bonus)
+      // Recalculate HP based on preserved permanent stats (removing Bastion Pauldron bonus)
       pr.state.maxHp = GameRoom.computePlayerMaxHp(
         pr.state.heroClass,
         pr.state.level,
@@ -594,14 +638,196 @@ export class GameRoom {
       );
       pr.state.hp = pr.state.maxHp;
     }
+  }
+
+  public startExpedition(): DungeonMap {
+    this.lastRunSummary = null;
+    this.status = 'playing';
+    this.startedAt = Date.now();
+    this.endedAt = null;
+    this.resetPlayersForNewRun();
+    this.loadFloor(1, Math.max(1, this.players.size));
+    this.pushSystemChat(`Host ${this.hostName} started the expedition! Entering Floor 1.`);
+    return this.map;
+  }
+
+  public returnToWaitingLobby(): void {
+    if (this.roomId === 'TAVERN-HUB') return;
+    if (this.status === 'victory' || this.status === 'defeat') {
+      this.lastRunSummary = {
+        outcome: this.status,
+        floor: this.floor,
+        elapsedSec: this.getElapsedSec(),
+        players: Array.from(this.players.values()).map((r) => ({
+          id: r.state.id,
+          username: r.state.username,
+          heroClass: r.state.heroClass,
+          level: r.state.level,
+          kills: r.state.kills,
+          revives: r.state.revives,
+        })),
+      };
+    }
+
+    // Prune offline disconnected players so stale offline slots do not occupy the unlocked waiting lobby
+    for (const [pid, pr] of Array.from(this.players.entries())) {
+      if (!pr.state.connected) {
+        this.players.delete(pid);
+      }
+    }
+
+    if (this.players.size > 0 && !this.isPlayerConnected(this.hostId)) {
+      this.transferHostToConnectedMember();
+    }
+
+    this.resetPlayersForNewRun();
+    this.enemies = [];
+    this.projectiles = [];
+    this.zones = [];
+    this.props = [];
+    this.npcs = [];
+    this.trainingDummies = [];
+    this.pendingEvents = [];
+    this.floor = 1;
+    this.status = 'waiting';
+    this.startedAt = Date.now();
+    this.endedAt = null;
+
+    let idx = 0;
+    for (const pr of this.players.values()) {
+      const offsetAngle = (idx * Math.PI) / 2;
+      pr.state.x = this.spawnPoint.x + Math.cos(offsetAngle) * 20;
+      pr.state.y = this.spawnPoint.y + Math.sin(offsetAngle) * 20;
+      pr.state.vx = 0;
+      pr.state.vy = 0;
+      pr.enteredRooms.clear();
+      pr.enteredRooms.add(0);
+      idx++;
+    }
+
+    this.pushSystemChat('Party returned to waiting lobby. The party is now open for new members.');
+  }
+
+  public restartRun(): DungeonMap {
+    this.lastRunSummary = null;
+    this.status = 'playing';
+    this.startedAt = Date.now();
+    this.endedAt = null;
+    this.resetPlayersForNewRun();
     const restartFloor = this.roomId === 'TAVERN-HUB' ? 0 : 1;
-    this.loadFloor(restartFloor, this.players.size);
+    this.loadFloor(restartFloor, Math.max(1, this.players.size));
     this.pushSystemChat(
       this.roomId === 'TAVERN-HUB'
         ? `Sanctuary Tavern refreshed.`
-        : `Expedition restarted on Seed ${this.baseSeed}.`
+        : `Host ${this.hostName} restarted the expedition on Seed ${this.baseSeed}.`
     );
     return this.map;
+  }
+
+  public isHost(playerId: string): boolean {
+    return Boolean(playerId && this.hostId === playerId);
+  }
+
+  public isPartyLocked(): boolean {
+    return this.roomId !== 'TAVERN-HUB' && this.status === 'playing';
+  }
+
+  public isPlayerConnected(playerId: string): boolean {
+    return Boolean(this.players.get(playerId)?.state.connected);
+  }
+
+  public getConnectedPlayerCount(): number {
+    let count = 0;
+    for (const pr of this.players.values()) {
+      if (pr.state.connected) count++;
+    }
+    return count;
+  }
+
+  public setPlayerReady(
+    playerId: string,
+    ready?: boolean
+  ): { ok: true; ready: boolean } | { ok: false; reason: string } {
+    if (this.roomId === 'TAVERN-HUB') {
+      return { ok: false, reason: 'Ready status is only used in expedition party lobbies.' };
+    }
+    if (this.status !== 'waiting') {
+      return { ok: false, reason: 'Ready status can only be toggled while in the waiting lobby.' };
+    }
+    const pr = this.players.get(playerId);
+    if (!pr) {
+      return { ok: false, reason: 'Player is not a member of this party.' };
+    }
+    const nextReady = ready === undefined ? !Boolean(pr.state.ready) : Boolean(ready);
+    pr.state.ready = nextReady;
+    return { ok: true, ready: nextReady };
+  }
+
+  public canAcceptJoin(
+    playerId: string
+  ):
+    | { allowed: true; isReconnect: boolean }
+    | { allowed: false; code: 'in_progress' | 'ended' | 'full'; reason: string } {
+    if (this.roomId === 'TAVERN-HUB') {
+      if (this.hasPlayer(playerId)) return { allowed: true, isReconnect: true };
+      if (this.players.size >= this.maxPlayers) {
+        return { allowed: false, code: 'full', reason: 'Sanctuary Tavern is currently full.' };
+      }
+      return { allowed: true, isReconnect: false };
+    }
+
+    if (this.hasPlayer(playerId)) {
+      return { allowed: true, isReconnect: true };
+    }
+    if (this.status === 'playing') {
+      return {
+        allowed: false,
+        code: 'in_progress',
+        reason: 'This expedition is already in progress.',
+      };
+    }
+    if (this.status === 'victory' || this.status === 'defeat') {
+      return {
+        allowed: false,
+        code: 'ended',
+        reason: 'This expedition has ended. Wait for the host to return to the waiting lobby.',
+      };
+    }
+    if (this.players.size >= this.maxPlayers) {
+      return {
+        allowed: false,
+        code: 'full',
+        reason: 'That expedition party is already full (4/4).',
+      };
+    }
+    return { allowed: true, isReconnect: false };
+  }
+
+  public tryJoinOrReconnectPlayer(
+    playerId: string,
+    username: string,
+    heroClass: HeroClassId,
+    isAdmin = false,
+    savedStats?: {
+      level: number;
+      xp: number;
+      strength: number;
+      vitality: number;
+      dexterity: number;
+      intelligence: number;
+      faith: number;
+      attributePoints: number;
+      storage?: string[];
+    }
+  ):
+    | { ok: true; isReconnect: boolean; player: PlayerState }
+    | { ok: false; code: 'in_progress' | 'ended' | 'full'; reason: string } {
+    const check = this.canAcceptJoin(playerId);
+    if (!check.allowed) {
+      return { ok: false, code: check.code, reason: check.reason };
+    }
+    const player = this.addOrReconnectPlayer(playerId, username, heroClass, isAdmin, savedStats);
+    return { ok: true, isReconnect: check.isReconnect, player };
   }
 
   public addOrReconnectPlayer(
@@ -623,10 +849,14 @@ export class GameRoom {
   ): PlayerState {
     const existing = this.players.get(playerId);
     if (existing) {
+      const wasDisconnected = !existing.state.connected;
       existing.state.connected = true;
       existing.state.username = username;
       existing.state.isAdmin = isAdmin || Boolean(existing.state.isAdmin);
       if (!existing.state.storage) existing.state.storage = [];
+      if (wasDisconnected && this.roomId !== 'TAVERN-HUB') {
+        this.pushSystemChat(`${username} reconnected.`);
+      }
       return existing.state;
     }
 
@@ -684,6 +914,7 @@ export class GameRoom {
       damageDealt: 0,
       revives: 0,
       readyNextFloor: false,
+      ready: false,
       pendingRelicChoices: [],
       connected: true,
       isAdmin: isAdmin,
@@ -722,18 +953,80 @@ export class GameRoom {
       attackCount: 0,
     });
 
-    this.pushSystemChat(`${username} (${def.name}) joined the expedition.`);
+    if (!this.hostId && this.roomId !== 'TAVERN-HUB') {
+      this.hostId = playerId;
+      this.hostName = username;
+    }
+
+    this.pushSystemChat(
+      `${username} (${def.name}) joined the ${this.status === 'waiting' ? 'party lobby' : 'expedition'}.`
+    );
     return state;
+  }
+
+  public markPlayerDisconnected(playerId: string): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    pr.input = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      attack: false,
+      aimAngle: pr.input.aimAngle,
+      stickX: 0,
+      stickY: 0,
+    };
+    pr.state.vx = 0;
+    pr.state.vy = 0;
+    if (pr.state.connected) {
+      pr.state.connected = false;
+      if (this.roomId !== 'TAVERN-HUB') {
+        this.pushSystemChat(`${pr.state.username} disconnected.`);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  public transferHostToConnectedMember(
+    excludePlayerId?: string
+  ): { previousHostName: string; newHostId: string; newHostName: string } | null {
+    let candidate: PlayerRuntime | undefined;
+    for (const pr of this.players.values()) {
+      if (pr.state.id !== excludePlayerId && pr.state.connected) {
+        candidate = pr;
+        break;
+      }
+    }
+    if (!candidate) return null;
+    const prevName = this.hostName;
+    this.hostId = candidate.state.id;
+    this.hostName = candidate.state.username;
+    this.pushSystemChat(`Host ownership transferred to ${this.hostName}.`);
+    return {
+      previousHostName: prevName,
+      newHostId: this.hostId,
+      newHostName: this.hostName,
+    };
   }
 
   public removePlayer(playerId: string): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
+    const wasHost = playerId === this.hostId || pr.state.username === this.hostName;
     this.players.delete(playerId);
     this.pushSystemChat(`${pr.state.username} departed the party.`);
-    if (this.players.size > 0 && pr.state.username === this.hostName) {
-      const first = this.players.values().next().value as PlayerRuntime | undefined;
-      if (first) this.hostName = first.state.username;
+    if (this.players.size > 0 && wasHost) {
+      const transferred = this.transferHostToConnectedMember();
+      if (!transferred) {
+        const first = this.players.values().next().value as PlayerRuntime | undefined;
+        if (first) {
+          this.hostId = first.state.id;
+          this.hostName = first.state.username;
+          this.pushSystemChat(`Host ownership transferred to ${this.hostName}.`);
+        }
+      }
     }
   }
 
@@ -769,6 +1062,9 @@ export class GameRoom {
     };
     this.chat.push(msg);
     if (this.chat.length > 40) this.chat.shift();
+    if (this.onChatMessageCallback) {
+      this.onChatMessageCallback(msg);
+    }
     return msg;
   }
 
@@ -778,7 +1074,7 @@ export class GameRoom {
 
   public updateInput(playerId: string, input: PlayerInputState, seq?: number): void {
     const pr = this.players.get(playerId);
-    if (!pr) return;
+    if (!pr || this.status !== 'playing') return;
     pr.input = {
       up: Boolean(input.up),
       down: Boolean(input.down),
@@ -1393,6 +1689,10 @@ export class GameRoom {
             }
             if (this.floor >= MAX_FLOORS_FOR_VICTORY) {
               this.status = 'victory';
+              this.endedAt = Date.now();
+              if (this.roomId !== 'TAVERN-HUB' && !this.isPlayerConnected(this.hostId)) {
+                this.transferHostToConnectedMember();
+              }
               this.pushSystemChat(
                 `Victory! The party conquered Floor ${this.floor} and reclaimed Beyond!`
               );
@@ -2219,6 +2519,10 @@ export class GameRoom {
       );
       if (!anyAlive) {
         this.status = 'defeat';
+        this.endedAt = Date.now();
+        if (this.roomId !== 'TAVERN-HUB' && !this.isPlayerConnected(this.hostId)) {
+          this.transferHostToConnectedMember();
+        }
         this.pushSystemChat(`The expedition has fallen on Floor ${this.floor}.`);
         return;
       }
@@ -4636,10 +4940,17 @@ export class GameRoom {
     sharedMoveWithCollision(this.map, this.props, entity, dx, dy, radius, this.npcs);
   }
 
+  public getElapsedSec(): number {
+    if (this.status === 'waiting') return 0;
+    const end = this.endedAt ?? Date.now();
+    return Math.max(0, Math.floor((end - this.startedAt) / 1000));
+  }
+
   public getSummary(): RoomSummary {
     return {
       roomId: this.roomId,
       name: this.name,
+      hostId: this.hostId,
       hostName: this.hostName,
       difficulty: this.difficulty,
       floor: this.floor,
@@ -4692,11 +5003,14 @@ export class GameRoom {
     return {
       roomId: this.roomId,
       roomName: this.name,
+      hostId: this.hostId,
+      hostName: this.hostName,
       difficulty: this.difficulty,
       status: this.status,
       floor: this.floor,
       seed: this.baseSeed,
-      elapsedSec: Math.floor((Date.now() - this.startedAt) / 1000),
+      elapsedSec: this.getElapsedSec(),
+      lastRunSummary: this.lastRunSummary,
       bossDefeated: this.map.portalActive,
       bossRoomCleared,
       bossWards: this.getBossWards(),

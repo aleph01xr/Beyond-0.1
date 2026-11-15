@@ -214,7 +214,10 @@ export function buildSnapshotHudKey(
   }
 
   const partyKey = snap.players
-    .map((p) => `${p.id}:${p.hp}:${p.maxHp}:${p.shield}:${p.downed ? 1 : 0}:${p.kills}:${p.revives}:${p.heroClass}`)
+    .map(
+      (p) =>
+        `${p.id}:${p.hp}:${p.maxHp}:${p.shield}:${p.downed ? 1 : 0}:${p.kills}:${p.revives}:${p.heroClass}:${p.connected ? 1 : 0}:${p.ready ? 1 : 0}`
+    )
     .join(',');
 
   const flagsKey = snap.roomClearedFlags
@@ -227,10 +230,13 @@ export function buildSnapshotHudKey(
 
   return [
     snap.roomId,
+    snap.hostId ?? '',
+    snap.hostName ?? '',
     snap.status,
     snap.floor,
     snap.seed,
     snap.elapsedSec,
+    snap.lastRunSummary?.outcome ?? '',
     snap.bossDefeated ? 1 : 0,
     snap.bossRoomCleared ? 1 : 0,
     snap.bossWards ?? 0,
@@ -249,7 +255,10 @@ export function buildSnapshotHudKey(
 
 export function buildLobbyRoomsKey(rooms: RoomSummary[], onlineCount: number): string {
   const roomParts = rooms
-    .map((r) => `${r.roomId}:${r.floor}:${r.playerCount}:${r.status}:${r.name}:${r.difficulty}`)
+    .map(
+      (r) =>
+        `${r.roomId}:${r.floor}:${r.playerCount}:${r.status}:${r.name}:${r.difficulty}:${r.hostName}:${r.hostId ?? ''}`
+    )
     .join(',');
   return `${onlineCount}|${roomParts}`;
 }

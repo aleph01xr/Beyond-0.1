@@ -51,10 +51,17 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Filter out the Tavern social room so only actual expeditions appear
-  const activeExpeditions = rooms.filter(
-    (r) => r.roomId !== 'TAVERN-HUB' && r.status === 'playing'
-  );
+  // Filter out the Tavern social room and sort open waiting lobbies before locked active expeditions
+  const activeExpeditions = rooms
+    .filter((r) => r.roomId !== 'TAVERN-HUB')
+    .sort((a, b) => {
+      const aOpen = a.status === 'waiting' && a.playerCount < a.maxPlayers ? 0 : 1;
+      const bOpen = b.status === 'waiting' && b.playerCount < b.maxPlayers ? 0 : 1;
+      return aOpen - bOpen;
+    });
+  const openPartyCount = activeExpeditions.filter(
+    (r) => r.status === 'waiting' && r.playerCount < r.maxPlayers
+  ).length;
 
   const handleLaunchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,7 +196,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 : 'border-transparent text-[#9D9AAC] hover:text-white hover:bg-[#201F2C]'
             }`}
           >
-            Parties ({activeExpeditions.length})
+            Parties ({openPartyCount})
           </button>
         </div>
 
@@ -314,7 +321,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                 type="submit"
                 className="stone-button stone-button-gold px-8 h-12 text-base font-bold shadow-lg"
               >
-                Embark on Floor 1
+                Create Party Lobby
               </button>
             </div>
           </form>
@@ -377,18 +384,40 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
               <div className="max-h-72 overflow-y-auto space-y-2 pr-1 divide-y divide-[#2B293A]">
                 {activeExpeditions.map((room) => {
                   const isFull = room.playerCount >= room.maxPlayers;
+                  const isLocked = room.status === 'playing';
+                  const isEnded = room.status === 'victory' || room.status === 'defeat';
+                  const joinDisabled = isFull || isLocked || isEnded;
+                  const statusLabel =
+                    room.status === 'waiting'
+                      ? 'Waiting Lobby'
+                      : room.status === 'playing'
+                        ? 'In Progress · Locked'
+                        : room.status === 'victory'
+                          ? 'Victory'
+                          : 'Fallen';
                   return (
                     <div
                       key={room.roomId}
                       className="pt-2 first:pt-0 flex flex-wrap items-center justify-between gap-3 p-3 bg-[#1C1B28] hover:bg-[#252336] border border-[#343248] transition-colors"
                     >
                       <div className="space-y-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-display font-semibold text-sm text-white">
                             {room.name}
                           </span>
                           <span className="px-1.5 py-0.5 bg-[#D9AA52]/20 border border-[#D9AA52]/40 font-mono text-[11px] text-[#FDE68A]">
                             {room.roomId}
+                          </span>
+                          <span
+                            className={`font-mono text-[10px] font-semibold ${
+                              room.status === 'waiting'
+                                ? 'text-emerald-400'
+                                : room.status === 'playing'
+                                  ? 'text-rose-400'
+                                  : 'text-amber-300'
+                            }`}
+                          >
+                            {statusLabel}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 text-xs text-[#A8A5B9] font-mono">
@@ -406,7 +435,7 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
                             {room.difficulty}
                           </span>
                           <span>·</span>
-                          <span>Floor {room.floor}</span>
+                          <span>{room.status === 'waiting' ? 'Lobby' : `Floor ${room.floor}`}</span>
                         </div>
                       </div>
 
@@ -424,11 +453,11 @@ export const ExpeditionGateModal: React.FC<ExpeditionGateModalProps> = ({
 
                         <button
                           type="button"
-                          disabled={isFull}
+                          disabled={joinDisabled}
                           onClick={() => handleQuickJoin(room.roomId)}
-                          className={`stone-button h-10 px-6 text-xs ${isFull ? 'stone-button-dark opacity-50' : 'stone-button-blue'}`}
+                          className={`stone-button h-10 px-6 text-xs ${joinDisabled ? 'stone-button-dark opacity-50' : 'stone-button-blue'}`}
                         >
-                          {isFull ? 'Party Full' : 'Join Party'}
+                          {isLocked ? 'In Progress' : isEnded ? 'Ended' : isFull ? 'Party Full' : 'Join Lobby'}
                         </button>
                       </div>
                     </div>

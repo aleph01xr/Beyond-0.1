@@ -8,6 +8,10 @@ import express from 'express';
 import pg from 'pg';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GameRoom } from './src/server/gameEngine.ts';
+import {
+  PartyCoordinator,
+  type PartyAccountInput,
+} from './src/server/partyCoordinator.ts';
 import { AccessToken } from 'livekit-server-sdk';
 import {
   broadcastSerialized,
@@ -515,6 +519,7 @@ interface RoomDeltaState {
 
 const rooms = new Map<string, GameRoom>();
 const roomDeltaStates = new Map<string, RoomDeltaState>();
+const dirtyNonPlayingRooms = new Set<string>();
 const clients = new Set<ConnectedClient>();
 const roomClientIndex = new RoomClientIndex<ConnectedClient>();
 
@@ -563,21 +568,7 @@ function broadcastToRoom(roomId: string, msg: ServerMessage, options: SendFrameO
   }
 }
 
-function createManagedRoom(opts: {
-  name: string;
-  hostName: string;
-  difficulty: DifficultyTier;
-  seed?: number;
-}): GameRoom {
-  const roomId = generateRoomCode();
-  const room = new GameRoom({
-    roomId,
-    name: opts.name.trim() || `${opts.hostName}'s Expedition`,
-    hostName: opts.hostName,
-    difficulty: opts.difficulty,
-    seed: opts.seed,
-  });
-
+function attachRoomPersistenceCallbacks(room: GameRoom): void {
   room.onFloorClearedCallback = async (playerIds, floor) => {
     for (const pid of playerIds) {
       const acc = accountsById.get(pid);
@@ -615,46 +606,47 @@ function createManagedRoom(opts: {
       acc.attributePoints = state.attributePoints;
       await persistAccount(acc).catch(err => {
         console.error('CRITICAL: Failed to persist progression update:', err);
-        // We can't easily undo the runtime change here, but we've logged it.
       });
     }
   };
-
-  rooms.set(roomId, room);
-  return room;
 }
 
-function leaveCurrentRoom(client: ConnectedClient): void {
-  if (!client.roomId) return;
-  const oldRoomId = client.roomId;
-  roomClientIndex.removeFromRoom(client, oldRoomId);
-  const room = rooms.get(oldRoomId);
-  if (room) {
-    const stillConnected = Array.from(roomClientIndex.getRoomClients(oldRoomId)).some(
-      (other) => other.userId === client.userId
-    );
-    if (!stillConnected) {
-      room.removePlayer(client.userId);
-      if (room.getPlayerCount() === 0 && oldRoomId !== 'TAVERN-HUB') {
-        rooms.delete(oldRoomId);
-        roomDeltaStates.delete(oldRoomId);
-      }
-    }
-  }
-  broadcastRoomList();
+function toPartyAccount(acc: AccountRecord): PartyAccountInput {
+  return {
+    id: acc.id,
+    username: acc.username,
+    heroClass: acc.lockedClass || acc.preferredClass || 'vanguard',
+    isAdmin: acc.isAdmin,
+    savedStats: {
+      level: acc.level || 1,
+      xp: acc.xp || 0,
+      strength: acc.strength || 0,
+      vitality: acc.vitality || 0,
+      dexterity: acc.dexterity || 0,
+      intelligence: acc.intelligence || 0,
+      faith: acc.faith || 0,
+      attributePoints: acc.attributePoints || 0,
+      storage: acc.storedRelics || [],
+    },
+  };
 }
+
+const partyCoordinator = new PartyCoordinator<ConnectedClient>({
+  rooms,
+  roomClientIndex,
+  roomDeltaStates,
+  dirtyNonPlayingRooms,
+  generateRoomCode,
+  sendJson: (ws, msg) => sendJsonMessage(ws, msg),
+  broadcastToRoom: (roomId, msg) => broadcastToRoom(roomId, msg),
+  broadcastRoomList,
+  onRoomCreated: attachRoomPersistenceCallbacks,
+});
 
 async function startServer() {
   await initStorage();
 
-  const tavernRoom = new GameRoom({
-    roomId: 'TAVERN-HUB',
-    name: 'Sanctuary Tavern & Social Hub',
-    hostName: 'Innkeeper',
-    difficulty: 'Normal',
-    seed: 777,
-  });
-  rooms.set('TAVERN-HUB', tavernRoom);
+  partyCoordinator.ensureTavernRoom();
 
   const app = express();
   app.use(express.json());
@@ -1247,7 +1239,9 @@ async function startServer() {
       if (msg.type === 'lobby:subscribe') {
         sendJson(ws, {
           type: 'lobby:rooms',
-          rooms: Array.from(rooms.values()).map((r) => r.getSummary()),
+          rooms: Array.from(rooms.values())
+            .filter((r) => r.roomId !== 'TAVERN-HUB')
+            .map((r) => r.getSummary()),
           onlineCount: clients.size,
         });
         return;
@@ -1261,104 +1255,25 @@ async function startServer() {
           });
           return;
         }
-        leaveCurrentRoom(client);
-        // Player is strictly locked to their account's hero class
-        const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
         const difficulty: DifficultyTier =
           msg.difficulty === 'Heroic' || msg.difficulty === 'Abyssal'
             ? msg.difficulty
             : 'Normal';
-        const room = createManagedRoom({
+        partyCoordinator.createParty(client, toPartyAccount(acc), {
           name: msg.name,
-          hostName: acc.username,
           difficulty,
           seed: msg.seed,
         });
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
-          level: acc.level || 1,
-          xp: acc.xp || 0,
-          strength: acc.strength || 0,
-          vitality: acc.vitality || 0,
-          dexterity: acc.dexterity || 0,
-          intelligence: acc.intelligence || 0,
-          faith: acc.faith || 0,
-          attributePoints: acc.attributePoints || 0,
-          storage: acc.storedRelics || [],
-        });
-        roomClientIndex.assignRoom(client, room.roomId);
-        client.needsKeyframe = true;
-
-        sendJson(ws, {
-          type: 'room:joined',
-          roomId: room.roomId,
-          playerId: acc.id,
-          map: room.map,
-          snapshot: room.buildSnapshot(),
-          chat: room.chat,
-        });
-        broadcastRoomList();
         return;
       }
 
       if (msg.type === 'room:join') {
-        const normalizedCode = msg.roomId.trim().toUpperCase();
-        let room = rooms.get(normalizedCode);
-        if (!room && normalizedCode === 'TAVERN-HUB') {
-          room = new GameRoom({
-            roomId: 'TAVERN-HUB',
-            name: 'Sanctuary Tavern & Social Hub',
-            hostName: 'Innkeeper',
-            difficulty: 'Normal',
-            seed: 777,
-          });
-          rooms.set('TAVERN-HUB', room);
-        }
-        if (!room) {
-          sendJson(ws, {
-            type: 'error',
-            message: `Room "${normalizedCode}" was not found or has closed.`,
-          });
-          return;
-        }
-        if (!room.hasPlayer(acc.id) && room.getPlayerCount() >= room.maxPlayers) {
-          sendJson(ws, {
-            type: 'error',
-            message: 'That expedition party is already full (4/4).',
-          });
-          return;
-        }
-
-        leaveCurrentRoom(client);
-        // Player is strictly locked to their account's hero class
-        const heroClass: HeroClassId = acc.lockedClass || acc.preferredClass || 'vanguard';
-        room.addOrReconnectPlayer(acc.id, acc.username, heroClass, acc.isAdmin, {
-          level: acc.level || 1,
-          xp: acc.xp || 0,
-          strength: acc.strength || 0,
-          vitality: acc.vitality || 0,
-          dexterity: acc.dexterity || 0,
-          intelligence: acc.intelligence || 0,
-          faith: acc.faith || 0,
-          attributePoints: acc.attributePoints || 0,
-          storage: acc.storedRelics || [],
-        });
-        roomClientIndex.assignRoom(client, room.roomId);
-        client.needsKeyframe = true;
-
-        sendJson(ws, {
-          type: 'room:joined',
-          roomId: room.roomId,
-          playerId: acc.id,
-          map: room.map,
-          snapshot: room.buildSnapshot(),
-          chat: room.chat,
-        });
-        broadcastRoomList();
+        partyCoordinator.joinOrReconnectRoom(client, toPartyAccount(acc), String(msg.roomId || ''));
         return;
       }
 
       if (msg.type === 'room:leave') {
-        leaveCurrentRoom(client);
+        partyCoordinator.leaveRoomExplicit(client);
         sendJson(ws, { type: 'room:left' });
         return;
       }
@@ -1423,10 +1338,8 @@ async function startServer() {
           acc.preferredClass = validClass;
           persistAccount(acc).catch(console.error);
           room.changeClass(acc.id, validClass);
-          broadcastToRoom(room.roomId, {
-            type: 'chat:message',
-            message: room.pushSystemChat(`[ADMIN] ${acc.username} shifted hero class to ${validClass.toUpperCase()}`),
-          });
+          room.pushSystemChat(`[ADMIN] ${acc.username} shifted hero class to ${validClass.toUpperCase()}`);
+          partyCoordinator.markRoomDirty(room.roomId);
         } else {
           // Classes are permanently locked per account
           sendJson(ws, {
@@ -1437,20 +1350,14 @@ async function startServer() {
       } else if (msg.type === 'admin:godmode') {
         if (acc.isAdmin) {
           const isGod = room.togglePlayerGodMode(acc.id, msg.enabled);
-          broadcastToRoom(room.roomId, {
-            type: 'chat:message',
-            message: room.pushSystemChat(`[ADMIN] God Mode ${isGod ? 'ENABLED' : 'DISABLED'} for ${acc.username}`),
-          });
+          room.pushSystemChat(`[ADMIN] God Mode ${isGod ? 'ENABLED' : 'DISABLED'} for ${acc.username}`);
         } else {
           sendJson(ws, { type: 'error', message: 'Admin access required.' });
         }
       } else if (msg.type === 'admin:toggle_speed') {
         if (acc.isAdmin) {
           const isSpeed = room.togglePlayerSpeedBoost(acc.id, msg.enabled);
-          broadcastToRoom(room.roomId, {
-            type: 'chat:message',
-            message: room.pushSystemChat(`[ADMIN] Speed Boost ${isSpeed ? 'ENABLED' : 'DISABLED'} for ${acc.username}`),
-          });
+          room.pushSystemChat(`[ADMIN] Speed Boost ${isSpeed ? 'ENABLED' : 'DISABLED'} for ${acc.username}`);
         } else {
           sendJson(ws, { type: 'error', message: 'Admin access required.' });
         }
@@ -1473,10 +1380,7 @@ async function startServer() {
           const level = Math.floor(Number(msg.level));
           if (Number.isFinite(level) && level >= 1 && level <= MAX_LEVEL) {
             room.setPlayerLevel(acc.id, level);
-            broadcastToRoom(room.roomId, {
-              type: 'chat:message',
-              message: room.pushSystemChat(`[ADMIN] Set Level ${level} for ${acc.username}`),
-            });
+            room.pushSystemChat(`[ADMIN] Set Level ${level} for ${acc.username}`);
           }
         }
       } else if (msg.type === 'admin:add_relic') {
@@ -1489,10 +1393,18 @@ async function startServer() {
         }
       } else if (msg.type === 'admin:teleport_floor') {
         if (acc.isAdmin && typeof msg.floor === 'number') {
+          if (room.roomId !== 'TAVERN-HUB' && room.status !== 'playing') {
+            sendJson(ws, { type: 'error', message: 'Start the expedition from the party lobby first.' });
+            return;
+          }
           room.teleportPlayerToFloor(acc.id, msg.floor);
         }
       } else if (msg.type === 'admin:spawn_entity') {
         if (acc.isAdmin && msg.kind) {
+          if (room.roomId !== 'TAVERN-HUB' && room.status !== 'playing') {
+            sendJson(ws, { type: 'error', message: 'Start the expedition from the party lobby first.' });
+            return;
+          }
           room.spawnEntitiesForAdmin(acc.id, msg.kind, msg.count || 1);
         }
       } else if (msg.type === 'admin:despawn_entity') {
@@ -1521,6 +1433,10 @@ async function startServer() {
         }
       } else if (msg.type === 'admin:summon_boss') {
         if (acc.isAdmin && typeof msg.floor === 'number') {
+          if (room.roomId !== 'TAVERN-HUB' && room.status !== 'playing') {
+            sendJson(ws, { type: 'error', message: 'Start the expedition from the party lobby first.' });
+            return;
+          }
           room.summonBossForFloor(msg.floor);
         }
       } else if (msg.type === 'admin:reset_boss') {
@@ -1540,20 +1456,16 @@ async function startServer() {
       } else if (msg.type === 'chat:send') {
         const trimmed = String(msg.text ?? '').trim();
         if (trimmed.length > 0) {
-          const chatMsg = room.pushChat(acc.username, trimmed, false);
-          broadcastToRoom(room.roomId, {
-            type: 'chat:message',
-            message: chatMsg,
-          });
+          room.pushChat(acc.username, trimmed, false);
         }
+      } else if (msg.type === 'room:start') {
+        partyCoordinator.startExpedition(client);
+      } else if (msg.type === 'room:set_ready') {
+        partyCoordinator.setPlayerReady(client, msg.ready);
+      } else if (msg.type === 'room:return_to_lobby') {
+        partyCoordinator.returnToLobby(client);
       } else if (msg.type === 'room:restart') {
-        const freshMap = room.restartRun();
-        roomDeltaStates.delete(room.roomId);
-        for (const c of roomClientIndex.getRoomClients(room.roomId)) {
-          c.needsKeyframe = true;
-        }
-        broadcastToRoom(room.roomId, { type: 'room:map', map: freshMap });
-        broadcastRoomList();
+        partyCoordinator.restartExpedition(client);
       } else if (msg.type === 'player:spend_attribute') {
         if (acc.attributePoints && acc.attributePoints > 0) {
           const attr = msg.attribute;
@@ -1580,6 +1492,7 @@ async function startServer() {
                     acc.faith || 0,
                     acc.attributePoints || 0
                   );
+                  partyCoordinator.markRoomDirty(room.roomId);
                 } catch {
                   // Rollback on failure
                   acc[attr] = oldAttr;
@@ -1706,13 +1619,12 @@ async function startServer() {
 
     ws.on('close', () => {
       clients.delete(client);
-      leaveCurrentRoom(client);
-      broadcastRoomList();
+      partyCoordinator.handleSocketDisconnect(client);
     });
 
     ws.on('error', () => {
       clients.delete(client);
-      leaveCurrentRoom(client);
+      partyCoordinator.handleSocketDisconnect(client);
     });
   });
 
@@ -1726,14 +1638,30 @@ async function startServer() {
     for (const [roomId, room] of rooms.entries()) {
       if (room.getPlayerCount() === 0) {
         if (roomId !== 'TAVERN-HUB') {
+          partyCoordinator.clearRoomTimers(roomId);
           rooms.delete(roomId);
           roomDeltaStates.delete(roomId);
+          dirtyNonPlayingRooms.delete(roomId);
         }
         continue;
       }
       const prevStatus = room.status;
-      room.tick(TICK_MS);
-      if (roomClientIndex.getRoomClientCount(roomId) > 0) {
+      if (room.status === 'playing') {
+        room.tick(TICK_MS);
+      }
+
+      const clientCount = roomClientIndex.getRoomClientCount(roomId);
+      const statusTransitioned = room.status !== prevStatus;
+      const roomClients = clientCount > 0 ? Array.from(roomClientIndex.getRoomClients(roomId)) : [];
+      const anyNeedsKeyframe = roomClients.some((c) => c.needsKeyframe);
+      const shouldBroadcast =
+        clientCount > 0 &&
+        (room.status === 'playing' ||
+          statusTransitioned ||
+          dirtyNonPlayingRooms.has(roomId) ||
+          anyNeedsKeyframe);
+
+      if (shouldBroadcast) {
         const snapshot = room.buildNetworkSnapshot();
         let deltaState = roomDeltaStates.get(roomId);
         if (!deltaState) {
@@ -1742,7 +1670,6 @@ async function startServer() {
         }
         const nextSeq = deltaState.seq + 1;
 
-        const roomClients = Array.from(roomClientIndex.getRoomClients(roomId));
         const keyframeTargets: ConnectedClient[] = [];
         const deltaTargets: ConnectedClient[] = [];
 
@@ -1796,8 +1723,10 @@ async function startServer() {
 
         deltaState.seq = nextSeq;
         deltaState.lastBaseline = cloneSnapshotBaseline(snapshot);
+        dirtyNonPlayingRooms.delete(roomId);
       }
-      if (room.status !== prevStatus) {
+
+      if (statusTransitioned) {
         anyStatusChanged = true;
       }
     }
