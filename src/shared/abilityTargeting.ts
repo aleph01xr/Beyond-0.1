@@ -38,6 +38,10 @@ export interface AbilityAimState {
   /** World-space distance along aimAngle (used by ground_aoe and dash) */
   aimDistance: number;
   cancelled: boolean;
+  /** Screen client origin when initiated from a HUD button click so quick taps preserve existing aim */
+  originClientX?: number;
+  originClientY?: number;
+  hasDragged?: boolean;
 }
 
 export const DASH_TARGET_SPEC: AbilityTargetSpec = {

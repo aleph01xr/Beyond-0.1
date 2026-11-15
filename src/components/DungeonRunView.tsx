@@ -54,6 +54,11 @@ import {
   type AbilityAimState,
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
+import {
+  applyKeyboardToUnifiedInput,
+  applyTouchStickToUnifiedInput,
+  isEditableEventTarget,
+} from '../client/desktopInput.ts';
 import type { PingDiagnostics } from '../client/networkStats.ts';
 
 interface DungeonRunViewProps {
@@ -174,28 +179,6 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     setCinematicIntro(null);
   }, []);
 
-  // Hotkeys [I] for Inventory & [M] for Map
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-      if (e.key === 'i' || e.key === 'I') {
-        sfx.playUiClick();
-        setInventoryModalOpen((v) => !v);
-      }
-      if (e.key === 'm' || e.key === 'M') {
-        sfx.playUiClick();
-        setExpandedMapOpen((v) => !v);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   // Touch settings & visibility
   const [touchSettings, setTouchSettings] = useState<TouchSettings>(() => loadSavedTouchSettings());
   const [touchSettingsOpen, setTouchSettingsOpen] = useState(false);
@@ -206,6 +189,78 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       return false;
     }
   });
+
+  const modalStateRef = useRef({
+    adminPanelOpen,
+    touchSettingsOpen,
+    expeditionGateOpen,
+    inventoryModalOpen,
+    attributesModalOpen,
+    expandedMapOpen,
+    chatOpen,
+    pauseOpen,
+    hasCinematic: Boolean(cinematicIntro),
+    status: snapshot.status,
+  });
+  modalStateRef.current = {
+    adminPanelOpen,
+    touchSettingsOpen,
+    expeditionGateOpen,
+    inventoryModalOpen,
+    attributesModalOpen,
+    expandedMapOpen,
+    chatOpen,
+    pauseOpen,
+    hasCinematic: Boolean(cinematicIntro),
+    status: snapshot.status,
+  };
+
+  // Hotkeys [I] Inventory, [M] Map, [P] Attributes, [Esc] Cancel Aim / Close Modal / Menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (isEditableEventTarget(e.target)) {
+        if (e.key === 'Escape' && e.target instanceof HTMLElement) {
+          e.target.blur();
+        }
+        return;
+      }
+
+      const k = e.key.toLowerCase();
+      if (k === 'escape') {
+        const curAim = abilityAimRef.current;
+        if (curAim && curAim.source !== 'touch') {
+          // Let GameCanvas cancel the active desktop ability aim first
+          return;
+        }
+        const st = modalStateRef.current;
+        sfx.playUiClick();
+        if (st.adminPanelOpen) setAdminPanelOpen(false);
+        else if (st.touchSettingsOpen) setTouchSettingsOpen(false);
+        else if (st.expeditionGateOpen) setExpeditionGateOpen(false);
+        else if (st.inventoryModalOpen) setInventoryModalOpen(false);
+        else if (st.attributesModalOpen) setAttributesModalOpen(false);
+        else if (st.expandedMapOpen) setExpandedMapOpen(false);
+        else if (st.chatOpen) setChatOpen(false);
+        else if (st.pauseOpen) setPauseOpen(false);
+        else if (st.status === 'playing' && !st.hasCinematic) setPauseOpen(true);
+        return;
+      }
+
+      if (k === 'i') {
+        sfx.playUiClick();
+        setInventoryModalOpen((v) => !v);
+      } else if (k === 'm') {
+        sfx.playUiClick();
+        setExpandedMapOpen((v) => !v);
+      } else if (k === 'p') {
+        sfx.playUiClick();
+        setAttributesModalOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Detect touch device or allow explicit toggle
   const [isTouchDevice, setIsTouchDevice] = useState(() => {
@@ -347,26 +402,24 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     stickX: 0,
     stickY: 0,
   });
+  const touchStickActiveRef = useRef(false);
 
   // Touch gamepad handlers
   const handleStickMove = (stickX: number, stickY: number, aimAngle?: number) => {
     const cur = unifiedInputRef.current;
-    cur.stickX = stickX;
-    cur.stickY = stickY;
-    cur.up = stickY < -0.25;
-    cur.down = stickY > 0.25;
-    cur.left = stickX < -0.25;
-    cur.right = stickX > 0.25;
-    if (typeof aimAngle === 'number' && !cur.attack) {
-      cur.aimAngle = aimAngle;
-    }
+    touchStickActiveRef.current = applyTouchStickToUnifiedInput(
+      cur,
+      stickX,
+      stickY,
+      aimAngle
+    );
     onSendInput({ ...cur });
   };
 
   const handleAttackPress = (pressed: boolean, aimAngle?: number) => {
     const cur = unifiedInputRef.current;
     cur.attack = pressed;
-    if (typeof aimAngle === 'number') {
+    if (typeof aimAngle === 'number' && Number.isFinite(aimAngle)) {
       cur.aimAngle = aimAngle;
     }
     onSendInput({ ...cur });
@@ -383,18 +436,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       aimAngle: number;
     }) => {
       const cur = unifiedInputRef.current;
-      const stickMagnitude = Math.hypot(cur.stickX || 0, cur.stickY || 0);
-      // If touch joystick is not currently held, keyboard controls the movement
-      if (stickMagnitude < 0.1) {
-        cur.up = keys.up;
-        cur.down = keys.down;
-        cur.left = keys.left;
-        cur.right = keys.right;
-        cur.stickX = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-        cur.stickY = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
-      }
-      cur.attack = keys.attack;
-      cur.aimAngle = keys.aimAngle;
+      applyKeyboardToUnifiedInput(cur, keys, touchStickActiveRef.current);
       onSendInput({ ...cur });
     },
     [onSendInput]
@@ -408,8 +450,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     source: 'touch' | 'mouse' | 'keyboard';
   } | null>(null);
 
-  const startDesktopButtonAim = (action: AimableAction) => {
-    if (!me || me.downed) return;
+  const controlsBlocked = Boolean(
+    chatFocused ||
+      pauseOpen ||
+      inventoryModalOpen ||
+      attributesModalOpen ||
+      expandedMapOpen ||
+      expeditionGateOpen ||
+      adminPanelOpen ||
+      touchSettingsOpen ||
+      cinematicIntro ||
+      (me && me.pendingRelicChoices.length > 0) ||
+      snapshot.status !== 'playing'
+  );
+
+  const startDesktopButtonAim = (
+    action: AimableAction,
+    clientX?: number,
+    clientY?: number
+  ) => {
+    if (controlsBlocked || !me || me.downed) return;
     if (action !== 'dash' && isSilenced) {
       sfx.playUiClick();
       return;
@@ -424,9 +484,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       action,
       source: 'mouse',
       aimAngle: angle,
-      magnitude: 0,
+      magnitude: spec.range > 0 ? Math.min(1, spec.defaultDist / spec.range) : 1,
       aimDistance: spec.defaultDist,
       cancelled: false,
+      originClientX: clientX,
+      originClientY: clientY,
+      hasDragged: clientX === undefined || clientY === undefined,
     };
     setActiveAimUi({ action, cancelled: false, source: 'mouse' });
   };
@@ -448,6 +511,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         onTriggerAction={handleTriggerActionWithPortal}
         onSendPing={onSendPing}
         chatFocused={chatFocused}
+        controlsBlocked={controlsBlocked}
       />
 
       {/* Top Header HUD */}
@@ -1047,7 +1111,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             onMouseDown={(e) => {
               if (e.button === 0) {
                 e.preventDefault();
-                startDesktopButtonAim('tactical');
+                startDesktopButtonAim('tactical', e.clientX, e.clientY);
               }
             }}
             title={isSilenced ? 'Silenced: Tactical ability sealed' : `${myDef.tacticalName} (Hold & drag to aim, release to cast)`}
@@ -1077,7 +1141,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             onMouseDown={(e) => {
               if (e.button === 0) {
                 e.preventDefault();
-                startDesktopButtonAim('ult');
+                startDesktopButtonAim('ult', e.clientX, e.clientY);
               }
             }}
             title={isSilenced ? 'Silenced: Ultimate ability sealed' : `${myDef.ultName} (Hold & drag to aim, release to cast)`}
@@ -1107,7 +1171,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             onMouseDown={(e) => {
               if (e.button === 0) {
                 e.preventDefault();
-                startDesktopButtonAim('dash');
+                startDesktopButtonAim('dash', e.clientX, e.clientY);
               }
             }}
             title="Evasion Dash (Hold & drag to aim, release to dash)"
@@ -1131,8 +1195,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <div className="flex flex-col items-center gap-1">
             <button
               type="button"
-              onClick={() => {
-                sfx.playHeal();
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.currentTarget.blur();
+                if (!me.downed && me.potions > 0 && me.hp < me.maxHp) {
+                  sfx.playHeal();
+                }
                 onTriggerAction('potion', unifiedInputRef.current.aimAngle);
               }}
               className="stone-button stone-button-red flex-col items-start h-auto py-1.5 min-w-[100px]"
@@ -1186,7 +1254,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => {
+              e.currentTarget.blur();
               sfx.playUiClick();
               handleTriggerActionWithPortal('interact', unifiedInputRef.current.aimAngle);
             }}

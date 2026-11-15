@@ -56,6 +56,16 @@ import {
   type CombatParticle,
 } from './src/client/canvasEffects.ts';
 import { CHANGELOG_DATA, CATEGORY_ORDER } from './src/data/changelog.ts';
+import {
+  applyKeyboardToUnifiedInput,
+  applyTouchStickToUnifiedInput,
+  isEditableEventTarget,
+  angleDeltaRad,
+} from './src/client/desktopInput.ts';
+import {
+  hasMovementInput,
+  normalizePlayerInputDirection,
+} from './src/shared/playerMovement.ts';
 
 async function runRegressionTests() {
   console.log('--- STARTING BEYOND REGRESSION TESTS ---');
@@ -4892,6 +4902,63 @@ async function runRegressionTests() {
     const activeAlphaMatch = capturedStrokes[1].match(/[\d.]+\)$/);
     const activeAlpha = activeAlphaMatch ? parseFloat(activeAlphaMatch[0]) : 1;
     assert.ok(activeAlpha > idleAlpha && activeAlpha <= 0.25, `Engaged range indicator alpha must stay subtle (got ${activeAlpha})`);
+  });
+
+  // --- Test 81: PC WASD movement, diagonal transitions, key release & editable input guards ---
+  await test('81. PC keyboard movement updates cleanly without stick-lock and yields only to active touch stick', () => {
+    const unified = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+      attack: false,
+      aimAngle: 0,
+      stickX: 0,
+      stickY: 0,
+    };
+    let touchActive = false;
+
+    // 1. Press W (Up)
+    applyKeyboardToUnifiedInput(unified, { up: true, down: false, left: false, right: false, attack: false, aimAngle: 1.2 }, touchActive);
+    assert.strictEqual(unified.up, true);
+    assert.strictEqual(unified.stickX, 0, 'Keyboard must never write to analog stickX');
+    assert.strictEqual(unified.stickY, 0, 'Keyboard must never write to analog stickY');
+    assert.strictEqual(unified.aimAngle, 1.2);
+    assert.strictEqual(hasMovementInput(unified), true);
+
+    // 2. Add D (Up-Right diagonal)
+    applyKeyboardToUnifiedInput(unified, { up: true, down: false, left: false, right: true, attack: true, aimAngle: 0.4 }, touchActive);
+    assert.strictEqual(unified.up, true);
+    assert.strictEqual(unified.right, true);
+    assert.strictEqual(unified.attack, true);
+    const diag = normalizePlayerInputDirection(unified);
+    assert.ok(diag.mx > 0.65 && diag.my < -0.65, 'Diagonal keyboard movement must normalize to ~(+0.707, -0.707)');
+
+    // 3. Release W and D -> character MUST stop completely (previously permanently stuck on W!)
+    applyKeyboardToUnifiedInput(unified, { up: false, down: false, left: false, right: false, attack: false, aimAngle: -0.8 }, touchActive);
+    assert.strictEqual(unified.up, false);
+    assert.strictEqual(unified.right, false);
+    assert.strictEqual(unified.attack, false);
+    assert.strictEqual(hasMovementInput(unified), false, 'Releasing WASD keys must stop movement immediately');
+
+    // 4. Touch stick takes priority while dragged, then returns control cleanly on release (0, 0)
+    touchActive = applyTouchStickToUnifiedInput(unified, -0.8, 0.2, 2.9);
+    assert.strictEqual(touchActive, true);
+    applyKeyboardToUnifiedInput(unified, { up: true, down: false, left: false, right: false, attack: false, aimAngle: 0 }, touchActive);
+    assert.strictEqual(unified.up, false, 'Held touch stick keeps priority over keyboard direction');
+    assert.strictEqual(unified.left, true);
+
+    touchActive = applyTouchStickToUnifiedInput(unified, 0, 0);
+    assert.strictEqual(touchActive, false);
+    applyKeyboardToUnifiedInput(unified, { up: true, down: false, left: false, right: false, attack: false, aimAngle: 0.5 }, touchActive);
+    assert.strictEqual(unified.up, true, 'Releasing touch stick immediately restores keyboard movement');
+    assert.strictEqual(unified.left, false);
+
+    // 5. Editable target & angle wrap helpers
+    assert.strictEqual(isEditableEventTarget({ tagName: 'INPUT' } as unknown as EventTarget), true);
+    assert.strictEqual(isEditableEventTarget({ tagName: 'TEXTAREA' } as unknown as EventTarget), true);
+    assert.strictEqual(isEditableEventTarget({ tagName: 'CANVAS' } as unknown as EventTarget), false);
+    assert.ok(angleDeltaRad(Math.PI - 0.05, -Math.PI + 0.05) < 0.11, 'Angle delta handles +/-PI wrap cleanly');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

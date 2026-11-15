@@ -57,6 +57,10 @@ import {
   drawPrimaryAttackRangeIndicator,
 } from '../client/abilityIndicator.ts';
 import { sfx, soundManager } from '../client/sound.ts';
+import {
+  angleDeltaRad,
+  isEditableEventTarget,
+} from '../client/desktopInput.ts';
 import { voiceManager } from '../client/voice/voiceClient.ts';
 import {
   HERO_CLASSES,
@@ -102,6 +106,7 @@ interface GameCanvasProps {
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
   chatFocused: boolean;
+  controlsBlocked?: boolean;
 }
 
 interface ActiveFloatingText extends FloatingEvent {
@@ -127,6 +132,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   onTriggerAction,
   onSendPing,
   chatFocused,
+  controlsBlocked = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapLayerRef = useRef<HTMLCanvasElement | null>(null);
@@ -139,10 +145,13 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     attack: false,
   });
   const mouseScreenRef = useRef({ x: 0, y: 0 });
+  const hasMouseMovedRef = useRef(false);
   const aimAngleRef = useRef(0);
+  const lastSentAimAngleRef = useRef(0);
   const aimSourceRef = useRef<'mouse' | 'directional'>('directional');
   const lastMouseActiveAtRef = useRef(0);
   const mouseButtonDownRef = useRef(false);
+  const spaceAttackDownRef = useRef(false);
   const localPlayerPosRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<{ cw: number; ch: number; zoom: number }>({ cw: 1, ch: 1, zoom: 1 });
   const localSwingTriggerRef = useRef<{
@@ -158,6 +167,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   const cameraSnappedRef = useRef(false);
   const chatFocusedRef = useRef(chatFocused);
   chatFocusedRef.current = chatFocused;
+  const controlsBlockedRef = useRef(controlsBlocked || chatFocused);
+  controlsBlockedRef.current = controlsBlocked || chatFocused;
   const onSendKeyboardInputRef = useRef(onSendKeyboardInput);
   onSendKeyboardInputRef.current = onSendKeyboardInput;
   const onTriggerActionRef = useRef(onTriggerAction);
@@ -213,17 +224,27 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
   const computeDesktopAimTarget = (
     action: AimableAction,
-    source: 'mouse' | 'keyboard'
+    source: 'mouse' | 'keyboard',
+    curAimOverride?: AbilityAimState | null
   ): { aimAngle: number; aimDistance: number; magnitude: number } => {
     const snap = latestSnapshotRef.current;
     const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
     const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action);
     const pos = localPlayerPosRef.current || (me ? { x: me.x, y: me.y } : null);
     const vp = viewportRef.current;
+    // Quick-tap on HUD ability button before dragging >12px preserves pre-click aim
+    if (curAimOverride && curAimOverride.hasDragged === false) {
+      return {
+        aimAngle: curAimOverride.aimAngle,
+        aimDistance: spec.defaultDist,
+        magnitude: spec.range > 0 ? Math.min(1, spec.defaultDist / spec.range) : 1,
+      };
+    }
+
     const useMouse =
       (source === 'mouse' || aimSourceRef.current === 'mouse') &&
       pos &&
-      (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0);
+      hasMouseMovedRef.current;
 
     if (useMouse && pos) {
       const safeZoom = Math.max(0.1, vp.zoom);
@@ -261,12 +282,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
     const refreshed = computeDesktopAimTarget(
       cur.action,
-      cur.source === 'mouse' ? 'mouse' : 'keyboard'
+      cur.source === 'mouse' ? 'mouse' : 'keyboard',
+      cur
     );
     const castAngle =
-      cur.source === 'mouse' || aimSourceRef.current === 'mouse'
-        ? refreshed.aimAngle
-        : aimAngleRef.current;
+      cur.hasDragged === false
+        ? cur.aimAngle
+        : cur.source === 'mouse' || aimSourceRef.current === 'mouse'
+          ? refreshed.aimAngle
+          : aimAngleRef.current;
     const castDist = refreshed.aimDistance;
     const wasCancelled = forceCancel || cur.cancelled;
 
@@ -620,33 +644,96 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     mapLayerRef.current = off;
   }, [map]);
 
+  // Immediately release stuck PC inputs whenever chat/modal blocks gameplay controls
+  useEffect(() => {
+    if (!controlsBlocked && !chatFocused) return;
+    if (abilityAimPropRef.current.current && abilityAimPropRef.current.current.source !== 'touch') {
+      commitDesktopAbilityAim(true);
+    }
+    const hadInputs =
+      keysRef.current.up ||
+      keysRef.current.down ||
+      keysRef.current.left ||
+      keysRef.current.right ||
+      keysRef.current.attack ||
+      mouseButtonDownRef.current ||
+      spaceAttackDownRef.current;
+    mouseButtonDownRef.current = false;
+    spaceAttackDownRef.current = false;
+    if (hadInputs) {
+      keysRef.current = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        attack: false,
+      };
+      lastSentAimAngleRef.current = aimAngleRef.current;
+      onSendKeyboardInputRef.current({
+        ...keysRef.current,
+        aimAngle: aimAngleRef.current,
+      });
+    }
+  }, [controlsBlocked, chatFocused]);
+
   // Keyboard Event Handlers (Only fires when keys change - NEVER on an arbitrary interval!)
   useEffect(() => {
     const syncDirectionalAimFromKeys = (): boolean => {
       const mx = (keysRef.current.right ? 1 : 0) - (keysRef.current.left ? 1 : 0);
       const my = (keysRef.current.down ? 1 : 0) - (keysRef.current.up ? 1 : 0);
       if (mx === 0 && my === 0) return false;
-      const nowMs = performance.now();
-      const mouseRecentlyActive =
-        mouseButtonDownRef.current ||
-        (aimSourceRef.current === 'mouse' && nowMs - lastMouseActiveAtRef.current <= 900);
-      if (!mouseRecentlyActive) {
-        aimSourceRef.current = 'directional';
-        aimAngleRef.current = Math.atan2(my, mx);
-        return true;
+      // If the player is aiming with the mouse cursor, never hijack aim back to WASD movement
+      if (aimSourceRef.current === 'mouse' && hasMouseMovedRef.current) {
+        return false;
       }
-      return false;
+      aimSourceRef.current = 'directional';
+      aimAngleRef.current = Math.atan2(my, mx);
+      return true;
     };
 
     const emitKeys = () => {
+      lastSentAimAngleRef.current = aimAngleRef.current;
       onSendKeyboardInputRef.current({
         ...keysRef.current,
         aimAngle: aimAngleRef.current,
       });
     };
 
+    const releaseAllDesktopInputs = (cancelAim: boolean) => {
+      if (
+        cancelAim &&
+        abilityAimPropRef.current.current &&
+        abilityAimPropRef.current.current.source !== 'touch'
+      ) {
+        commitDesktopAbilityAim(true);
+      }
+      const hadActive =
+        keysRef.current.up ||
+        keysRef.current.down ||
+        keysRef.current.left ||
+        keysRef.current.right ||
+        keysRef.current.attack ||
+        mouseButtonDownRef.current ||
+        spaceAttackDownRef.current;
+      mouseButtonDownRef.current = false;
+      spaceAttackDownRef.current = false;
+      if (hadActive) {
+        keysRef.current = {
+          up: false,
+          down: false,
+          left: false,
+          right: false,
+          attack: false,
+        };
+        emitKeys();
+      }
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (chatFocusedRef.current) return;
+      if (controlsBlockedRef.current || chatFocusedRef.current) return;
+      if (isEditableEventTarget(e.target)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
       const k = e.key.toLowerCase();
       let changed = false;
 
@@ -686,6 +773,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       } else if (e.code === 'Space') {
         e.preventDefault();
         syncDirectionalAimFromKeys();
+        spaceAttackDownRef.current = true;
         if (!keysRef.current.attack) {
           keysRef.current.attack = true;
           changed = true;
@@ -709,12 +797,19 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         };
         syncAimUi(abilityAimPropRef.current.current);
       } else if (k === 'h' || k === '1') {
-        sfx.playHeal();
+        if (e.repeat) return;
+        const snap = latestSnapshotRef.current;
+        const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+        if (me && !me.downed && me.potions > 0 && me.hp < me.maxHp) {
+          sfx.playHeal();
+        }
         onTriggerActionRef.current('potion', aimAngleRef.current);
       } else if (k === 'e') {
+        if (e.repeat) return;
         sfx.playUiClick();
         onTriggerActionRef.current('interact', aimAngleRef.current);
       } else if (k === 'g') {
+        if (e.repeat) return;
         const snap = latestSnapshotRef.current;
         const me = snap?.players.find((p) => p.id === playerId);
         if (me) {
@@ -735,20 +830,32 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
       let changed = false;
       if (k === 'w' || e.key === 'ArrowUp') {
-        keysRef.current.up = false;
-        changed = true;
+        if (keysRef.current.up) {
+          keysRef.current.up = false;
+          changed = true;
+        }
       } else if (k === 's' || e.key === 'ArrowDown') {
-        keysRef.current.down = false;
-        changed = true;
+        if (keysRef.current.down) {
+          keysRef.current.down = false;
+          changed = true;
+        }
       } else if (k === 'a' || e.key === 'ArrowLeft') {
-        keysRef.current.left = false;
-        changed = true;
+        if (keysRef.current.left) {
+          keysRef.current.left = false;
+          changed = true;
+        }
       } else if (k === 'd' || e.key === 'ArrowRight') {
-        keysRef.current.right = false;
-        changed = true;
+        if (keysRef.current.right) {
+          keysRef.current.right = false;
+          changed = true;
+        }
       } else if (e.code === 'Space') {
-        keysRef.current.attack = false;
-        changed = true;
+        spaceAttackDownRef.current = false;
+        const nextAttack = mouseButtonDownRef.current;
+        if (keysRef.current.attack !== nextAttack) {
+          keysRef.current.attack = nextAttack;
+          changed = true;
+        }
       }
       if (changed) {
         syncDirectionalAimFromKeys();
@@ -757,30 +864,28 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     };
 
     const handleBlur = () => {
-      if (abilityAimPropRef.current.current && abilityAimPropRef.current.current.source !== 'touch') {
-        commitDesktopAbilityAim(true);
-      }
-      const hadKeys =
-        keysRef.current.up ||
-        keysRef.current.down ||
-        keysRef.current.left ||
-        keysRef.current.right ||
-        keysRef.current.attack;
-      if (hadKeys) {
-        keysRef.current = {
-          up: false,
-          down: false,
-          left: false,
-          right: false,
-          attack: false,
-        };
-        emitKeys();
+      releaseAllDesktopInputs(true);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        releaseAllDesktopInputs(true);
       }
     };
 
     const handleWindowMouseMove = (e: MouseEvent) => {
       const cur = abilityAimPropRef.current.current;
-      if (!cur || cur.source === 'touch') return;
+      const isDraggingAbility = Boolean(cur && cur.source !== 'touch');
+      const isDraggingAttack = mouseButtonDownRef.current;
+      if (!isDraggingAbility && !isDraggingAttack) return;
+
+      if (cur && cur.originClientX !== undefined && cur.originClientY !== undefined && !cur.hasDragged) {
+        if (Math.hypot(e.clientX - cur.originClientX, e.clientY - cur.originClientY) <= 12) {
+          return;
+        }
+        cur.hasDragged = true;
+      }
+
       const canvasEl = canvasRef.current;
       if (canvasEl) {
         const rect = canvasEl.getBoundingClientRect();
@@ -788,35 +893,41 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           x: e.clientX - rect.left,
           y: e.clientY - rect.top,
         };
+        hasMouseMovedRef.current = true;
         aimSourceRef.current = 'mouse';
         lastMouseActiveAtRef.current = performance.now();
         updateMouseAimImmediately(mouseScreenRef.current.x, mouseScreenRef.current.y);
       }
 
-      const target = computeDesktopAimTarget(cur.action, 'mouse');
-      cur.aimAngle = target.aimAngle;
-      cur.aimDistance = target.aimDistance;
-      cur.magnitude = target.magnitude;
+      if (cur && cur.source !== 'touch') {
+        const target = computeDesktopAimTarget(cur.action, 'mouse', cur);
+        cur.aimAngle = target.aimAngle;
+        cur.aimDistance = target.aimDistance;
+        cur.magnitude = target.magnitude;
 
-      const cancelRect = desktopCancelZonePropRef.current?.current?.getBoundingClientRect();
-      const overCancel = Boolean(
-        cancelRect &&
-          e.clientX >= cancelRect.left - 8 &&
-          e.clientX <= cancelRect.right + 8 &&
-          e.clientY >= cancelRect.top - 8 &&
-          e.clientY <= cancelRect.bottom + 8
-      );
-      if (cur.cancelled !== overCancel) {
-        cur.cancelled = overCancel;
-        syncAimUi(cur);
+        const cancelRect = desktopCancelZonePropRef.current?.current?.getBoundingClientRect();
+        const overCancel = Boolean(
+          cancelRect &&
+            e.clientX >= cancelRect.left - 8 &&
+            e.clientX <= cancelRect.right + 8 &&
+            e.clientY >= cancelRect.top - 8 &&
+            e.clientY <= cancelRect.bottom + 8
+        );
+        if (cur.cancelled !== overCancel) {
+          cur.cancelled = overCancel;
+          syncAimUi(cur);
+        }
       }
     };
 
     const handleWindowMouseUp = (e: MouseEvent) => {
       if (e.button === 0 && mouseButtonDownRef.current) {
         mouseButtonDownRef.current = false;
-        keysRef.current.attack = false;
-        emitKeys();
+        const nextAttack = spaceAttackDownRef.current;
+        if (keysRef.current.attack !== nextAttack) {
+          keysRef.current.attack = nextAttack;
+          emitKeys();
+        }
       }
       const cur = abilityAimPropRef.current.current;
       if (cur && cur.source === 'mouse') {
@@ -826,17 +937,27 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
     };
 
+    const handleWindowContextMenu = (e: MouseEvent) => {
+      if (activeMouseAimButtonRef.current === 2) {
+        e.preventDefault();
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('mousemove', handleWindowMouseMove);
     window.addEventListener('mouseup', handleWindowMouseUp);
+    window.addEventListener('contextmenu', handleWindowContextMenu);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
+      window.removeEventListener('contextmenu', handleWindowContextMenu);
     };
   }, [latestSnapshotRef, playerId]);
 
@@ -1543,7 +1664,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               : Math.atan2(activeLocalInput.stickY!, activeLocalInput.stickX!);
         } else if (
           aimSourceRef.current === 'mouse' &&
-          (mouseScreenRef.current.x !== 0 || mouseScreenRef.current.y !== 0)
+          hasMouseMovedRef.current
         ) {
           aimAngleRef.current = computeWorldAimAngle(
             mouseScreenRef.current.x,
@@ -1563,12 +1684,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           if (localInputPropRef.current?.current) {
             localInputPropRef.current.current.aimAngle = aimAngleRef.current;
           }
+          // Keep server aim synchronized while moving or attacking with a stationary mouse cursor
+          if (
+            !controlsBlockedRef.current &&
+            angleDeltaRad(aimAngleRef.current, lastSentAimAngleRef.current) >= 0.03
+          ) {
+            lastSentAimAngleRef.current = aimAngleRef.current;
+            onSendKeyboardInputRef.current({
+              ...keysRef.current,
+              aimAngle: aimAngleRef.current,
+            });
+          }
         } else if (
           aimSourceRef.current === 'directional' &&
           localInputPropRef.current?.current &&
           typeof localInputPropRef.current.current.aimAngle === 'number' &&
-          mouseScreenRef.current.x === 0 &&
-          mouseScreenRef.current.y === 0
+          !hasMouseMovedRef.current
         ) {
           aimAngleRef.current = localInputPropRef.current.current.aimAngle;
         }
@@ -1581,7 +1712,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           } else {
             const refreshed = computeDesktopAimTarget(
               activeAim.action,
-              activeAim.source === 'mouse' ? 'mouse' : 'keyboard'
+              activeAim.source === 'mouse' ? 'mouse' : 'keyboard',
+              activeAim
             );
             activeAim.aimAngle = refreshed.aimAngle;
             activeAim.aimDistance = refreshed.aimDistance;
@@ -4962,23 +5094,36 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
   const updateMouseAimImmediately = (sx: number, sy: number) => {
     const pos = localPlayerPosRef.current;
-    const vp = viewportRef.current;
+    const canvasEl = canvasRef.current;
+    const cw =
+      viewportRef.current.cw > 1
+        ? viewportRef.current.cw
+        : canvasEl?.width || window.innerWidth;
+    const ch =
+      viewportRef.current.ch > 1
+        ? viewportRef.current.ch
+        : canvasEl?.height || window.innerHeight;
+    const zoom =
+      viewportRef.current.cw > 1
+        ? viewportRef.current.zoom
+        : cameraZoomRef.current ?? computeCameraZoom(cw, ch);
     if (pos) {
       aimAngleRef.current = computeWorldAimAngle(
         sx,
         sy,
-        vp.cw,
-        vp.ch,
+        cw,
+        ch,
         pos.x,
         pos.y,
         cameraRef.current.x,
         cameraRef.current.y,
-        vp.zoom
+        zoom
       );
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlsBlockedRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const nx = e.clientX - rect.left;
     const ny = e.clientY - rect.top;
@@ -4986,20 +5131,27 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       Math.hypot(nx - mouseScreenRef.current.x, ny - mouseScreenRef.current.y) > 2;
     mouseScreenRef.current = { x: nx, y: ny };
     if (moved || mouseButtonDownRef.current) {
+      hasMouseMovedRef.current = true;
       aimSourceRef.current = 'mouse';
       lastMouseActiveAtRef.current = performance.now();
       updateMouseAimImmediately(nx, ny);
     }
-    if (keysRef.current.attack) {
+    if (
+      keysRef.current.attack ||
+      angleDeltaRad(aimAngleRef.current, lastSentAimAngleRef.current) >= 0.03
+    ) {
+      lastSentAimAngleRef.current = aimAngleRef.current;
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (controlsBlockedRef.current) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const nx = e.clientX - rect.left;
     const ny = e.clientY - rect.top;
     mouseScreenRef.current = { x: nx, y: ny };
+    hasMouseMovedRef.current = true;
     aimSourceRef.current = 'mouse';
     lastMouseActiveAtRef.current = performance.now();
     updateMouseAimImmediately(nx, ny);
@@ -5008,6 +5160,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       mouseButtonDownRef.current = true;
       keysRef.current.attack = true;
       triggerLocalSwing('primary');
+      lastSentAimAngleRef.current = aimAngleRef.current;
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     } else if (e.button === 2) {
       e.preventDefault();
@@ -5034,8 +5187,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (e.button === 0 && mouseButtonDownRef.current) {
       mouseButtonDownRef.current = false;
-      keysRef.current.attack = false;
-      onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
+      const nextAttack = spaceAttackDownRef.current;
+      if (keysRef.current.attack !== nextAttack) {
+        keysRef.current.attack = nextAttack;
+        lastSentAimAngleRef.current = aimAngleRef.current;
+        onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
+      }
     }
   };
 
