@@ -86,6 +86,29 @@ export const CATEGORY_ORDER: ChangelogCategory[] = [
 
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
+    version: 'v1.7.0',
+    releaseDate: 'November 16, 2026',
+    title: 'Progression, Combat & Healing Balance Overhaul',
+    description:
+      'Comprehensive balancing update featuring a Level 50 cap with +3 attribute points per level (147 max points), updated direct damage and attribute formulas, Warden Malakor dash windup telegraph & cleanup improvements, major Cleric and potion healing nerfs to prevent infinite-sustain loops, and INT magic resistance fixes.',
+    categories: {
+      BALANCING: [
+        'Level 50 Cap & Attribute Points: Reduced level cap to 50 with level-up rewards increased to +3 attribute points per level (147 total points at Lv 50, stopping rewards at cap).',
+        'Direct Damage Scaling: Implemented revised direct damage scaling (BaseDamage * (1 + 0.025 * (Level - 1)) * (1 + 0.008 * PrimaryAttribute)) consistently across Strength, Dexterity, Intelligence, and Faith.',
+        'Major Healing Nerf: Rebalanced Cleric healing effectiveness, Sanctified Pulse, Solar Beacon, Radiant Aura, and health potions (restoring 30% Max HP) to prevent infinite sustain while preserving Cleric support identity.',
+      ],
+      'BUG FIXES': [
+        'Warden Malakor Dash Polish: Added a 550ms stationary windup telegraph before Malakor\'s active lunge, single-hit-per-charge tracking, and robust Hard CC / target loss interruption cleanup.',
+        'WebSocket Delta Key Deletion: Added removedKeys tracking in snapshotDelta to ensure cleared optional enemy states (charging, shieldWallMs) clean up correctly over WebSocket JSON diffs.',
+        'INT Magic & Elemental Resistance: Fixed Intelligence resistance scaling to correctly mitigate all elemental and magical damage types (Fire, Frost, Lightning, Arcane, Divine).',
+        'Boss Zone Cleanup: Ensured boss death, despawn, and resets immediately remove associated hazard zones (such as Oriphiel\'s warden_parry).',
+      ],
+      'QUALITY OF LIFE': [
+        'Floor Mastery & Stat Projections: Tuned Floor Mastery rewards to grant run-scoped Shield instead of duplicate attribute points, and updated stat projections and tooltips across Character Inventory and Dungeon Run views.',
+      ],
+    },
+  },
+  {
     version: 'v1.6.0',
     releaseDate: 'November 15, 2026',
     title: 'Party Lobby, Ready Toggles & Locked Expeditions',
