@@ -71,6 +71,7 @@ interface EnemyRuntimeMeta {
   bossTargetId: string | null;
   bossTargetSwitchAtMs: number;
   bossAbilityCooldowns: Record<number, number>;
+  chargeHitPlayerIds: Set<string>;
 }
 
 const MAX_FLOORS_FOR_VICTORY = 10;
@@ -182,8 +183,8 @@ export class GameRoom {
     if (healer && healer.heroClass === 'cleric') {
       const lvl = Math.max(1, Math.min(MAX_LEVEL, healer.level || 1));
       const fth = Math.max(0, healer.faith || 0);
-      const levelMult = 1 + (lvl - 1) * 0.05;
-      const faithMult = 1 + fth * 0.02;
+      const levelMult = 1 + (lvl - 1) * 0.015;
+      const faithMult = 1 + fth * 0.006;
       healing = healing * levelMult * faithMult;
     }
 
@@ -246,9 +247,10 @@ export class GameRoom {
 
   public computeHealingAmount(
     baseHealing: number,
-    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null
+    healer?: { heroClass?: HeroClassId; level?: number; faith?: number } | null,
+    target?: PlayerState | null
   ): number {
-    return GameRoom.computeHealingAmount(baseHealing, healer);
+    return GameRoom.computeHealingAmount(baseHealing, healer, target);
   }
 
   public static getEnemyResistance(
@@ -509,10 +511,32 @@ export class GameRoom {
         bossTargetId: null,
         bossTargetSwitchAtMs: 0,
         bossAbilityCooldowns: {},
+        chargeHitPlayerIds: new Set<string>(),
       };
       this.enemyMeta.set(enemy.id, meta);
     }
     return meta;
+  }
+
+  private clearEnemyChargeState(enemy: EnemyState): void {
+    enemy.charging = false;
+    enemy.chargeWindupMs = 0;
+    enemy.chargeTimerMs = 0;
+    enemy.chargeAngle = undefined;
+    const meta = this.enemyMeta.get(enemy.id);
+    if (meta) {
+      meta.chargeHitPlayerIds.clear();
+    }
+  }
+
+  private removeEntityZones(entityId: string, kinds?: ReadonlyArray<FieldZoneState['kind']>): void {
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const z = this.zones[i];
+      if (z.ownerId === entityId && (!kinds || kinds.includes(z.kind))) {
+        this.zoneHitPlayers.delete(z.id);
+        this.zones.splice(i, 1);
+      }
+    }
   }
 
   public getEnemyCcState(enemy: EnemyState): { stage: number; lastHardCcAtMs: number; simTimeMs: number } {
@@ -575,10 +599,17 @@ export class GameRoom {
       enemy.frozenMs = Math.max(enemy.frozenMs, effectiveDuration);
     }
 
-    // Hard CC interrupts active boss charges
-    if (enemy.charging) {
-      enemy.charging = false;
-      enemy.chargeTimerMs = 0;
+    // Hard CC interrupts active boss charges and defensive stances like Aegis Parry
+    if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== undefined) {
+      this.clearEnemyChargeState(enemy);
+      if (enemy.state === 'charge') enemy.state = 'recover';
+    }
+    if (enemy.kind === 'boss') {
+      const hadParry = this.zones.some((z) => z.kind === 'warden_parry' && z.ownerId === enemy.id);
+      if (hadParry) {
+        this.removeEntityZones(enemy.id, ['warden_parry']);
+        this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 18, 'PARRY BROKEN!', '#38BDF8');
+      }
     }
 
     return effectiveDuration;
@@ -735,6 +766,7 @@ export class GameRoom {
     const idx = this.enemies.findIndex(e => e.id === entityId);
     if (idx >= 0) {
       const removed = this.enemies.splice(idx, 1)[0];
+      this.removeEntityZones(removed.id);
       this.enemyMeta.delete(removed.id);
       this.pushSystemChat(`[ADMIN] Despawned entity ${removed.name} (${removed.id}).`);
     }
@@ -742,6 +774,9 @@ export class GameRoom {
 
   public clearAllEnemies(): void {
     const count = this.enemies.length;
+    for (const en of this.enemies) {
+      this.removeEntityZones(en.id);
+    }
     this.enemies = [];
     this.enemyMeta.clear();
     this.pushSystemChat(`[ADMIN] Cleared all ${count} active enemies from the room.`);
@@ -751,6 +786,7 @@ export class GameRoom {
     const before = this.enemies.length;
     this.enemies = this.enemies.filter(e => {
       if (e.kind === 'boss') return true;
+      this.removeEntityZones(e.id);
       this.enemyMeta.delete(e.id);
       return false;
     });
@@ -792,7 +828,7 @@ export class GameRoom {
   }
 
   public resetBossEncounter(): void {
-    // Reset HP, phase, summons, and CC state of all boss entities in the room
+    // Reset HP, phase, summons, zones, and CC state of all boss entities in the room
     for (const en of this.enemies) {
       if (en.kind === 'boss') {
         en.hp = en.maxHp;
@@ -801,6 +837,8 @@ export class GameRoom {
         en.stunnedMs = 0;
         en.frozenMs = 0;
         en.summonWave = 0;
+        this.clearEnemyChargeState(en);
+        this.removeEntityZones(en.id);
         const meta = this.getEnemyMeta(en);
         meta.hardCcStage = 0;
         meta.lastHardCcAtMs = -999999;
@@ -1590,7 +1628,7 @@ export class GameRoom {
     p.dexterity = 0;
     p.intelligence = 0;
     p.faith = 0;
-    p.attributePoints = (p.level - 1) * 2;
+    p.attributePoints = (p.level - 1) * 3;
 
     p.maxHp = GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp = p.maxHp;
@@ -1738,7 +1776,8 @@ export class GameRoom {
     if (action === 'potion') {
       if (p.potions > 0 && p.hp < p.maxHp) {
         p.potions -= 1;
-        const healAmt = Math.round(p.maxHp * 0.45);
+        const cursedMult = p.statuses && p.statuses.some(s => s.type === 'ashen_curse') ? 0.55 : 1.0;
+        const healAmt = Math.max(1, Math.round(p.maxHp * 0.30 * cursedMult));
         p.hp = Math.min(p.maxHp, p.hp + healAmt);
         this.emitEvent('heal', p.x, p.y - 20, `+${healAmt}`, '#34D399');
       }
@@ -1969,7 +2008,9 @@ export class GameRoom {
       if (p.relics.includes('oathbound_censer')) {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
-            ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + 14);
+            const censerCurseMult = ally.state.statuses && ally.state.statuses.some(s => s.type === 'ashen_curse') ? 0.55 : 1.0;
+            const censerHeal = Math.max(1, Math.round(8 * censerCurseMult));
+            ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + censerHeal);
           }
         }
       }
@@ -2044,10 +2085,10 @@ export class GameRoom {
         }
       } else if (p.heroClass === 'cleric') {
         const dmgMult = this.computeDamageMult(p, 'divine');
-        const baseHeal = 36;
-        const heal = this.computeHealingAmount(baseHeal, p);
+        const baseHeal = 24;
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
+            const heal = this.computeHealingAmount(baseHeal, p, ally.state);
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
             this.emitEvent('heal', ally.state.x, ally.state.y - 20, `+${heal}`, '#34D399');
           }
@@ -2134,8 +2175,8 @@ export class GameRoom {
           x: targetPos.x,
           y: targetPos.y,
           radius: 115,
-          ttlMs: 6000,
-          maxTtlMs: 6000,
+          ttlMs: 5000,
+          maxTtlMs: 5000,
           ownerId: p.id,
         });
         this.emitEvent('status', targetPos.x, targetPos.y - 26, 'Solar Beacon', '#FDE68A');
@@ -2377,10 +2418,13 @@ export class GameRoom {
       }
 
       if (z.kind === 'warden_parry') {
-        if (z.ttlMs <= 0) {
+        const owner = this.enemies.find((e) => e.id === z.ownerId && e.hp > 0);
+        if (!owner || owner.stunnedMs > 0 || owner.frozenMs > 0 || z.ttlMs <= 0) {
           this.zones.splice(i, 1);
           continue;
         }
+        z.x = owner.x;
+        z.y = owner.y;
       }
 
       if (z.kind === 'verdict_combo' && z.ttlMs <= 0) {
@@ -2564,7 +2608,6 @@ export class GameRoom {
         if (z.kind === 'solar_beacon') {
           const ownerPr = this.players.get(z.ownerId);
           const ownerState = ownerPr ? ownerPr.state : null;
-          const beaconHeal = this.computeHealingAmount(9, ownerState);
           for (const pr of this.players.values()) {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (dist <= z.radius) {
@@ -2574,6 +2617,7 @@ export class GameRoom {
                   this.completeRevive(pr.state, z.ownerId);
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
+                const beaconHeal = this.computeHealingAmount(4, ownerState, pr.state);
                 pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
                 this.emitEvent('heal', pr.state.x, pr.state.y - 16, `+${Math.round(beaconHeal)}`, '#34D399');
               }
@@ -2638,8 +2682,8 @@ export class GameRoom {
             this.emitEvent('cleric_pulse', cleric.x, cleric.y, 'Radiant Aura', '#22C55E');
             for (const ally of targetsInRange) {
               if (ally.hp < ally.maxHp) {
-                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
-                const healAmt = this.computeHealingAmount(baseHeal, cleric);
+                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 3 : 2;
+                const healAmt = this.computeHealingAmount(baseHeal, cleric, ally);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
                 this.emitEvent('heal', ally.x, ally.y - 18, `+${healAmt}`, '#34D399');
               }
@@ -2769,7 +2813,7 @@ export class GameRoom {
                 st.shield = Math.min(bastionCap, st.shield + 25);
               }
               if (!st.downed) {
-                st.hp = Math.min(st.maxHp, st.hp + 30);
+                st.hp = Math.min(st.maxHp, st.hp + 20);
               }
               this.emitEvent('status', st.x, st.y - 34, `TOTEM: ${blessingMeta.name}!`, blessingMeta.color);
             }
@@ -2795,7 +2839,7 @@ export class GameRoom {
         if (p.statuses.some(s => s.type === 'frostbite')) {
           hasteFactor *= 1.25; // 25% attack delay penalty
         }
-        pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
+        pr.attackCooldownMs = Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
       }
@@ -2831,6 +2875,7 @@ export class GameRoom {
       enemy.poisonedMs = Math.max(0, enemy.poisonedMs - dtMs);
       enemy.bleedingMs = Math.max(0, enemy.bleedingMs - dtMs);
       enemy.silencedMs = Math.max(0, (enemy.silencedMs || 0) - dtMs);
+      enemy.shieldWallMs = Math.max(0, (enemy.shieldWallMs || 0) - dtMs);
 
       const meta = this.getEnemyMeta(enemy);
 
@@ -2886,6 +2931,9 @@ export class GameRoom {
       }
 
       if (enemy.stunnedMs > 0 || enemy.frozenMs > 0) {
+        if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== undefined) {
+          this.clearEnemyChargeState(enemy);
+        }
         enemy.vx = 0;
         enemy.vy = 0;
         continue;
@@ -2931,6 +2979,9 @@ export class GameRoom {
       }
 
       if (!nearest) {
+        if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== undefined) {
+          this.clearEnemyChargeState(enemy);
+        }
         enemy.state = 'idle';
         enemy.vx = 0;
         enemy.vy = 0;
@@ -3606,7 +3657,7 @@ export class GameRoom {
       }
 
       if (!st.downed) {
-        const healAmt = isGuardian ? 22 : 12;
+        const healAmt = isGuardian ? 18 : 10;
         st.hp = Math.min(st.maxHp, st.hp + healAmt);
       }
 
@@ -3647,6 +3698,7 @@ export class GameRoom {
   }
 
   private awardFullFloorMastery(): void {
+    if (this.floorMasteryAwarded) return;
     this.floorMasteryAwarded = true;
     const floorXpBonus = 1 + (this.floor - 1) * 0.35;
     const diffXpBonus =
@@ -3657,17 +3709,17 @@ export class GameRoom {
     for (const ally of this.players.values()) {
       const st = ally.state;
       st.gold += masteryGold;
-      st.attributePoints += 1;
       if (!st.downed) {
-        st.hp = Math.min(st.maxHp, st.hp + 35);
+        st.hp = Math.min(st.maxHp, st.hp + 25);
+        st.shield = Math.min(60, Math.max(st.shield, 0) + 25);
       }
       st.potions = Math.min(5, st.potions + 1);
       this.grantXp(st, masteryXp);
-      this.emitEvent('status', st.x, st.y - 42, 'FLOOR CLEARED (+1 ATTR PT!)', '#FDE047');
+      this.emitEvent('status', st.x, st.y - 42, 'FLOOR CLEARED (+25 SHIELD)', '#FDE047');
     }
 
     this.pushSystemChat(
-      `Floor Mastery achieved! All chambers on Floor ${this.floor} cleared: +${masteryGold}g, +${masteryXp} XP, +1 Potion, and +1 Attribute Point!`
+      `Floor Mastery achieved! All chambers on Floor ${this.floor} cleared: +${masteryGold}g, +${masteryXp} XP, +25 Shield, and +1 Potion!`
     );
   }
 
@@ -3958,6 +4010,14 @@ export class GameRoom {
 
     // Bull rush charge execution (Warden Malakor Phase 2)
     if (boss.charging) {
+      if ((boss.chargeWindupMs || 0) > 0) {
+        boss.state = 'windup';
+        boss.chargeWindupMs = Math.max(0, (boss.chargeWindupMs || 0) - dtMs);
+        boss.vx = 0;
+        boss.vy = 0;
+        return;
+      }
+      boss.state = 'charge';
       boss.chargeTimerMs = (boss.chargeTimerMs || 0) - dtMs;
       const chargeSpd = 295 * slowFactor;
       const cAngle = boss.chargeAngle ?? angle;
@@ -3970,13 +4030,19 @@ export class GameRoom {
         24
       );
       for (const pr of this.players.values()) {
-        if (!pr.state.downed && Math.hypot(pr.state.x - boss.x, pr.state.y - boss.y) <= boss.radius + 16) {
+        if (
+          !pr.state.downed &&
+          !meta.chargeHitPlayerIds.has(pr.state.id) &&
+          Math.hypot(pr.state.x - boss.x, pr.state.y - boss.y) <= boss.radius + 16
+        ) {
+          meta.chargeHitPlayerIds.add(pr.state.id);
           this.damagePlayer(pr.state, 20 + floorNum * 4, 'physical');
           this.applyPlayerStatus(pr.state, 'guard_broken', 4000);
         }
       }
       if ((boss.chargeTimerMs || 0) <= 0) {
-        boss.charging = false;
+        this.clearEnemyChargeState(boss);
+        boss.state = 'recover';
         boss.vx = 0;
         boss.vy = 0;
         boss.windupMs = isEnraged ? 800 : 1000;
@@ -4071,10 +4137,15 @@ export class GameRoom {
       } else {
         boss.charging = true;
         boss.chargeAngle = angle;
+        boss.chargeWindupMs = 550;
         boss.chargeTimerMs = 560;
+        boss.state = 'windup';
+        boss.vx = 0;
+        boss.vy = 0;
+        meta.chargeHitPlayerIds.clear();
         meta.bossAbilityCooldowns[3] = this.simTimeMs + 3400;
         this.emitEvent('status', boss.x, boss.y - boss.radius - 18, 'WAR CHARGE!', '#F59E0B');
-        boss.windupMs = 950;
+        boss.windupMs = 0;
       }
     } else if (floorNum === 2 || isCatacombs) {
       // FLOOR 2 BOSS: Archlich Vaelor (Add management & necrotic control)
@@ -4928,10 +4999,11 @@ export class GameRoom {
       this.emitEvent('status', enemy.x, enemy.y - enemy.radius - 16, ' BLOCKED! (-60%)', '#60A5FA');
     }
 
-    // Oriphiel Aegis Parry Stance: Reflect 100% damage back to attacking player
-    const isParrying = this.zones.some(
-      (z) => z.kind === 'warden_parry' && z.ownerId === enemy.id
-    );
+    // Oriphiel Aegis Parry Stance: Reflect 85% damage back to attacking player unless Hard CC'd
+    const isParrying =
+      enemy.stunnedMs <= 0 &&
+      enemy.frozenMs <= 0 &&
+      this.zones.some((z) => z.kind === 'warden_parry' && z.ownerId === enemy.id);
     if (isParrying && attacker) {
       const reflectDmg = Math.round(rawAmount * 0.85);
       this.damagePlayer(attacker, reflectDmg, 'divine');
@@ -5168,6 +5240,7 @@ export class GameRoom {
     const idx = this.enemies.indexOf(enemy);
     if (idx === -1) return;
     this.enemies.splice(idx, 1);
+    this.removeEntityZones(enemy.id);
     this.enemyMeta.delete(enemy.id);
 
     if (attacker) {
@@ -5225,7 +5298,7 @@ export class GameRoom {
       p.level += 1;
       leveledUp = true;
       if (p.level <= MAX_LEVEL) {
-        p.attributePoints += 2;
+        p.attributePoints += 3;
       }
       p.nextXp = GameRoom.computeNextXp(p.level);
       if (p.level >= MAX_LEVEL) {
@@ -5239,7 +5312,7 @@ export class GameRoom {
       p.hp += (p.maxHp - oldMax);
       p.hp = Math.min(p.maxHp, p.hp + 24);
 
-      this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, '#F4D378');
+      this.emitEvent('status', p.x, p.y - 26, `Level ${p.level} (+3 Pts)`, '#F4D378');
       if (p.level >= MAX_LEVEL) break;
     }
     if (p.level >= MAX_LEVEL) {
@@ -5269,10 +5342,33 @@ export class GameRoom {
       bleed: 0,
     };
 
-    let resist =
-      damageType === 'elemental'
-        ? (res.fire + res.frost + res.lightning) / 3
-        : res.physical;
+    const avgElemRes = (res.fire + res.frost + res.lightning) / 3;
+    let resist = 0;
+    if (damageType === 'elemental') {
+      resist = avgElemRes;
+    } else if (damageType === 'fire') {
+      resist = res.fire;
+    } else if (damageType === 'frost') {
+      resist = res.frost;
+    } else if (damageType === 'lightning') {
+      resist = res.lightning;
+    } else if (damageType === 'poison') {
+      resist = res.poison;
+    } else if (damageType === 'bleed') {
+      resist = res.bleed;
+    } else if (damageType === 'arcane' || damageType === 'divine') {
+      resist = avgElemRes;
+    } else {
+      resist = res.physical;
+    }
+
+    const isMagicalOrElemental =
+      damageType === 'elemental' ||
+      damageType === 'fire' ||
+      damageType === 'frost' ||
+      damageType === 'lightning' ||
+      damageType === 'arcane' ||
+      damageType === 'divine';
 
     if (p.relics.includes('runic_carapace')) {
       resist += damageType === 'physical' ? 0.15 : 0.20;
@@ -5283,7 +5379,7 @@ export class GameRoom {
     if (damageType === 'physical' && (p.strength || 0) > 0) {
       resist += Math.min(0.15, (p.strength || 0) * 0.0015);
     }
-    if (damageType === 'elemental' && (p.intelligence || 0) > 0) {
+    if (isMagicalOrElemental && (p.intelligence || 0) > 0) {
       resist += Math.min(0.15, (p.intelligence || 0) * 0.0015);
     }
     const bastionStacks = this.getBlessingStacks(p, 'bastion');
@@ -5594,6 +5690,7 @@ export class GameRoom {
       if (e.charging) projected.charging = true;
       if (e.chargeAngle !== undefined) projected.chargeAngle = r2(e.chargeAngle);
       if (e.chargeTimerMs) projected.chargeTimerMs = e.chargeTimerMs;
+      if (e.chargeWindupMs) projected.chargeWindupMs = e.chargeWindupMs;
       if (e.summonWave) projected.summonWave = e.summonWave;
       if (e.shieldWallMs) projected.shieldWallMs = e.shieldWallMs;
       if (e.abilityCdMs) projected.abilityCdMs = e.abilityCdMs;

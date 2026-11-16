@@ -203,7 +203,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     weapon: 'Dawnstar Flanged Mace & Reliquary',
     weaponType: 'Radiant Smite & Holy Relic',
     passiveName: 'Radiant Aura',
-    passiveDesc: 'Emits a sacred 140-range warmth that heals wounded party members every 2 seconds (scales with Level & Faith, base 4 HP, +50% when critical), and increases revive speed by 40%.',
+    passiveDesc: 'Emits a sacred 140-range warmth that heals wounded party members every 2 seconds (scales with Level & Faith, base 2 HP, +50% when critical), and increases revive speed by 40%.',
     maxHp: 128,
     speed: 185,
     damage: 22,
@@ -218,11 +218,11 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     stats: { survivability: 4, damage: 3, range: 3, mobility: 2, utility: 5 },
     resistances: { physical: 0.15, fire: 0.40, frost: 0.20, lightning: 0.15, poison: 0.35, bleed: 0.25 },
     tacticalName: 'Sanctified Pulse',
-    tacticalDesc: 'Release a blinding wave of golden light, healing you and all nearby party members (scales with Level & Faith, base 36 HP) while searing adjacent undead.',
-    tacticalCooldownMs: 5400,
+    tacticalDesc: 'Release a blinding wave of golden light, healing you and all nearby party members (scales with Level & Faith, base 24 HP) while searing adjacent undead.',
+    tacticalCooldownMs: 6800,
     ultName: 'Solar Beacon',
-    ultDesc: 'Consecrate holy ground with an avatar of the Sun that continuously heals all allies (scales with Level & Faith, base 9 HP) and rapidly revives downed teammates who enter.',
-    ultCooldownMs: 14000,
+    ultDesc: 'Consecrate holy ground with an avatar of the Sun that continuously heals all allies (scales with Level & Faith, base 4 HP) and rapidly revives downed teammates who enter.',
+    ultCooldownMs: 18000,
   },
 };
 
@@ -253,7 +253,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'zephyr_greaves',
     name: 'Zephyr Greaves',
     category: 'Mobility',
-    summary: '+18% movement speed across all terrain.',
+    summary: '+15% movement speed across all terrain.',
     accent: '#68B89E',
   },
   {
@@ -288,7 +288,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'oathbound_censer',
     name: 'Oathbound Censer',
     category: 'Co-op',
-    summary: 'Using your Tactical skill heals nearby co-op allies for +14 HP.',
+    summary: 'Using your Tactical skill heals nearby co-op allies for +8 HP.',
     accent: '#E8CE76',
   },
   {
@@ -552,6 +552,7 @@ export interface EnemyState {
   charging?: boolean;
   chargeAngle?: number;
   chargeTimerMs?: number;
+  chargeWindupMs?: number;
   summonWave?: number;
   shieldWallMs?: number;
   abilityCdMs?: number;

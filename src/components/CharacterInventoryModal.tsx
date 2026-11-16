@@ -257,7 +257,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                       </span>
                       <div>
                         <div className="text-xs font-mono font-bold text-white">Health Potions</div>
-                        <div className="text-[10px] text-[#A19FAF]">Restores 45% Max HP on use [E]</div>
+                        <div className="text-[10px] text-[#A19FAF]">Restores 30% Max HP on use [E]</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -688,7 +688,9 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                   <div className="space-y-2 font-mono text-xs">
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Max Health Pool Breakdown</span>
-                      <span className="font-bold text-[#10B981]">{stats.maxHp} HP (Base {stats.baseHp} + Lv {stats.levelHpBonus} + VIT {stats.vitHpBonus})</span>
+                      <span className="font-bold text-[#10B981]">
+                        {stats.maxHp} HP (Base {stats.baseHp} + Lv {stats.levelHpBonus} + VIT {stats.vitHpBonus}{stats.relicHpBonus > 0 ? ` + Relic ${stats.relicHpBonus}` : ''})
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-between p-2 stone-input">

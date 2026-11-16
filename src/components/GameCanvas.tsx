@@ -3372,29 +3372,41 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             const cAngle = en.chargeAngle ?? 0;
             const runwayLen = 180;
             const runwayW = en.radius * 2 + 12;
+            const windupMs = en.chargeWindupMs ?? 0;
+            const isWindingUp = windupMs > 0;
+            const fillRatio = isWindingUp ? Math.max(0.08, Math.min(1, 1 - windupMs / 550)) : 1;
 
             ctx.translate(ex, ey);
             ctx.rotate(cAngle);
 
-            // Glowing hazard runway strip fill
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+            // Base runway background
+            ctx.fillStyle = isWindingUp ? 'rgba(245, 158, 11, 0.14)' : 'rgba(239, 68, 68, 0.28)';
             ctx.fillRect(0, -runwayW / 2, runwayLen, runwayW);
 
+            // Progressive telegraph fill during windup
+            if (isWindingUp) {
+              ctx.fillStyle = 'rgba(245, 158, 11, 0.30)';
+              ctx.fillRect(0, -runwayW / 2, runwayLen * fillRatio, runwayW);
+            }
+
             // Striped hazard borders
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
-            ctx.lineWidth = 3;
+            ctx.strokeStyle = isWindingUp ? 'rgba(251, 191, 36, 0.92)' : 'rgba(239, 68, 68, 0.98)';
+            ctx.lineWidth = isWindingUp ? 2.5 : 3.5;
+            if (isWindingUp) ctx.setLineDash([8, 5]);
             ctx.beginPath();
             ctx.moveTo(0, -runwayW / 2);
             ctx.lineTo(runwayLen, -runwayW / 2);
             ctx.moveTo(0, runwayW / 2);
             ctx.lineTo(runwayLen, runwayW / 2);
             ctx.stroke();
+            ctx.setLineDash([]);
 
             // Animated directional chevron arrows >>>
-            ctx.strokeStyle = 'rgba(254, 240, 138, 0.9)';
+            ctx.strokeStyle = isWindingUp ? 'rgba(253, 224, 71, 0.95)' : 'rgba(254, 240, 138, 0.95)';
             ctx.lineWidth = 2.5;
+            const chevronSpeed = isWindingUp ? 0.08 : 0.16;
             for (let c = 30; c < runwayLen; c += 40) {
-              const animOffset = (now * 0.12) % 40;
+              const animOffset = (now * chevronSpeed) % 40;
               const cx = (c + animOffset) % runwayLen;
               ctx.beginPath();
               ctx.moveTo(cx - 10, -10);
@@ -3404,11 +3416,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             }
 
             // Impact danger circle at end of runway
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+            ctx.fillStyle = isWindingUp ? 'rgba(245, 158, 11, 0.25)' : 'rgba(239, 68, 68, 0.40)';
             ctx.beginPath();
             ctx.arc(runwayLen, 0, runwayW / 2, 0, Math.PI * 2);
             ctx.fill();
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.strokeStyle = isWindingUp ? 'rgba(251, 191, 36, 0.95)' : 'rgba(239, 68, 68, 0.98)';
             ctx.lineWidth = 2.5;
             ctx.stroke();
 

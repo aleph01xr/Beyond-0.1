@@ -37,6 +37,7 @@ export type SnapshotScalarFields = Partial<
 export interface EntityPatch<T extends { id: string }> {
   id: string;
   changes: Partial<T>;
+  removedKeys?: string[];
 }
 
 export interface SnapshotDelta {
@@ -85,10 +86,14 @@ function shallowEqualValues(a: unknown, b: unknown): boolean {
   return false;
 }
 
-function diffEntity<T extends { id: string }>(prev: T, next: T): Partial<T> | null {
+function diffEntity<T extends { id: string }>(
+  prev: T,
+  next: T
+): { changes: Partial<T>; removedKeys?: string[] } | null {
   const prevRec = prev as Record<string, unknown>;
   const nextRec = next as Record<string, unknown>;
   let changes: Record<string, unknown> | null = null;
+  let removedKeys: string[] | undefined;
 
   for (const key of Object.keys(nextRec)) {
     if (key === 'id') continue;
@@ -100,13 +105,17 @@ function diffEntity<T extends { id: string }>(prev: T, next: T): Partial<T> | nu
 
   for (const key of Object.keys(prevRec)) {
     if (key === 'id') continue;
-    if (!(key in nextRec) && prevRec[key] !== undefined) {
-      if (!changes) changes = {};
-      changes[key] = undefined;
+    if ((!(key in nextRec) || nextRec[key] === undefined) && prevRec[key] !== undefined) {
+      if (!removedKeys) removedKeys = [];
+      removedKeys.push(key);
     }
   }
 
-  return changes as Partial<T> | null;
+  if (!changes && !removedKeys) return null;
+  return {
+    changes: (changes ?? {}) as Partial<T>,
+    ...(removedKeys ? { removedKeys } : {}),
+  };
 }
 
 function diffEntityArray<T extends { id: string }>(
@@ -134,10 +143,14 @@ function diffEntityArray<T extends { id: string }>(
       if (!added) added = [];
       added.push(nextItem);
     } else {
-      const changes = diffEntity(prevItem, nextItem);
-      if (changes) {
+      const patch = diffEntity(prevItem, nextItem);
+      if (patch) {
         if (!updated) updated = [];
-        updated.push({ id: nextItem.id, changes });
+        updated.push({
+          id: nextItem.id,
+          changes: patch.changes,
+          ...(patch.removedKeys ? { removedKeys: patch.removedKeys } : {}),
+        });
       }
     }
   }
@@ -166,7 +179,7 @@ function applyEntityDiff<T extends { id: string }>(
 
   const removedSet = removed?.length ? new Set(removed) : null;
   const updatedMap = updated?.length
-    ? new Map(updated.map((u) => [u.id, u.changes]))
+    ? new Map(updated.map((u) => [u.id, u]))
     : null;
 
   const result: T[] = [];
@@ -175,10 +188,15 @@ function applyEntityDiff<T extends { id: string }>(
     if (removedSet?.has(item.id)) continue;
     const patch = updatedMap?.get(item.id);
     if (patch) {
-      const merged = { ...item, ...patch } as Record<string, unknown>;
-      for (const key of Object.keys(patch)) {
+      const merged = { ...item, ...patch.changes } as Record<string, unknown>;
+      for (const key of Object.keys(patch.changes)) {
         if (merged[key] === undefined) {
           delete merged[key];
+        }
+      }
+      if (patch.removedKeys) {
+        for (let k = 0; k < patch.removedKeys.length; k++) {
+          delete merged[patch.removedKeys[k]];
         }
       }
       result.push(merged as T);

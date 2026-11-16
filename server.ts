@@ -337,7 +337,7 @@ async function initStorage(): Promise<void> {
         await dbPool.query(`
           UPDATE accounts 
           SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
-              attribute_points = (GREATEST(1, level) - 1) * 2;
+              attribute_points = (GREATEST(1, level) - 1) * 3;
         `);
         await dbPool.query(
           'INSERT INTO schema_migrations (version) VALUES ($1)',
@@ -417,7 +417,7 @@ async function initStorage(): Promise<void> {
           rec.dexterity = 0;
           rec.intelligence = 0;
           rec.faith = 0;
-          rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+          rec.attributePoints = (Math.max(1, rec.level) - 1) * 3;
         } else {
           rec.strength = Number(rec.strength) || 0;
           rec.vitality = Number(rec.vitality) || 0;

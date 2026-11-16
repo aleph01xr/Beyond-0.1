@@ -161,7 +161,7 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
   if (relics.includes('sunfire_signet')) damageMultiplier *= 1.12;
   if (furyStacks > 0) damageMultiplier *= 1 + furyStacks * 0.06;
 
-  const rawHealingMult = heroClass === 'cleric' ? (1 + (level - 1) * 0.05) * (1 + fth * 0.02) : 1.0;
+  const rawHealingMult = heroClass === 'cleric' ? (1 + (level - 1) * 0.015) * (1 + fth * 0.006) : 1.0;
   const healingMultiplier = Number(rawHealingMult.toFixed(2));
   const healingBonusPct = Number(((rawHealingMult - 1) * 100).toFixed(1));
 

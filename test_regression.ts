@@ -142,15 +142,17 @@ async function runRegressionTests() {
         appliedMigrations = JSON.parse(fs.readFileSync(testMigrationsFile, 'utf8'));
       }
       const needsReset = !appliedMigrations.includes('20261106_reset_attributes');
-      for (const rec of list) {
-        if (needsReset) {
+      if (needsReset) {
+        for (const rec of list) {
           rec.strength = 0;
           rec.vitality = 0;
           rec.dexterity = 0;
           rec.intelligence = 0;
           rec.faith = 0;
-          rec.attributePoints = (Math.max(1, rec.level || 1) - 1) * 2;
-        } else {
+          rec.attributePoints = (Math.max(1, rec.level || 1) - 1) * 3;
+        }
+      } else {
+        for (const rec of list) {
           rec.strength = Number(rec.strength) || 0;
           rec.vitality = Number(rec.vitality) || 0;
           rec.dexterity = Number(rec.dexterity) || 0;
@@ -170,7 +172,7 @@ async function runRegressionTests() {
     // First boot: One-time reset happens
     const boot1Accounts = simulateServerBoot();
     assert.strictEqual(boot1Accounts[0].strength, 0);
-    assert.strictEqual(boot1Accounts[0].attributePoints, 48); // (25-1)*2
+    assert.strictEqual(boot1Accounts[0].attributePoints, 72); // (25-1)*3
 
     // Now player spends points: 10 STR, 10 VIT, remaining 28 points
     boot1Accounts[0].strength = 10;
@@ -427,21 +429,21 @@ async function runRegressionTests() {
 
   // --- Test 6: Cleric with 0 FTH vs 10 FTH vs 20 FTH scaling ---
   test('6. Cleric healing increases with Faith (0 FTH vs 10 FTH vs 20 FTH)', () => {
-    const base = 36;
+    const base = 24;
     const heal0 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 0 });
     const heal10 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 10 });
     const heal20 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: 20 });
 
-    assert.strictEqual(heal0, 36, '0 FTH at lvl 1 gives base 36');
+    assert.strictEqual(heal0, 24, '0 FTH at lvl 1 gives base 24');
     assert(heal10 > heal0, `10 FTH (${heal10}) must heal more than 0 FTH (${heal0})`);
     assert(heal20 > heal10, `20 FTH (${heal20}) must heal more than 10 FTH (${heal10})`);
-    assert.strictEqual(heal10, 43, '36 * 1.0 * 1.20 = 43.2 -> 43');
-    assert.strictEqual(heal20, 50, '36 * 1.0 * 1.40 = 50.4 -> 50');
+    assert.strictEqual(heal10, 25, '24 * 1.0 * 1.06 = 25.44 -> 25');
+    assert.strictEqual(heal20, 27, '24 * 1.0 * 1.12 = 26.88 -> 27');
   });
 
   // --- Test 7: Level scaling with same Faith ---
   test('7. Higher level increases Cleric healing with same Faith', () => {
-    const base = 36;
+    const base = 24;
     const fth = 10;
     const healLvl1 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 1, faith: fth });
     const healLvl10 = GameRoom.computeHealingAmount(base, { heroClass: 'cleric', level: 10, faith: fth });
@@ -449,9 +451,9 @@ async function runRegressionTests() {
 
     assert(healLvl10 > healLvl1, `Lvl 10 (${healLvl10}) must heal more than Lvl 1 (${healLvl1})`);
     assert(healLvl25 > healLvl10, `Lvl 25 (${healLvl25}) must heal more than Lvl 10 (${healLvl10})`);
-    assert.strictEqual(healLvl1, 43);
-    assert.strictEqual(healLvl10, 63, '36 * 1.45 * 1.20 = 62.64 -> 63');
-    assert.strictEqual(healLvl25, 95, '36 * 2.20 * 1.20 = 95.04 -> 95');
+    assert.strictEqual(healLvl1, 25);
+    assert.strictEqual(healLvl10, 29, '24 * 1.135 * 1.06 = 28.87 -> 29');
+    assert.strictEqual(healLvl25, 35, '24 * 1.360 * 1.06 = 34.60 -> 35');
   });
 
   // --- Test 8: Dawnstar Smite (Sanctified Pulse) uses scaling helper ---
@@ -499,13 +501,13 @@ async function runRegressionTests() {
 
     // Damage ally so they have room to be healed
     ally.hp = 100;
-    const expectedHeal = GameRoom.computeHealingAmount(36, cleric);
-    // Level 10, 15 FTH: 36 * (1 + 9*0.05) * (1 + 15*0.02) = 36 * 1.45 * 1.30 = 67.86 -> 68
-    assert.strictEqual(expectedHeal, 68);
+    const expectedHeal = GameRoom.computeHealingAmount(24, cleric, ally);
+    // Level 10, 15 FTH: 24 * (1 + 9*0.015) * (1 + 15*0.006) = 24 * 1.135 * 1.09 = 29.69 -> 30
+    assert.strictEqual(expectedHeal, 30);
 
     // Cleric uses tactical skill
     room.performAction(clericId, 'tactical');
-    assert.strictEqual(ally.hp, 100 + expectedHeal, 'Ally HP must increase by exactly 68');
+    assert.strictEqual(ally.hp, 100 + expectedHeal, 'Ally HP must increase by exactly 30');
   });
 
   // --- Test 9: Radiant Aura uses scaling helper ---
@@ -549,28 +551,28 @@ async function runRegressionTests() {
     ally.x = 320;
     ally.y = 320;
 
-    // Injure ally to 80% (normal base 4)
+    // Injure ally to 80% (normal base 2)
     ally.hp = Math.round(ally.maxHp * 0.8);
     const startHp = ally.hp;
 
-    // Expected aura heal: Level 10, 20 FTH, base 4:
-    // 4 * (1 + 9*0.05) * (1 + 20*0.02) = 4 * 1.45 * 1.40 = 8.12 -> 8
-    const expectedNormal = GameRoom.computeHealingAmount(4, cleric);
-    assert.strictEqual(expectedNormal, 8);
+    // Expected aura heal: Level 10, 20 FTH, base 2:
+    // 2 * (1 + 9*0.015) * (1 + 20*0.006) = 2 * 1.135 * 1.12 = 2.54 -> 3
+    const expectedNormal = GameRoom.computeHealingAmount(2, cleric, ally);
+    assert.strictEqual(expectedNormal, 3);
 
     // Tick room 2000ms to trigger Radiant Aura
     room.tick(2000);
-    assert.strictEqual(ally.hp, startHp + expectedNormal, 'Aura must heal ally by exactly 8 HP');
+    assert.strictEqual(ally.hp, startHp + expectedNormal, 'Aura must heal ally by exactly 3 HP');
 
-    // Injure ally below 50% HP (critical base 6):
-    // 6 * 1.45 * 1.40 = 12.18 -> 12
+    // Injure ally below 50% HP (critical base 3):
+    // 3 * 1.135 * 1.12 = 3.81 -> 4
     ally.hp = Math.round(ally.maxHp * 0.4);
     const critStartHp = ally.hp;
-    const expectedCrit = GameRoom.computeHealingAmount(6, cleric);
-    assert.strictEqual(expectedCrit, 12);
+    const expectedCrit = GameRoom.computeHealingAmount(3, cleric, ally);
+    assert.strictEqual(expectedCrit, 4);
 
     room.tick(2000);
-    assert.strictEqual(ally.hp, critStartHp + expectedCrit, 'Critical aura must heal ally by exactly 12 HP');
+    assert.strictEqual(ally.hp, critStartHp + expectedCrit, 'Critical aura must heal ally by exactly 4 HP');
   });
 
   // --- Test 10: Healing a nearly full-health player never exceeds max HP ---
@@ -638,17 +640,17 @@ async function runRegressionTests() {
   // --- Test 12: Non-Cleric healing is unchanged by Faith ---
   test('12. Non-Cleric healing does not receive Cleric Faith scaling', () => {
     // Vanguard with 20 FTH
-    const vanguardHeal = GameRoom.computeHealingAmount(36, {
+    const vanguardHeal = GameRoom.computeHealingAmount(24, {
       heroClass: 'vanguard',
       level: 10,
       faith: 20,
     });
-    assert.strictEqual(vanguardHeal, 36, 'Non-Cleric helper call returns base amount without FTH scaling');
+    assert.strictEqual(vanguardHeal, 24, 'Non-Cleric helper call returns base amount without FTH scaling');
 
-    // Potion healing remains 45% of maxHp
+    // Potion healing is nerfed to 30% of maxHp
     const maxHp = 200;
-    const potionHeal = Math.round(maxHp * 0.45);
-    assert.strictEqual(potionHeal, 90, 'Potion healing is unscaled consumable percentage');
+    const potionHeal = Math.round(maxHp * 0.30);
+    assert.strictEqual(potionHeal, 60, 'Potion healing is unscaled 30% Max HP consumable percentage');
   });
 
   // --- Test 13: Multiplayer healing is calculated consistently on server ---
@@ -709,7 +711,7 @@ async function runRegressionTests() {
     ally2.hp = 50;
 
     // Both are within 210px range
-    const expected = GameRoom.computeHealingAmount(36, cleric);
+    const expected = GameRoom.computeHealingAmount(24, cleric, ally1);
     room.performAction(clericId, 'tactical');
 
     assert.strictEqual(ally1.hp, 50 + expected, 'Ally 1 receives authoritative heal');
@@ -3674,11 +3676,11 @@ async function runRegressionTests() {
     room.performAction(pid, 'interact');
     assert.strictEqual(gLockedChest!.opened, true, 'Unlocked Guardian chest can now be opened');
 
-    // Full-Floor Mastery Bonus check
+    // Full-Floor Mastery Bonus check (must NOT award permanent attribute points, preventing farming past 147)
     const finalSnap = room.buildSnapshot();
     assert.strictEqual(finalSnap.floorMasteryAwarded, true, 'Full-floor mastery should be awarded when all combat rooms clear');
     assert.strictEqual(finalSnap.bossWards, 0, 'Boss Sanctum Wards should be 0 when all combat rooms are cleared');
-    assert.ok(player.attributePoints >= attrBeforeMastery + 1, 'Full-floor mastery must grant +1 attribute point');
+    assert.strictEqual(player.attributePoints, attrBeforeMastery, 'Full-floor mastery must NOT grant unintended extra attribute points');
     assert.ok(player.potions >= Math.min(5, potionsBeforeMastery + 1), 'Full-floor mastery must grant +1 potion');
 
     // Verify Floor 5+ designates 2 Guardian rooms when >=3 combat rooms exist, and Sanctum Ward reduction worked earlier
@@ -6069,15 +6071,15 @@ async function runRegressionTests() {
     assert.strictEqual(capHero.level, 50, 'grantXp must stop at Level 50');
     assert.strictEqual(capHero.xp, 0, 'XP must reset to 0 upon reaching Level 50 cap');
     assert.strictEqual(capHero.nextXp, 999999, 'nextXp at Level 50 must be 999999');
-    assert.strictEqual(capHero.attributePoints, 2, 'Only 1 level-up (+2 pts) may be granted from Lv49 to Lv50');
+    assert.strictEqual(capHero.attributePoints, 3, 'Only 1 level-up (+3 pts) may be granted from Lv49 to Lv50');
     (room as any).grantXp(capHero, 500000);
     assert.strictEqual(capHero.level, 50, 'Subsequent XP must never exceed Level 50');
-    assert.strictEqual(capHero.attributePoints, 2, 'No attribute points may be granted after Level 50');
+    assert.strictEqual(capHero.attributePoints, 3, 'No attribute points may be granted after Level 50');
 
     room.setPlayerLevel('p_cap', 99);
     assert.strictEqual(capHero.level, 50, 'setPlayerLevel must clamp to Level 50');
     assert.strictEqual(capHero.nextXp, 999999);
-    assert.strictEqual(capHero.attributePoints, 98, 'Level 50 reset grants (50 - 1) * 2 = 98 points');
+    assert.strictEqual(capHero.attributePoints, 147, 'Level 50 reset grants (50 - 1) * 3 = 147 points');
 
     // 2. Direct Damage Scaling: BaseDamage * (1 + 0.05*(Lv-1)) * (1 + 0.015*PrimaryAttr), no double application
     const classesAndAttrs: Array<{ id: string; cls: HeroClassId; attr: 'strength' | 'dexterity' | 'intelligence' | 'faith'; cat: 'physical' | 'arcane' | 'divine' }> = [
@@ -6157,9 +6159,9 @@ async function runRegressionTests() {
     // Cleric Faith healing projection matches GameRoom.computeHealingAmount
     const cState = room.getPlayerState('c_dmg')!;
     const cProj = calculatePlayerStatProjections(cState, 1);
-    const expectedHealMult = (1 + 29 * 0.05) * (1 + 40 * 0.02); // 2.45 * 1.80 = 4.41
+    const expectedHealMult = (1 + 29 * 0.015) * (1 + 40 * 0.006); // 1.435 * 1.24 = 1.7794 -> 1.78
     assert.strictEqual(cProj.healingMultiplier, Number(expectedHealMult.toFixed(2)), 'Cleric projected healingMultiplier must match Lv & Faith scaling');
-    assert.strictEqual(GameRoom.computeHealingAmount(20, cState), Math.round(20 * expectedHealMult), 'GameRoom healing amount must match Cleric Lv & Faith formula');
+    assert.strictEqual(GameRoom.computeHealingAmount(24, cState), Math.round(24 * expectedHealMult), 'GameRoom healing amount must match Cleric Lv & Faith formula');
 
     // 4. All attribute caps + relic & blessing stacking parity between GameRoom and statUtils
     const stacked = room.addOrReconnectPlayer('p_stack', 'StackHero', 'arcanist', false, {
@@ -6208,6 +6210,327 @@ async function runRegressionTests() {
     const elemTaken = room.damagePlayer(stacked, 1000, 'elemental');
     assert.strictEqual(elemTaken, 250, 'Elemental resistance must preserve 75% total cap');
     assert.strictEqual(projStacked.elementalResistPct, 75.0, 'Projected elementalResistPct must match 75% cap');
+  });
+
+  // --- Test 92: Progression (+3 Attr Pts/Lv, 147 Total at Lv 50, Floor Mastery No Extra Attr Pts) ---
+  await test('92. Progression: Lv1 starts at 0 pts, +3 pts/level up to 147 at Lv50, and Floor Mastery never inflates attr pts', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_PROG_92',
+      name: 'Progression Audit Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9292,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+
+    const hero = room.addOrReconnectPlayer('p_prog92', 'LvOneHero', 'vanguard');
+    assert.strictEqual(hero.level, 1, 'Fresh player starts at Level 1');
+    assert.strictEqual(hero.attributePoints, 0, 'Level 1 starts with 0 attribute points');
+
+    // Step through levels 1 -> 50 via grantXp
+    let safety = 0;
+    while (hero.level < MAX_LEVEL && safety < 200) {
+      safety++;
+      (room as any).grantXp(hero, hero.nextXp);
+    }
+    assert.strictEqual(hero.level, 50, 'Must reach Level 50 cap');
+    assert.strictEqual(hero.attributePoints, 147, 'Lv 1 -> Lv 50 must award exactly (50 - 1) * 3 = 147 attribute points');
+
+    // Verify Floor Mastery awards shield/gold/xp/potion without adding or duplicating attribute points
+    const ptsBefore = hero.attributePoints;
+    const shieldBefore = hero.shield;
+    room.enemies = [];
+    room.tick(50);
+    assert.strictEqual(room.buildSnapshot().floorMasteryAwarded, true);
+    assert.strictEqual(hero.attributePoints, ptsBefore, 'Floor Mastery must NOT award extra attribute points past 147');
+    assert.ok(hero.shield > shieldBefore, 'Floor Mastery grants defensive shield instead of permanent attribute inflation');
+
+    // Repeated call guard: attributePoints & gold must not duplicate
+    const goldAfterFirst = hero.gold;
+    (room as any).awardFullFloorMastery();
+    assert.strictEqual(hero.gold, goldAfterFirst, 'Guard prevents duplicate Floor Mastery rewards');
+    assert.strictEqual(hero.attributePoints, ptsBefore);
+  });
+
+  // --- Test 93: Boss Indicator & Ability Lifecycle Fixes (Malakor Dash, JSON Delta RemovedKeys, Shield Wall Decay, Oriphiel Parry, Zone Cleanup) ---
+  await test('93. Boss Lifecycle: Malakor dash windup/single-hit/interrupt cleanup, JSON delta key deletion, shieldWall decay, & zone cleanup', async () => {
+    const {
+      applySnapshotDelta,
+      cloneSnapshotBaseline,
+      computeSnapshotDelta,
+    } = await import('./src/shared/snapshotDelta.ts');
+
+    // 1. Warden Malakor War Charge lifecycle + JSON WebSocket delta cleanup
+    const f1Room = new GameRoom({
+      roomId: 'R_TEST_MALAKOR_93',
+      name: 'Malakor Dash Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9301,
+      initialFloor: 1,
+    });
+    f1Room.status = 'playing';
+    const p1 = f1Room.addOrReconnectPlayer('pm', 'TankHero', 'vanguard');
+    p1.maxHp = 800;
+    p1.hp = 800;
+    const malakor = f1Room.enemies.find((e) => e.kind === 'boss')!;
+    // Keep other non-boss mobs out of the test
+    f1Room.enemies = [malakor];
+
+    // Put Malakor into Phase 2, lock out non-charge abilities so he casts War Charge
+    malakor.hp = Math.round(malakor.maxHp * 0.50);
+    malakor.windupMs = 0;
+    const meta = (f1Room as any).getEnemyMeta(malakor);
+    meta.bossAbilityCooldowns = { 0: 9999999, 1: 9999999, 2: 9999999 };
+
+    p1.x = malakor.x + 110;
+    p1.y = malakor.y;
+
+    // Tick 1: Malakor casts War Charge -> MUST enter windup first (vx === 0, chargeWindupMs > 0), NOT teleport/lunge on frame 1
+    f1Room.tick(25);
+    assert.strictEqual(malakor.charging, true, 'Malakor War Charge sets charging telemetry flag');
+    assert.ok((malakor.chargeWindupMs ?? 0) > 400, `War Charge must begin with visible windup (got ${malakor.chargeWindupMs}ms)`);
+    assert.strictEqual(malakor.state, 'windup', 'Malakor state during windup must be windup');
+    const xAfterCast = malakor.x;
+    f1Room.tick(100);
+    assert.strictEqual(malakor.x, xAfterCast, 'Malakor must remain stationary while telegraphing charge windup');
+
+    // Finish windup -> active lunge begins and hits stationary p1 along horizontal line AT MOST ONCE
+    p1.x = malakor.x + 40;
+    p1.y = malakor.y;
+    p1.shield = 0;
+    p1.maxHp = 800;
+    p1.hp = 800;
+    const hpBeforeDash = p1.hp;
+    let clientSnap = cloneSnapshotBaseline(f1Room.buildNetworkSnapshot());
+    let prevServerSnap = clientSnap;
+
+    for (let t = 0; t < 50; t++) {
+      f1Room.tick(25);
+      const nextSnap = f1Room.buildNetworkSnapshot();
+      // Round-trip through JSON.stringify to simulate actual WebSocket serialization!
+      const rawDelta = computeSnapshotDelta(prevServerSnap, nextSnap, t + 1, t + 2);
+      const wireDelta = JSON.parse(JSON.stringify(rawDelta));
+      clientSnap = applySnapshotDelta(clientSnap, wireDelta);
+      prevServerSnap = cloneSnapshotBaseline(nextSnap);
+    }
+
+    assert.strictEqual(malakor.charging, false, 'Server must clear charging after charge completes');
+    assert.strictEqual(malakor.chargeAngle, undefined, 'Server must clear chargeAngle after charge completes');
+
+    const clientMalakor = clientSnap.enemies.find((e) => e.id === malakor.id)!;
+    assert.strictEqual(clientMalakor.charging, undefined, 'Client JSON-reconstructed Malakor must NOT retain stuck charging indicator');
+    assert.strictEqual(clientMalakor.chargeAngle, undefined, 'Client JSON-reconstructed Malakor must NOT retain stuck chargeAngle');
+    assert.strictEqual(clientMalakor.chargeWindupMs, undefined, 'Client JSON-reconstructed Malakor must clear chargeWindupMs');
+
+    const dmgTaken = hpBeforeDash - p1.hp;
+    assert.ok(dmgTaken > 0 && dmgTaken <= 60, `Malakor dash must hit overlapping player only once, not per tick (took ${dmgTaken} dmg)`);
+
+    // 2. Hard CC & Idle interruption during charge/windup + shieldWallMs decay
+    malakor.charging = true;
+    malakor.chargeWindupMs = 450;
+    malakor.chargeTimerMs = 560;
+    malakor.chargeAngle = 0.5;
+    malakor.shieldWallMs = 200;
+    f1Room.applyHardCc(malakor, 'stun', 1700);
+    assert.strictEqual(malakor.charging, false, 'Hard CC must interrupt active/winding-up charge');
+    assert.strictEqual(malakor.chargeAngle, undefined, 'Hard CC must clear chargeAngle');
+    f1Room.tick(250);
+    assert.strictEqual(malakor.shieldWallMs, 0, 'shieldWallMs must decay to 0 over time in tick() instead of staying permanent');
+
+    // Idle interruption (target downed in boss arena while party survives elsewhere -> !nearest clears charging)
+    const farAlly = f1Room.addOrReconnectPlayer('pm_far', 'FarAlly', 'ranger');
+    farAlly.x = f1Room.spawnPoint.x;
+    farAlly.y = f1Room.spawnPoint.y;
+    malakor.stunnedMs = 0;
+    malakor.charging = true;
+    malakor.chargeTimerMs = 400;
+    malakor.chargeAngle = 1.0;
+    p1.downed = true;
+    f1Room.tick(25);
+    assert.strictEqual(f1Room.status, 'playing', 'Room must stay in playing state with alive distant teammate');
+    assert.strictEqual(malakor.charging, false, 'Loss of target / idle transition must clear charging');
+    assert.strictEqual(malakor.chargeAngle, undefined, 'Loss of target / idle transition must clear chargeAngle');
+
+    // 3. Oriphiel (Floor 10): warden_parry follows Oriphiel, cancels on stun, & zones clean up on boss death
+    const f10Room = new GameRoom({
+      roomId: 'R_TEST_ORIPHIEL_93',
+      name: 'Oriphiel Lifecycle Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9310,
+      initialFloor: 10,
+    });
+    f10Room.status = 'playing';
+    const p10 = f10Room.addOrReconnectPlayer('po', 'ParryTester', 'vanguard');
+    const oriphiel = f10Room.enemies.find((e) => e.kind === 'boss')!;
+    oriphiel.windupMs = 99999;
+    f10Room.zones.push({
+      id: 'z_parry_test',
+      kind: 'warden_parry',
+      x: oriphiel.x,
+      y: oriphiel.y,
+      radius: 65,
+      ttlMs: 2100,
+      maxTtlMs: 2100,
+      ownerId: oriphiel.id,
+    });
+    oriphiel.x += 45;
+    oriphiel.y -= 20;
+    f10Room.tick(25);
+    const parryZone = f10Room.zones.find((z) => z.kind === 'warden_parry')!;
+    assert.ok(parryZone && parryZone.x === oriphiel.x && parryZone.y === oriphiel.y, 'Oriphiel warden_parry aura must track Oriphiel position');
+
+    f10Room.applyHardCc(oriphiel, 'stun', 1700);
+    assert.strictEqual(f10Room.zones.some((z) => z.kind === 'warden_parry'), false, 'Stun must break Oriphiel warden_parry stance');
+
+    f10Room.zones.push({
+      id: 'z_orphan_check',
+      kind: 'warden_edict',
+      x: oriphiel.x,
+      y: oriphiel.y,
+      radius: 200,
+      quadrant: 0,
+      ttlMs: 1400,
+      maxTtlMs: 1400,
+      ownerId: oriphiel.id,
+    });
+    oriphiel.stunnedMs = 0;
+    oriphiel.shieldWallMs = 0;
+    f10Room.damageEnemy(oriphiel, oriphiel.maxHp * 10, p10, false, 'physical');
+    assert.strictEqual(f10Room.zones.some((z) => z.ownerId === oriphiel.id), false, 'Killing boss must immediately clear its active hazard zones');
+  });
+
+  // --- Test 94: Attribute Passives Audit (INT Elemental/Fire/Arcane/Divine Resistance & Attack CD Clamp Parity) ---
+  await test('94. Attribute Passives: INT reduces all elemental/magic damage types and attackCooldownMs floor matches statUtils', async () => {
+    const { calculatePlayerStatProjections } = await import('./src/shared/statUtils.ts');
+
+    const room = new GameRoom({
+      roomId: 'R_TEST_ATTR_AUDIT_94',
+      name: 'Attribute Audit',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9494,
+    });
+    room.status = 'playing';
+
+    const lowInt = room.addOrReconnectPlayer('p_int0', 'ZeroInt', 'arcanist', false, {
+      level: 10, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const highInt = room.addOrReconnectPlayer('p_int100', 'MaxInt', 'arcanist', false, {
+      level: 10, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 100, faith: 0, attributePoints: 0,
+    });
+
+    for (const dmgType of ['fire', 'frost', 'lightning', 'arcane', 'divine', 'elemental'] as const) {
+      lowInt.hp = lowInt.maxHp;
+      highInt.hp = highInt.maxHp;
+      const dmgLow = room.damagePlayer(lowInt, 100, dmgType);
+      const dmgHigh = room.damagePlayer(highInt, 100, dmgType);
+      assert.strictEqual(dmgLow - dmgHigh, 15, `100 INT must grant +15% resistance against ${dmgType} damage (low=${dmgLow}, high=${dmgHigh})`);
+    }
+
+    // Attack cooldown floor parity (100ms clamp in fast haste/swiftness stack)
+    const fastRanger = room.addOrReconnectPlayer('p_fast', 'FastRanger', 'ranger', false, {
+      level: 50, xp: 0, strength: 0, vitality: 0, dexterity: 100, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    fastRanger.hasteMs = 5000;
+    fastRanger.floorBlessings = ['swiftness', 'swiftness', 'swiftness', 'swiftness'];
+    const proj = calculatePlayerStatProjections(fastRanger, 1);
+    assert.ok(proj.attackCooldownMs >= 100, 'Projected attackCooldownMs must respect >=100ms floor');
+  });
+
+  // --- Test 95: Major Healing Nerf Audit (Lv 1, Mid Lv 25, Max Lv 50 + Ashen Curse + Infinite Sustain Prevention) ---
+  await test('95. Major Healing Nerf: Lv1/Lv25/Lv50 healing curves support Cleric identity without infinite sustain, and Ashen Curse applies', async () => {
+    const { calculatePlayerStatProjections } = await import('./src/shared/statUtils.ts');
+
+    const room = new GameRoom({
+      roomId: 'R_TEST_HEAL_NERF_95',
+      name: 'Healing Audit Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9595,
+      initialFloor: 7,
+    });
+    room.status = 'playing';
+
+    const tiers = [
+      { id: 'c1', level: 1, faith: 0, label: 'Early Lv1' },
+      { id: 'c25', level: 25, faith: 40, label: 'Mid Lv25 (40 FTH)' },
+      { id: 'c50', level: 50, faith: 100, label: 'Max Lv50 (100 FTH)' },
+    ];
+
+    const hpsByTier: number[] = [];
+    for (const t of tiers) {
+      const c = room.addOrReconnectPlayer(t.id, t.label, 'cleric', false, {
+        level: t.level, xp: 0, strength: 0, vitality: 20, dexterity: 0, intelligence: 0, faith: t.faith, attributePoints: 0,
+      });
+      const proj = calculatePlayerStatProjections(c, 1);
+      const pulseHeal = GameRoom.computeHealingAmount(24, c);
+      const beaconTick = GameRoom.computeHealingAmount(4, c);
+      const auraNormal = GameRoom.computeHealingAmount(2, c);
+      const expectedMult = (1 + (t.level - 1) * 0.015) * (1 + t.faith * 0.006);
+      assert.strictEqual(proj.healingMultiplier, Number(expectedMult.toFixed(2)), `${t.label} statUtils healingMultiplier parity`);
+
+      // Sustained HP/sec from Pulse (6.8s CD) + Beacon (10 ticks / 18s CD) + Aura (2s pulse)
+      const sustainedHps = pulseHeal / 6.8 + (beaconTick * 10) / 18.0 + auraNormal / 2.0;
+      hpsByTier.push(sustainedHps);
+
+      // Cleric support scales upward with level & Faith
+      if (hpsByTier.length > 1) {
+        assert.ok(sustainedHps > hpsByTier[hpsByTier.length - 2], `${t.label} sustained HP/s must exceed lower tier`);
+      }
+      // Prevent late-game infinite sustain (was ~328 HP/s previously)
+      assert.ok(sustainedHps < 25, `${t.label} sustained healing (${sustainedHps.toFixed(1)} HP/s) must be far below infinite-sustain levels`);
+    }
+
+    // Ashen Curse (-45% healing) works across Cleric abilities AND Health Potions
+    const cleric50 = room.getPlayerState('c50')!;
+    const victim = room.addOrReconnectPlayer('p_cursed', 'CursedTank', 'vanguard', false, {
+      level: 50, xp: 0, strength: 0, vitality: 40, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    victim.x = cleric50.x + 20;
+    victim.y = cleric50.y;
+    victim.hp = 100;
+    victim.statuses = [{
+      id: 'st_ashen',
+      type: 'ashen_curse',
+      durationMs: 5000,
+      maxDurationMs: 5000,
+    }];
+
+    const uncursedPulse = GameRoom.computeHealingAmount(24, cleric50);
+    const cursedPulse = GameRoom.computeHealingAmount(24, cleric50, victim);
+    assert.ok(cursedPulse <= Math.round(uncursedPulse * 0.56), `Ashen Curse must cut Pulse heal ~45% (${cursedPulse} vs ${uncursedPulse})`);
+
+    room.performAction('c50', 'tactical');
+    assert.strictEqual(victim.hp, 100 + cursedPulse, 'Sanctified Pulse must apply target Ashen Curse reduction');
+
+    // Nerfed potion (30% Max HP) with Ashen Curse (-45%)
+    const hpBeforePotion = victim.hp;
+    victim.potions = 2;
+    room.performAction('p_cursed', 'potion');
+    const potionGained = victim.hp - hpBeforePotion;
+    const expectedCursedPotion = Math.max(1, Math.round(victim.maxHp * 0.30 * 0.55));
+    assert.strictEqual(potionGained, expectedCursedPotion, 'Health potion must heal 30% Max HP reduced by Ashen Curse when cursed');
+
+    // Solar Beacon revives downed teammates cleanly even with nerfed heal tick
+    const downedAlly = room.addOrReconnectPlayer('p_downed_b', 'DownedHero', 'ranger');
+    downedAlly.downed = true;
+    downedAlly.hp = 0;
+    downedAlly.reviveProgress = 0;
+    downedAlly.x = cleric50.x + 10;
+    downedAlly.y = cleric50.y;
+    cleric50.ultCooldownMs = 0;
+    room.performAction('c50', 'ult', 0, { aimDistance: 10 });
+    for (let i = 0; i < 65; i++) {
+      f1_advanceBeaconTick(room);
+    }
+    assert.strictEqual(downedAlly.downed, false, 'Solar Beacon must still reliably revive downed allies within ~1.5s');
+
+    function f1_advanceBeaconTick(r: GameRoom) {
+      r.tick(25);
+    }
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

@@ -1955,7 +1955,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Cleric divine damage (+0.8%), healing (+2%), DoT scaling (+0.1%), and crowd-control duration resistance (+0.3%).
+                      Increases Cleric divine damage (+0.8%), healing (+0.6%), DoT scaling (+0.1%), and crowd-control duration resistance (+0.3%).
                     </p>
                   </div>
                   <button
@@ -1974,7 +1974,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
               <div className="pt-3 border-t border-[#2B293A] flex items-center justify-between">
                 <p className="text-[11px] font-mono text-[#8E8C9E]">
-                  Gain +2 attribute points per level (Cap Lv. {MAX_LEVEL}).
+                  Gain +3 attribute points per level (Cap Lv. {MAX_LEVEL}).
                 </p>
                 <button
                   type="button"
