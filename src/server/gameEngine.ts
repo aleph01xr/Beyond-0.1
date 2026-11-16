@@ -1,4 +1,5 @@
 import {
+  CRIT_DAMAGE_MULTIPLIER,
   HERO_CLASSES,
   MAX_ATTRIBUTE,
   MAX_LEVEL,
@@ -162,8 +163,9 @@ export class GameRoom {
   ): number {
     const def = HERO_CLASSES[heroClass];
     const baseHp = def ? def.maxHp : 100;
-    const levelBonus = (Math.max(1, level) - 1) * 12;
-    const vitBonus = (vitality || 0) * 6;
+    const clampedLvl = Math.max(1, Math.min(MAX_LEVEL, level || 1));
+    const levelBonus = (clampedLvl - 1) * 12;
+    const vitBonus = (vitality || 0) * 5;
     const relicBonus = relics.includes('bastion_pauldron') ? 30 : 0;
     return baseHp + levelBonus + vitBonus + relicBonus;
   }
@@ -178,10 +180,10 @@ export class GameRoom {
     let healing = baseHealing;
 
     if (healer && healer.heroClass === 'cleric') {
-      const lvl = Math.max(1, healer.level || 1);
+      const lvl = Math.max(1, Math.min(MAX_LEVEL, healer.level || 1));
       const fth = Math.max(0, healer.faith || 0);
       const levelMult = 1 + (lvl - 1) * 0.05;
-      const faithMult = 1 + fth * 0.03;
+      const faithMult = 1 + fth * 0.02;
       healing = healing * levelMult * faithMult;
     }
 
@@ -197,7 +199,7 @@ export class GameRoom {
     if (level >= MAX_LEVEL) return 999999;
     const lvl = Math.max(1, level);
     // Smooth, rewarding progression curve that scales with dungeon exploration:
-    // L1: 80, L5: 421, L10: 1,120, L25: 4,850, L50: 15,200
+    // L1: 80, L5: 421, L10: 1,120, L25: 4,850, L49: 14,030, L50 (Cap): MAX
     return Math.round(80 + (lvl - 1) * 60 + Math.pow(lvl - 1, 1.75) * 12);
   }
 
@@ -374,8 +376,8 @@ export class GameRoom {
     if (statusType === 'scorched') resMult = 1 - (res.fire || 0);
     if (statusType === 'ashen_curse') resMult = 1 - (res.poison || 0); // Ashen curse scales with poison res for simplicity
     
-    // Faith confers spiritual resilience: reduces debuff duration up to 40%
-    const faithTenacity = Math.min(0.40, (p.faith || 0) * 0.004);
+    // Faith confers spiritual resilience: reduces debuff duration up to 40% (+0.3 percentage points/FTH)
+    const faithTenacity = Math.min(0.40, (p.faith || 0) * 0.003);
     const effectiveDuration = Math.round(durationMs * Math.max(0.2, resMult * (1 - faithTenacity)));
 
     const existing = p.statuses.find(s => s.type === statusType);
@@ -483,9 +485,9 @@ export class GameRoom {
 
   public static computeDotMultiplier(p: PlayerState | null | undefined): number {
     if (!p) return 1.0;
-    const level = Math.max(1, p.level || 1);
+    const level = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
     const primaryAttr = Math.max(0, GameRoom.getPrimaryAttributeValue(p));
-    return 1 + 0.003 * (level - 1) + 0.002 * primaryAttr;
+    return 1 + 0.003 * (level - 1) + 0.001 * primaryAttr;
   }
 
   private getEnemyMeta(enemy: EnemyState): EnemyRuntimeMeta {
@@ -665,7 +667,7 @@ export class GameRoom {
       else if (kind === 'burn') this.applyPlayerStatus(target, 'scorched', durationMs);
       else if (kind === 'silence') this.applyPlayerStatus(target, 'silenced', durationMs);
       else {
-        const faithTenacity = Math.min(0.40, (target.faith || 0) * 0.004);
+        const faithTenacity = Math.min(0.40, (target.faith || 0) * 0.003);
         const reducedDuration = Math.max(0, Math.round(durationMs * (1 - faithTenacity)));
         target.stunnedMs = Math.max(target.stunnedMs, reducedDuration);
       }
@@ -1106,6 +1108,9 @@ export class GameRoom {
       }
     }
 
+    const clampedLevel = Math.max(1, Math.min(MAX_LEVEL, Number(savedStats?.level) || 1));
+    const clampedXp = clampedLevel >= MAX_LEVEL ? 0 : Math.max(0, Number(savedStats?.xp) || 0);
+
     const state: PlayerState = {
       id: playerId,
       username,
@@ -1118,9 +1123,9 @@ export class GameRoom {
       hp: def.maxHp,
       maxHp: def.maxHp,
       shield: 15,
-      level: savedStats?.level || 1,
-      xp: savedStats?.xp || 0,
-      nextXp: savedStats ? Math.round(80 * Math.pow(1.35, savedStats.level - 1)) : 80,
+      level: clampedLevel,
+      xp: clampedXp,
+      nextXp: GameRoom.computeNextXp(clampedLevel),
       gold: 0,
       potions: 2,
       relics: [],
@@ -1575,9 +1580,9 @@ export class GameRoom {
     if (!pr) return;
     const p = pr.state;
     const def = HERO_CLASSES[p.heroClass];
-    p.level = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
+    p.level = Math.max(1, Math.min(MAX_LEVEL, Math.floor(targetLevel) || 1));
     p.xp = 0;
-    p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
+    p.nextXp = GameRoom.computeNextXp(p.level);
     
     // Reset attributes for fresh level set
     p.strength = 0;
@@ -2142,20 +2147,21 @@ export class GameRoom {
   }
 
   public computeDamageMult(p: PlayerState, category: DamageCategory = 'physical'): number {
-    let mult = 1 + (p.level - 1) * 0.1;
+    const lvl = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
+    let mult = 1 + (lvl - 1) * 0.05;
     if (category === 'physical') {
       const physStat = p.heroClass === 'ranger' ? (p.dexterity || 0) : (p.strength || 0);
-      mult *= (1 + physStat * 0.03);
+      mult *= (1 + physStat * 0.015);
     } else if (category === 'arcane') {
-      mult *= (1 + (p.intelligence || 0) * 0.03);
+      mult *= (1 + (p.intelligence || 0) * 0.015);
     } else if (category === 'divine') {
-      mult *= (1 + (p.faith || 0) * 0.03);
+      mult *= (1 + (p.faith || 0) * 0.015);
     } else {
       const mainStat = p.heroClass === 'ranger' ? (p.dexterity || 0)
         : p.heroClass === 'arcanist' ? (p.intelligence || 0)
         : p.heroClass === 'cleric' ? (p.faith || 0)
         : (p.strength || 0);
-      mult *= (1 + mainStat * 0.03);
+      mult *= (1 + mainStat * 0.015);
     }
     if (p.relics.includes('sunfire_signet')) mult *= 1.24;
     const furyStacks = this.getBlessingStacks(p, 'fury');
@@ -2648,7 +2654,7 @@ export class GameRoom {
       for (const pr of this.players.values()) {
         const p = pr.state;
         if (!p.downed && p.connected && (p.vitality || 0) >= 6 && p.hp < p.maxHp) {
-          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.12));
+          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.1));
           p.hp = Math.min(p.maxHp, p.hp + regenAmt);
         }
       }
@@ -2784,7 +2790,7 @@ export class GameRoom {
       }
 
       if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const dexSpeedMult = (1 + (p.dexterity || 0) * 0.006) * (1 + this.getBlessingStacks(p, 'swiftness') * 0.08);
+        const dexSpeedMult = (1 + (p.dexterity || 0) * 0.004) * (1 + this.getBlessingStacks(p, 'swiftness') * 0.08);
         let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         if (p.statuses.some(s => s.type === 'frostbite')) {
           hasteFactor *= 1.25; // 25% attack delay penalty
@@ -3670,9 +3676,9 @@ export class GameRoom {
     const category: 'physical' | 'arcane' | 'divine' =
       p.heroClass === 'arcanist' ? 'arcane' : p.heroClass === 'cleric' ? 'divine' : 'physical';
     const mult = this.computeDamageMult(p, category);
-    const critChance = Math.min(0.45, 0.10 + (p.dexterity || 0) * 0.004 + (p.relics.includes('keen_arrowhead') ? 0.20 : 0));
+    const critChance = Math.min(0.45, 0.10 + (p.dexterity || 0) * 0.003 + (p.relics.includes('keen_arrowhead') ? 0.20 : 0));
     const hasCrit = Math.random() < critChance;
-    const critMult = hasCrit ? 1.75 : 1.0;
+    const critMult = hasCrit ? CRIT_DAMAGE_MULTIPLIER : 1.0;
     const dmg = Math.round(def.damage * mult * critMult);
     const extraCount = p.relics.includes('twinstring_charm') ? 1 : 0;
     const bonusPierce = p.relics.includes('piercing_prism') ? 1 : 0;
@@ -5209,6 +5215,7 @@ export class GameRoom {
     if (p.level >= MAX_LEVEL) {
       p.level = MAX_LEVEL;
       p.xp = 0;
+      p.nextXp = 999999;
       return;
     }
     p.xp += amount;

@@ -13,7 +13,7 @@ import type {
   GameSnapshot,
   PlayerState,
 } from '../shared/types.ts';
-import { HERO_CLASSES } from '../shared/types.ts';
+import { HERO_CLASSES, MAX_LEVEL } from '../shared/types.ts';
 
 export type JoystickSizeOption = 'small' | 'medium' | 'large' | 'huge';
 export type JoystickModeOption = 'fixed' | 'floating';
@@ -681,10 +681,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         {/* Progression Status Bar (Mobile) */}
         <div className="flex flex-col items-end gap-1 mb-1 pr-1">
           <div className="text-[9px] font-mono font-bold text-[#FCD34D] bg-[#181822]/60 px-1.5 py-0.5 border border-[#3C3A4D]">
-            {player.level >= 100 ? 'MAX LEVEL' : `LV.${player.level}`}
+            {player.level >= MAX_LEVEL ? 'MAX LEVEL' : `LV.${player.level}`}
           </div>
           <div className="w-20 h-1.5 bg-[#12111A]/80 border border-[#3C3A52] relative overflow-hidden">
-            {player.level >= 100 ? (
+            {player.level >= MAX_LEVEL ? (
               <div className="absolute inset-0 bg-[#FCD34D]" />
             ) : (
               <div 

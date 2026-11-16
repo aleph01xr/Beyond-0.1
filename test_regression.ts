@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { GameRoom } from './src/server/gameEngine.ts';
-import { TILE_SIZE, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
+import { TILE_SIZE, MAX_LEVEL, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
 import {
   computeGroundTargetPosition,
   findBestAutoTarget,
@@ -63,6 +63,7 @@ import {
   angleDeltaRad,
 } from './src/client/desktopInput.ts';
 import {
+  computePlayerMoveSpeed,
   hasMovementInput,
   normalizePlayerInputDirection,
 } from './src/shared/playerMovement.ts';
@@ -298,8 +299,8 @@ async function runRegressionTests() {
     const pid = 'p_tester_3';
     // Vanguard: Base HP = 155
     // Level 5: level bonus = (5 - 1) * 12 = 48
-    // Vitality 10: vit bonus = 10 * 6 = 60
-    // Total permanent HP = 155 + 48 + 60 = 263
+    // Vitality 10: vit bonus = 10 * 5 = 50
+    // Total permanent HP = 155 + 48 + 50 = 253
     room.addOrReconnectPlayer(pid, 'Knight', 'vanguard', false, {
       level: 5,
       xp: 0,
@@ -312,20 +313,20 @@ async function runRegressionTests() {
     });
 
     const pState = room.getPlayerState(pid)!;
-    assert.strictEqual(pState.maxHp, 263, 'Initial max HP with level 5 and 10 VIT');
+    assert.strictEqual(pState.maxHp, 253, 'Initial max HP with level 5 and 10 VIT');
 
     // Award Bastion Pauldron relic (+30 HP)
     room.addPlayerRelic(pid, 'bastion_pauldron');
     assert.strictEqual(pState.relics.includes('bastion_pauldron'), true);
-    assert.strictEqual(pState.maxHp, 293, 'Max HP with Bastion Pauldron must be 293');
+    assert.strictEqual(pState.maxHp, 283, 'Max HP with Bastion Pauldron must be 283');
 
     // Now restart the expedition
     room.restartRun();
 
     // Verify relics are cleared and HP is recalculated WITHOUT Bastion Pauldron
     assert.strictEqual(pState.relics.length, 0, 'Relics must be empty after restart');
-    assert.strictEqual(pState.maxHp, 263, 'Max HP must return to 263 (Bastion Pauldron bonus completely removed)');
-    assert.strictEqual(pState.hp, 263, 'Current HP must equal max HP (263)');
+    assert.strictEqual(pState.maxHp, 253, 'Max HP must return to 253 (Bastion Pauldron bonus completely removed)');
+    assert.strictEqual(pState.hp, 253, 'Current HP must equal max HP (253)');
     assert.strictEqual(pState.level, 5, 'Permanent level must be preserved');
     assert.strictEqual(pState.vitality, 10, 'Permanent vitality must be preserved');
   });
@@ -434,8 +435,8 @@ async function runRegressionTests() {
     assert.strictEqual(heal0, 36, '0 FTH at lvl 1 gives base 36');
     assert(heal10 > heal0, `10 FTH (${heal10}) must heal more than 0 FTH (${heal0})`);
     assert(heal20 > heal10, `20 FTH (${heal20}) must heal more than 10 FTH (${heal10})`);
-    assert.strictEqual(heal10, 47, '36 * 1.0 * 1.30 = 46.8 -> 47');
-    assert.strictEqual(heal20, 58, '36 * 1.0 * 1.60 = 57.6 -> 58');
+    assert.strictEqual(heal10, 43, '36 * 1.0 * 1.20 = 43.2 -> 43');
+    assert.strictEqual(heal20, 50, '36 * 1.0 * 1.40 = 50.4 -> 50');
   });
 
   // --- Test 7: Level scaling with same Faith ---
@@ -448,9 +449,9 @@ async function runRegressionTests() {
 
     assert(healLvl10 > healLvl1, `Lvl 10 (${healLvl10}) must heal more than Lvl 1 (${healLvl1})`);
     assert(healLvl25 > healLvl10, `Lvl 25 (${healLvl25}) must heal more than Lvl 10 (${healLvl10})`);
-    assert.strictEqual(healLvl1, 47);
-    assert.strictEqual(healLvl10, 68, '36 * 1.45 * 1.30 = 67.86 -> 68');
-    assert.strictEqual(healLvl25, 103, '36 * 2.20 * 1.30 = 102.96 -> 103');
+    assert.strictEqual(healLvl1, 43);
+    assert.strictEqual(healLvl10, 63, '36 * 1.45 * 1.20 = 62.64 -> 63');
+    assert.strictEqual(healLvl25, 95, '36 * 2.20 * 1.20 = 95.04 -> 95');
   });
 
   // --- Test 8: Dawnstar Smite (Sanctified Pulse) uses scaling helper ---
@@ -499,12 +500,12 @@ async function runRegressionTests() {
     // Damage ally so they have room to be healed
     ally.hp = 100;
     const expectedHeal = GameRoom.computeHealingAmount(36, cleric);
-    // Level 10, 15 FTH: 36 * (1 + 9*0.05) * (1 + 15*0.03) = 36 * 1.45 * 1.45 = 75.69 -> 76
-    assert.strictEqual(expectedHeal, 76);
+    // Level 10, 15 FTH: 36 * (1 + 9*0.05) * (1 + 15*0.02) = 36 * 1.45 * 1.30 = 67.86 -> 68
+    assert.strictEqual(expectedHeal, 68);
 
     // Cleric uses tactical skill
     room.performAction(clericId, 'tactical');
-    assert.strictEqual(ally.hp, 100 + expectedHeal, 'Ally HP must increase by exactly 76');
+    assert.strictEqual(ally.hp, 100 + expectedHeal, 'Ally HP must increase by exactly 68');
   });
 
   // --- Test 9: Radiant Aura uses scaling helper ---
@@ -553,23 +554,23 @@ async function runRegressionTests() {
     const startHp = ally.hp;
 
     // Expected aura heal: Level 10, 20 FTH, base 4:
-    // 4 * (1 + 9*0.05) * (1 + 20*0.03) = 4 * 1.45 * 1.60 = 9.28 -> 9
+    // 4 * (1 + 9*0.05) * (1 + 20*0.02) = 4 * 1.45 * 1.40 = 8.12 -> 8
     const expectedNormal = GameRoom.computeHealingAmount(4, cleric);
-    assert.strictEqual(expectedNormal, 9);
+    assert.strictEqual(expectedNormal, 8);
 
     // Tick room 2000ms to trigger Radiant Aura
     room.tick(2000);
-    assert.strictEqual(ally.hp, startHp + expectedNormal, 'Aura must heal ally by exactly 9 HP');
+    assert.strictEqual(ally.hp, startHp + expectedNormal, 'Aura must heal ally by exactly 8 HP');
 
     // Injure ally below 50% HP (critical base 6):
-    // 6 * 1.45 * 1.60 = 13.92 -> 14
+    // 6 * 1.45 * 1.40 = 12.18 -> 12
     ally.hp = Math.round(ally.maxHp * 0.4);
     const critStartHp = ally.hp;
     const expectedCrit = GameRoom.computeHealingAmount(6, cleric);
-    assert.strictEqual(expectedCrit, 14);
+    assert.strictEqual(expectedCrit, 12);
 
     room.tick(2000);
-    assert.strictEqual(ally.hp, critStartHp + expectedCrit, 'Critical aura must heal ally by exactly 14 HP');
+    assert.strictEqual(ally.hp, critStartHp + expectedCrit, 'Critical aura must heal ally by exactly 12 HP');
   });
 
   // --- Test 10: Healing a nearly full-health player never exceeds max HP ---
@@ -1114,7 +1115,7 @@ async function runRegressionTests() {
     });
 
     const pid = 'scaling_check';
-    // Ranger level 10 (+90% level scaling = 1.9x), DEX 10 (+30% stat scaling = 1.3x)
+    // Ranger level 10 (+45% level scaling = 1.45x), DEX 10 (+15% stat scaling = 1.15x)
     room.addOrReconnectPlayer(pid, 'RangerScaler', 'ranger', false, {
       level: 10,
       xp: 0,
@@ -1132,12 +1133,12 @@ async function runRegressionTests() {
     room.enemies.push(slime as any);
 
     // Base attack damage = 10.
-    // Scaled base damage using computeDamageMult = 10 * (1 + (10-1)*0.10) * (1 + 10*0.03) = 10 * 1.9 * 1.3 = 24.7 -> 25
+    // Scaled base damage using computeDamageMult = 10 * (1 + (10-1)*0.05) * (1 + 10*0.015) = 10 * 1.45 * 1.15 = 16.675 -> 17
     const scaledBaseDmg = Math.round(10 * room.computeDamageMult(p, 'physical'));
-    assert.strictEqual(scaledBaseDmg, 25);
+    assert.strictEqual(scaledBaseDmg, 17);
 
     const actualDmg = room.damageEnemy(slime as any, scaledBaseDmg, p, 'physical');
-    assert.strictEqual(actualDmg, 25, 'Base 10 damage scaled to 25 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 25 damage without duplicate scaling');
+    assert.strictEqual(actualDmg, 17, 'Base 10 damage scaled to 17 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 17 damage without duplicate scaling');
   });
 
   // --- Test 25: Arcanist tactical damage scales with Intelligence, not Strength ---
@@ -1166,7 +1167,7 @@ async function runRegressionTests() {
     });
     const pB = room.getPlayerState(idB)!;
     const multB = room.computeDamageMult(pB, 'arcane');
-    assert.strictEqual(multB, 1.3, 'Arcanist arcane mult with 10 INT must be 1.3');
+    assert.strictEqual(multB, 1.15, 'Arcanist arcane mult with 10 INT must be 1.15');
 
     // Check spawned tactical projectile damage
     room.performAction(idA, 'tactical');
@@ -1176,7 +1177,7 @@ async function runRegressionTests() {
     room.projectiles = []; // Clear projectiles
     room.performAction(idB, 'tactical');
     const projB = room.projectiles.find(pr => pr.ownerId === idB)!;
-    assert.strictEqual(projB.damage, 31, '10 INT Arcanist tactical projectile damage must be 31 (24 * 1.3 = 31.2 -> 31)');
+    assert.strictEqual(projB.damage, 28, '10 INT Arcanist tactical projectile damage must be 28 (24 * 1.15 = 27.6 -> 28)');
   });
 
   // --- Test 26: Cleric tactical damage scales with Faith, not Strength ---
@@ -1212,12 +1213,12 @@ async function runRegressionTests() {
     const pB = room.getPlayerState(idB)!;
     pB.x = 200; pB.y = 200;
     const multB = room.computeDamageMult(pB, 'divine');
-    assert.strictEqual(multB, 1.3, 'Cleric divine mult with 10 FTH must be 1.3');
+    assert.strictEqual(multB, 1.15, 'Cleric divine mult with 10 FTH must be 1.15');
 
     const dummyB = createTestEnemy('e_dummyB', 'slime', 'Dummy B', 210, 210, 500, { divine: 0 });
     room.enemies.push(dummyB as any);
     room.performAction(idB, 'tactical');
-    assert.strictEqual(dummyB.hp, 464, '10 FTH Cleric tactical deals 36 damage (28 * 1.3 = 36.4 -> 36, 500 - 36 = 464)');
+    assert.strictEqual(dummyB.hp, 468, '10 FTH Cleric tactical deals 32 damage (28 * 1.15 = 32.2 -> 32, 500 - 32 = 468)');
   });
 
   // --- Test 27: Ranger tactical damage scales with Dexterity ---
@@ -1236,11 +1237,11 @@ async function runRegressionTests() {
     });
     const pR = room.getPlayerState(idR)!;
     const multR = room.computeDamageMult(pR, 'physical');
-    assert.strictEqual(multR, 1.3, 'Ranger physical mult with 10 DEX must be 1.3');
+    assert.strictEqual(multR, 1.15, 'Ranger physical mult with 10 DEX must be 1.15');
 
     room.performAction(idR, 'tactical');
     const projR = room.projectiles.find(pr => pr.ownerId === idR)!;
-    assert.strictEqual(projR.damage, 23, '10 DEX Ranger tactical projectile damage must be 23 (18 * 1.3 = 23.4 -> 23)');
+    assert.strictEqual(projR.damage, 21, '10 DEX Ranger tactical projectile damage must be 21 (18 * 1.15 = 20.7 -> 21)');
   });
 
   // --- Test 28: Vanguard tactical damage scales with Strength ---
@@ -1260,12 +1261,12 @@ async function runRegressionTests() {
     const pV = room.getPlayerState(idV)!;
     pV.x = 100; pV.y = 100;
     const multV = room.computeDamageMult(pV, 'physical');
-    assert.strictEqual(multV, 1.3, 'Vanguard physical mult with 10 STR must be 1.3');
+    assert.strictEqual(multV, 1.15, 'Vanguard physical mult with 10 STR must be 1.15');
 
     const dummyV = createTestEnemy('e_dummyV', 'slime', 'Dummy V', 110, 110, 500, { physical: 0 });
     room.enemies.push(dummyV as any);
     room.performAction(idV, 'tactical');
-    assert.strictEqual(dummyV.hp, 458, '10 STR Vanguard tactical deals 42 damage (32 * 1.3 = 41.6 -> 42, 500 - 42 = 458)');
+    assert.strictEqual(dummyV.hp, 463, '10 STR Vanguard tactical deals 37 damage (32 * 1.15 = 36.8 -> 37, 500 - 37 = 463)');
   });
 
   // --- Test 29: Damage resistance still uses the correct category after scaling ---
@@ -1289,10 +1290,10 @@ async function runRegressionTests() {
     const skeleton = createTestEnemy('e_skel_test', 'skeleton', 'Skeleton', 110, 110, 500, { physical: -0.10, divine: -0.25 });
     room.enemies.push(skeleton as any);
 
-    // Cleric uses tactical: 28 base * 1.3 FTH mult = 36 scaled divine damage.
-    // Divine vulnerability (-0.25 res): 36 * (1 - (-0.25)) = 36 * 1.25 = 45 damage.
+    // Cleric uses tactical: 28 base * 1.15 FTH mult = 32 scaled divine damage.
+    // Divine vulnerability (-0.25 res): 32 * (1 - (-0.25)) = 32 * 1.25 = 40 damage.
     room.performAction(idCleric, 'tactical');
-    assert.strictEqual(skeleton.hp, 455, 'Skeleton hp must be 455 after 45 divine damage (500 - 45 = 455)');
+    assert.strictEqual(skeleton.hp, 460, 'Skeleton hp must be 460 after 40 divine damage (500 - 40 = 460)');
   });
 
   // --- Test 30: A projectile cannot damage the same enemy repeatedly across consecutive update ticks ---
@@ -2227,26 +2228,28 @@ async function runRegressionTests() {
     room.performAction(idInt, 'tactical');
     assert.strictEqual(pInt.skillCooldownMs, 4500, '50 INT reduces 5000ms tactical CD to 4500ms');
 
-    // 3. Faith confers crowd-control duration reduction
+    // 3. Faith confers crowd-control duration reduction (+0.3 percentage points/FTH)
     const idFth = 'p_fth_test';
     room.addOrReconnectPlayer(idFth, 'FthHero', 'cleric', false, {
       level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 50, attributePoints: 0,
     });
     const pFth = room.getPlayerState(idFth)!;
-    // 50 FTH grants 50 * 0.004 = 20% CC duration reduction.
+    // 50 FTH grants 50 * 0.003 = 15% CC duration reduction.
     room.applyStatusEffect(pFth, 'silence', 4000);
     const silenceStatus = pFth.statuses.find(s => s.type === 'silenced')!;
-    assert.strictEqual(silenceStatus.durationMs, 3200, '50 FTH reduces 4000ms silence duration to 3200ms');
+    assert.strictEqual(silenceStatus.durationMs, 3400, '50 FTH reduces 4000ms silence duration to 3400ms');
 
-    // 4. Vitality confers periodic combat health regeneration
+    // 4. Vitality confers periodic combat health regeneration: max(1, floor(VIT * 0.1))
     const idVit = 'p_vit_test';
     room.addOrReconnectPlayer(idVit, 'VitHero', 'vanguard', false, {
       level: 1, xp: 0, strength: 0, vitality: 30, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
     });
     const pVit = room.getPlayerState(idVit)!;
+    // Move away from pFth's Radiant Aura radius (<= 140px) so only passive VIT regen applies
+    pVit.x += 500;
     pVit.hp = 100; // Damaged
     room.tick(2000); // 2s pulse
-    assert.ok(pVit.hp > 100, 'Invested Vitality must passively regenerate health during ticks');
+    assert.strictEqual(pVit.hp, 103, '30 VIT must regenerate max(1, floor(30 * 0.1)) = 3 HP every 2s');
   });
 
   // --- Test 52: Dexterity attack speed and crit chance remain balanced and capped safely ---
@@ -2265,30 +2268,31 @@ async function runRegressionTests() {
     });
     const pDex = room.getPlayerState(idDex)!;
 
-    // Movement speed: base 210 * (1 + 60 * 0.0035) = 210 * 1.21 = 254.1 px/s (not uncontrollable 457 px/s)
+    // Movement speed: base 210 * (1 + 60 * 0.0025) = 210 * 1.15 = 241.5 px/s
     const def = HERO_CLASSES.ranger;
-    const moveSpeed = def.speed * (1 + (pDex.dexterity || 0) * 0.0035);
-    assert.ok(moveSpeed > 240 && moveSpeed < 270, '60 DEX move speed must be in a readable, non-clipping range (~254 px/s)');
+    const moveSpeed = def.speed * (1 + (pDex.dexterity || 0) * 0.0025);
+    assert.ok(Math.abs(moveSpeed - 241.5) < 1e-6, `60 DEX move speed must be 241.5 px/s (got ${moveSpeed})`);
 
-    // Attack cooldown: 1 + 60 * 0.006 = 1.36x speed rate. Base 320ms / 1.36 = 235ms.
-    const dexSpeedMult = 1 + (pDex.dexterity || 0) * 0.006;
+    // Attack cooldown: 1 + 60 * 0.004 = 1.24x speed rate. Base 320ms / 1.24 = 258ms.
+    const dexSpeedMult = 1 + (pDex.dexterity || 0) * 0.004;
     const cd = Math.round(def.attackCooldownMs / dexSpeedMult);
-    assert.ok(cd >= 220 && cd <= 250, '60 DEX attack cooldown must remain balanced without breaking animation frames (~235ms)');
+    assert.strictEqual(cd, 258, `60 DEX attack cooldown must be 258ms (got ${cd}ms)`);
   });
 
-  // --- Test 53: Polynomial XP curve and floor-scaled XP drops allow smooth progression ---
-  test('53. Progression curve provides smooth leveling without exponential wall', () => {
+  // --- Test 53: Polynomial XP curve and floor-scaled XP drops allow smooth progression up to Lv 50 cap ---
+  test('53. Progression curve provides smooth leveling without exponential wall up to Lv 50 cap', () => {
     // Check nextXp curve:
     const xpLvl1 = GameRoom.computeNextXp(1);
-    const xpLvl5 = GameRoom.computeNextXp(5);
     const xpLvl10 = GameRoom.computeNextXp(10);
     const xpLvl25 = GameRoom.computeNextXp(25);
+    const xpLvl49 = GameRoom.computeNextXp(49);
     const xpLvl50 = GameRoom.computeNextXp(50);
 
     assert.strictEqual(xpLvl1, 80, 'Level 1 next XP must be 80');
     assert.ok(xpLvl10 > 1000 && xpLvl10 < 1300, `Level 10 next XP must be ~1120 (got ${xpLvl10})`);
-    assert.ok(xpLvl25 > 4000 && xpLvl25 < 6000, `Level 25 next XP must be ~4850 (got ${xpLvl25}) - previously 103,138!`);
-    assert.ok(xpLvl50 > 12000 && xpLvl50 < 20000, `Level 50 next XP must be achievable (~15,200) - previously 175,000,000!`);
+    assert.ok(xpLvl25 > 4000 && xpLvl25 < 6000, `Level 25 next XP must be ~4850 (got ${xpLvl25})`);
+    assert.ok(xpLvl49 > 12000 && xpLvl49 < 16000, `Level 49 next XP must be achievable (~14,030, got ${xpLvl49})`);
+    assert.strictEqual(xpLvl50, 999999, 'Level 50 (MAX_LEVEL) must stop progression cleanly');
   });
 
   // --- Test 54: Boss crowd control allows interrupt window ---
@@ -5638,16 +5642,16 @@ async function runRegressionTests() {
 
   // --- Test 87: Hybrid DoT Scaling, Refresh Without Stacking & Multiplayer Attribution ---
   await test('87. Hybrid DoT Scaling: Level + Primary Attribute formula, refresh-without-stacking, bleed velocity, and multiplayer kill credit', async () => {
-    // 1. Verify computeDotMultiplier formula: 1 + 0.003 * (Level - 1) + 0.002 * PrimaryAttr
+    // 1. Verify computeDotMultiplier formula: 1 + 0.003 * (min(50, Level) - 1) + 0.001 * PrimaryAttr
     const v1 = { heroClass: 'vanguard', level: 1, strength: 0, dexterity: 0, intelligence: 0, faith: 0 } as any;
     const r25 = { heroClass: 'ranger', level: 25, strength: 10, dexterity: 25, intelligence: 0, faith: 0 } as any;
     const a50 = { heroClass: 'arcanist', level: 50, strength: 0, dexterity: 0, intelligence: 50, faith: 10 } as any;
-    const c100 = { heroClass: 'cleric', level: 100, strength: 0, dexterity: 0, intelligence: 0, faith: 100 } as any;
+    const c100Cap = { heroClass: 'cleric', level: 100, strength: 0, dexterity: 0, intelligence: 0, faith: 100 } as any;
 
     assert.ok(Math.abs(GameRoom.computeDotMultiplier(v1) - 1.0) < 1e-9, 'Level 1 / 0 attr must yield 1.0x');
-    assert.ok(Math.abs(GameRoom.computeDotMultiplier(r25) - 1.122) < 1e-9, 'Level 25 / 25 DEX must yield 1.122x');
-    assert.ok(Math.abs(GameRoom.computeDotMultiplier(a50) - 1.247) < 1e-9, 'Level 50 / 50 INT must yield 1.247x');
-    assert.ok(Math.abs(GameRoom.computeDotMultiplier(c100) - 1.497) < 1e-9, 'Level 100 / 100 FTH must yield 1.497x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(r25) - 1.097) < 1e-9, 'Level 25 / 25 DEX must yield 1.097x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(a50) - 1.197) < 1e-9, 'Level 50 / 50 INT must yield 1.197x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(c100Cap) - 1.247) < 1e-9, 'Clamped Lv 50 / 100 FTH must yield 1.247x');
 
     const room = new GameRoom({
       roomId: 'R_TEST_DOT_OVERHAUL',
@@ -5993,11 +5997,11 @@ async function runRegressionTests() {
     } as any;
 
     const noRelicProj = calculatePlayerStatProjections(baseHero, 1);
-    assert.strictEqual(noRelicProj.dotMultiplier, 1.247, 'Lv50 / 50 INT dotMultiplier must be 1.247x');
-    assert.strictEqual(noRelicProj.dotBonusPct, 24.7, 'Lv50 / 50 INT dotBonusPct must be 24.7%');
+    assert.strictEqual(noRelicProj.dotMultiplier, 1.197, 'Lv50 / 50 INT dotMultiplier must be 1.197x');
+    assert.strictEqual(noRelicProj.dotBonusPct, 19.7, 'Lv50 / 50 INT dotBonusPct must be 19.7%');
     assert.strictEqual(noRelicProj.dotDpsContribution, 0, 'No DoT relics equipped must yield 0 dotDpsContribution');
-    assert.strictEqual(noRelicProj.burnTickDamage, 10, 'Floor 1 Burn base tick at 1.247x must be 10');
-    assert.strictEqual(noRelicProj.poisonTickDamage, 7, 'Floor 1 Poison base tick at 1.247x must be 7');
+    assert.strictEqual(noRelicProj.burnTickDamage, 10, 'Floor 1 Burn base tick at 1.197x must be 10');
+    assert.strictEqual(noRelicProj.poisonTickDamage, 7, 'Floor 1 Poison base tick at 1.197x must be 7');
     assert.strictEqual(noRelicProj.sustainedDps, noRelicProj.directDps, 'Without DoT relics sustainedDps equals directDps');
 
     const dotHero = {
@@ -6008,11 +6012,181 @@ async function runRegressionTests() {
     assert.strictEqual(dotProj.hasBurnRelic, true);
     assert.strictEqual(dotProj.hasPoisonRelic, true);
     assert.strictEqual(dotProj.hasBleedRelic, true);
-    assert.strictEqual(dotProj.burnTickDamage, Math.round((7 + 5) * 1.247), 'Floor 5 Burn tick scales with floor and dotMultiplier');
-    assert.strictEqual(dotProj.poisonTickDamage, Math.round((5 + 5) * 1.247), 'Floor 5 Poison tick scales with floor and dotMultiplier');
-    assert.strictEqual(dotProj.bleedMovingTickDamage, Math.round((14 + 5) * 1.247), 'Floor 5 moving Bleed tick scales with floor and dotMultiplier');
+    assert.strictEqual(dotProj.burnTickDamage, Math.round((7 + 5) * 1.197), 'Floor 5 Burn tick scales with floor and dotMultiplier');
+    assert.strictEqual(dotProj.poisonTickDamage, Math.round((5 + 5) * 1.197), 'Floor 5 Poison tick scales with floor and dotMultiplier');
+    assert.strictEqual(dotProj.bleedMovingTickDamage, Math.round((14 + 5) * 1.197), 'Floor 5 moving Bleed tick scales with floor and dotMultiplier');
     assert.ok(dotProj.dotDpsContribution > 0, 'Equipped DoT relics must contribute positive dotDpsContribution');
     assert.ok(dotProj.sustainedDps > dotProj.directDps, 'sustainedDps must include active DoT DPS contribution');
+  });
+
+  // --- Test 91: Level 50 Cap, Attribute Rebalance Formulas, Relic Stacking & Stat Projection Parity ---
+  await test('91. Level 50 Cap & Attribute Rebalance: hard level cap, all 5 attribute formulas, relic stacking, and live/UI projection parity', async () => {
+    const { calculatePlayerStatProjections } = await import('./src/shared/statUtils.ts');
+
+    assert.strictEqual(MAX_LEVEL, 50, 'MAX_LEVEL must be reduced to 50');
+
+    const room = new GameRoom({
+      roomId: 'R_TEST_REBALANCE_91',
+      name: 'Rebalance Verification Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9191,
+    });
+    room.status = 'playing';
+
+    // 1. Legacy saved account above Lv 50 loads safely capped at 50 while preserving invested attributes & storage
+    const legacyState = room.addOrReconnectPlayer('p_legacy', 'LegacyHero', 'vanguard', false, {
+      level: 85,
+      xp: 4500,
+      strength: 50,
+      vitality: 40,
+      dexterity: 10,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 20,
+      storage: ['sunfire_signet'],
+    });
+    assert.strictEqual(legacyState.level, 50, 'Legacy >50 account must clamp cleanly to Level 50');
+    assert.strictEqual(legacyState.xp, 0, 'Capped account XP must stay at 0');
+    assert.strictEqual(legacyState.nextXp, 999999, 'Capped account nextXp must stay at MAX sentinel');
+    assert.strictEqual(legacyState.strength, 50, 'Existing invested attributes must be preserved');
+    assert.strictEqual(legacyState.attributePoints, 20, 'Existing attribute points must be preserved');
+    assert.deepStrictEqual(legacyState.storage, ['sunfire_signet'], 'Existing relic storage must be preserved');
+
+    // Verify grantXp and setPlayerLevel cannot exceed Level 50 or grant extra attribute points past 50
+    const capHero = room.addOrReconnectPlayer('p_cap', 'CapTester', 'vanguard', false, {
+      level: 49,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+    assert.strictEqual(capHero.nextXp, GameRoom.computeNextXp(49), 'Level 49 nextXp must match polynomial curve');
+    (room as any).grantXp(capHero, 500000);
+    assert.strictEqual(capHero.level, 50, 'grantXp must stop at Level 50');
+    assert.strictEqual(capHero.xp, 0, 'XP must reset to 0 upon reaching Level 50 cap');
+    assert.strictEqual(capHero.nextXp, 999999, 'nextXp at Level 50 must be 999999');
+    assert.strictEqual(capHero.attributePoints, 2, 'Only 1 level-up (+2 pts) may be granted from Lv49 to Lv50');
+    (room as any).grantXp(capHero, 500000);
+    assert.strictEqual(capHero.level, 50, 'Subsequent XP must never exceed Level 50');
+    assert.strictEqual(capHero.attributePoints, 2, 'No attribute points may be granted after Level 50');
+
+    room.setPlayerLevel('p_cap', 99);
+    assert.strictEqual(capHero.level, 50, 'setPlayerLevel must clamp to Level 50');
+    assert.strictEqual(capHero.nextXp, 999999);
+    assert.strictEqual(capHero.attributePoints, 98, 'Level 50 reset grants (50 - 1) * 2 = 98 points');
+
+    // 2. Direct Damage Scaling: BaseDamage * (1 + 0.05*(Lv-1)) * (1 + 0.015*PrimaryAttr), no double application
+    const classesAndAttrs: Array<{ id: string; cls: HeroClassId; attr: 'strength' | 'dexterity' | 'intelligence' | 'faith'; cat: 'physical' | 'arcane' | 'divine' }> = [
+      { id: 'v_dmg', cls: 'vanguard', attr: 'strength', cat: 'physical' },
+      { id: 'r_dmg', cls: 'ranger', attr: 'dexterity', cat: 'physical' },
+      { id: 'a_dmg', cls: 'arcanist', attr: 'intelligence', cat: 'arcane' },
+      { id: 'c_dmg', cls: 'cleric', attr: 'faith', cat: 'divine' },
+    ];
+    for (const spec of classesAndAttrs) {
+      const saved = { level: 30, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0 };
+      saved[spec.attr] = 40;
+      const st = room.addOrReconnectPlayer(spec.id, spec.id, spec.cls, false, saved);
+      const expectedMult = (1 + 29 * 0.05) * (1 + 40 * 0.015); // 2.45 * 1.60 = 3.92
+      assert.ok(Math.abs(room.computeDamageMult(st, spec.cat) - expectedMult) < 1e-9, `${spec.cls} multiplier must equal ${expectedMult}`);
+
+      const proj = calculatePlayerStatProjections(st, 1);
+      assert.strictEqual(proj.damageMultiplier, Number(expectedMult.toFixed(2)), `${spec.cls} projected damageMultiplier must match engine`);
+      assert.strictEqual(proj.scaledHitDamage, Math.round(HERO_CLASSES[spec.cls].damage * expectedMult), `${spec.cls} projected hit damage must match engine`);
+      assert.strictEqual(proj.critMultiplier, 1.5, `${spec.cls} projected critMultiplier must be 1.5x`);
+
+      // Confirm basic attack projectile receives single-applied scaled damage (non-crit OR 1.5x crit)
+      room.projectiles = [];
+      room.firePrimaryAttack(st);
+      const shot = room.projectiles.find((pr) => pr.ownerId === spec.id)!;
+      const expectedHit = Math.round(HERO_CLASSES[spec.cls].damage * expectedMult);
+      const expectedCrit = Math.round(HERO_CLASSES[spec.cls].damage * expectedMult * 1.5);
+      assert.strictEqual(proj.critHitDamage, Math.round(proj.scaledHitDamage * 1.5), `${spec.cls} projected critHitDamage must reflect 1.5x crit multiplier`);
+      assert.ok(shot.damage === expectedHit || shot.damage === expectedCrit, `${spec.cls} primary shot damage (${shot.damage}) must equal ${expectedHit} or crit ${expectedCrit}`);
+    }
+
+    // 3. Vitality: +5 Max HP per point & max(1, floor(VIT * 0.1)) regen every 2s
+    const vitZero = room.addOrReconnectPlayer('vit_zero', 'VitZero', 'vanguard', false, {
+      level: 10, xp: 0, strength: 0, vitality: 5, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    vitZero.x += 600;
+    vitZero.hp = 100;
+    const vitLow = room.addOrReconnectPlayer('vit_low', 'VitLow', 'vanguard', false, {
+      level: 10, xp: 0, strength: 0, vitality: 9, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    vitLow.x += 600;
+    assert.strictEqual(vitLow.maxHp, 155 + 9 * 12 + 9 * 5, '9 VIT Vanguard at Lv10 maxHp = 155 + 108 + 45 = 308');
+    vitLow.hp = 100;
+    const vitHigh = room.addOrReconnectPlayer('vit_high', 'VitHigh', 'vanguard', false, {
+      level: 10, xp: 0, strength: 0, vitality: 45, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    vitHigh.x += 600;
+    assert.strictEqual(vitHigh.maxHp, 155 + 9 * 12 + 45 * 5, '45 VIT Vanguard at Lv10 maxHp = 155 + 108 + 225 = 488');
+    vitHigh.hp = 100;
+    room.tick(2000);
+    assert.strictEqual(vitZero.hp, 100, 'Under-threshold 5 VIT must not trigger passive regen');
+    assert.strictEqual(vitLow.hp, 101, '9 VIT must regen max(1, floor(0.9)) = 1 HP / 2s');
+    assert.strictEqual(vitHigh.hp, 104, '45 VIT must regen max(1, floor(4.5)) = 4 HP / 2s');
+    assert.strictEqual(calculatePlayerStatProjections(vitZero, 1).hpRegenPerTick, 0);
+    assert.strictEqual(calculatePlayerStatProjections(vitLow, 1).hpRegenPerTick, 1);
+    assert.strictEqual(calculatePlayerStatProjections(vitHigh, 1).hpRegenPerTick, 4);
+
+    // Cleric Faith healing projection matches GameRoom.computeHealingAmount
+    const cState = room.getPlayerState('c_dmg')!;
+    const cProj = calculatePlayerStatProjections(cState, 1);
+    const expectedHealMult = (1 + 29 * 0.05) * (1 + 40 * 0.02); // 2.45 * 1.80 = 4.41
+    assert.strictEqual(cProj.healingMultiplier, Number(expectedHealMult.toFixed(2)), 'Cleric projected healingMultiplier must match Lv & Faith scaling');
+    assert.strictEqual(GameRoom.computeHealingAmount(20, cState), Math.round(20 * expectedHealMult), 'GameRoom healing amount must match Cleric Lv & Faith formula');
+
+    // 4. All attribute caps + relic & blessing stacking parity between GameRoom and statUtils
+    const stacked = room.addOrReconnectPlayer('p_stack', 'StackHero', 'arcanist', false, {
+      level: 50,
+      xp: 0,
+      strength: 120,
+      vitality: 25,
+      dexterity: 100,
+      intelligence: 120,
+      faith: 150,
+      attributePoints: 0,
+    });
+    stacked.relics = ['sunfire_signet', 'keen_arrowhead', 'runic_carapace', 'hourglass_shard', 'zephyr_greaves', 'bastion_pauldron', 'twinstring_charm'];
+    stacked.floorBlessings = ['fury', 'swiftness', 'bastion'];
+    stacked.maxHp = GameRoom.computePlayerMaxHp(stacked.heroClass, stacked.level, stacked.vitality, stacked.relics);
+    stacked.hp = stacked.maxHp;
+
+    const projStacked = calculatePlayerStatProjections(stacked, 5);
+    assert.strictEqual(projStacked.maxHp, stacked.maxHp, 'Projection maxHp with Bastion Pauldron must equal GameRoom maxHp');
+    assert.strictEqual(projStacked.critChancePct, 45.0, 'Crit chance must remain capped at 45.0%');
+    assert.strictEqual(projStacked.faithCcTenacityPct, 40.0, 'Faith CC tenacity must remain capped at 40.0%');
+    // Arcanist base phys resist (0.05) + STR attr cap (0.15) + Runic Carapace (0.15) + Bastion (0.06) = 0.41 -> 41.0%
+    assert.strictEqual(projStacked.physicalResistPct, 41.0, 'Physical resistance must combine base + capped 15% STR + Runic Carapace + Bastion');
+    assert.strictEqual(room.damagePlayer(stacked, 1000, 'physical'), 590, 'Engine physical resistance mitigation must match 41.0% projection');
+    stacked.hp = stacked.maxHp;
+
+    // Damage multiplier includes sunfire_signet (1.24x) and fury blessing (1.10x)
+    const engineMult = room.computeDamageMult(stacked, 'arcane');
+    assert.strictEqual(projStacked.damageMultiplier, Number(engineMult.toFixed(2)), 'Projected damageMultiplier with relics + Fury must match GameRoom');
+
+    // Move speed matches computePlayerMoveSpeed
+    assert.strictEqual(projStacked.moveSpeedPx, Math.round(computePlayerMoveSpeed(stacked)), 'Projected moveSpeedPx must match computePlayerMoveSpeed');
+
+    // Attack cooldown matches tick() logic (0.4% DEX + swiftness blessing)
+    const expectedAttackCd = Math.round(HERO_CLASSES.arcanist.attackCooldownMs / ((1 + 100 * 0.004) * (1 + 1 * 0.08)));
+    assert.strictEqual(projStacked.attackCooldownMs, expectedAttackCd, 'Projected attackCooldownMs must match live attack cadence');
+
+    // CDR matches performAction() (20% INT cap + 25% Hourglass + 8% Swiftness -> capped at 50%)
+    room.performAction('p_stack', 'tactical');
+    assert.strictEqual(stacked.skillCooldownMs, Math.round(HERO_CLASSES.arcanist.tacticalCooldownMs * 0.50), 'Engine CDR must cap at 50%');
+    assert.strictEqual(projStacked.tacticalCooldownSec, Number((stacked.skillCooldownMs / 1000).toFixed(1)), 'Projected tactical cooldown must match engine');
+
+    // Elemental resist check against 1000 incoming elemental damage
+    // Arcanist base avg (0.25+0.35+0.45)/3=0.35 + INT cap 0.15 + Runic Carapace 0.20 + Bastion 0.06 = 0.76 -> capped at 0.75 (250 dmg)
+    const elemTaken = room.damagePlayer(stacked, 1000, 'elemental');
+    assert.strictEqual(elemTaken, 250, 'Elemental resistance must preserve 75% total cap');
+    assert.strictEqual(projStacked.elementalResistPct, 75.0, 'Projected elementalResistPct must match 75% cap');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

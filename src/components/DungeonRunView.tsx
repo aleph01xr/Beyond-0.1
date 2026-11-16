@@ -1851,7 +1851,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases physical damage (+3% per point) &amp; DoT scaling (+0.2% per point) for Vanguard, and grants physical armor (+0.15% per point).
+                      Increases physical damage (+1.5% per point) &amp; DoT scaling (+0.1% per point) for Vanguard, and grants physical armor (+0.15% per point).
                     </p>
                   </div>
                   <button
@@ -1877,7 +1877,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases maximum health pool (+6 Max HP per point) and grants passive combat health regeneration.
+                      Increases maximum health pool (+5 Max HP per point) and grants passive combat health regeneration every 2s (max(1, floor(VIT × 0.1)) at 6+ VIT).
                     </p>
                   </div>
                   <button
@@ -1903,7 +1903,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Ranger damage (+3%) &amp; DoT scaling (+0.2%), attack speed (+0.6%), movement speed (+0.35%), and crit chance (+0.4%).
+                      Increases Ranger damage (+1.5%) &amp; DoT scaling (+0.1%), attack speed (+0.4%), movement speed (+0.25%), and crit chance (+0.3%).
                     </p>
                   </div>
                   <button
@@ -1929,7 +1929,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Arcanist damage (+3%) &amp; DoT scaling (+0.2%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
+                      Increases Arcanist damage (+1.5%) &amp; DoT scaling (+0.1%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
                     </p>
                   </div>
                   <button
@@ -1955,7 +1955,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Cleric divine damage &amp; healing (+3%), boosts DoT scaling (+0.2%), and grants crowd-control duration resistance (+0.4%).
+                      Increases Cleric divine damage (+1.5%), healing (+2%), DoT scaling (+0.1%), and crowd-control duration resistance (+0.3%).
                     </p>
                   </div>
                   <button

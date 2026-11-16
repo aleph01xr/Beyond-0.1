@@ -250,7 +250,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <button
                     type="button"
-                    onClick={() => handleCommand({ type: 'admin:set_level', level: 100 })}
+                    onClick={() => handleCommand({ type: 'admin:set_level', level: MAX_LEVEL })}
                     className="stone-button stone-button-blue p-3 h-auto"
                   >
                     <div className="flex flex-col items-center">

@@ -13,8 +13,9 @@ export type BiomeId =
   | 'scripture'
   | 'nave'
   | 'wardengate';
-export const MAX_LEVEL = 100;
+export const MAX_LEVEL = 50;
 export const MAX_ATTRIBUTE = 100;
+export const CRIT_DAMAGE_MULTIPLIER = 1.5;
 
 export interface AccountRecord {
   id: string;

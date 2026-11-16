@@ -623,8 +623,15 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                   <div className="space-y-2 font-mono text-xs">
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Primary Stat ({stats.primaryStatName})</span>
-                      <span className="font-bold text-white">{stats.primaryStatValue} Pts (+{(stats.primaryStatValue * 3).toFixed(1)}% Dmg)</span>
+                      <span className="font-bold text-white">{stats.primaryStatValue} Pts (+{(stats.primaryStatValue * 1.5).toFixed(1)}% Dmg)</span>
                     </div>
+
+                    {player.heroClass === 'cleric' && (
+                      <div className="flex items-center justify-between p-2 stone-input">
+                        <span className="text-[#A19FAF]">Healing Effectiveness (Faith)</span>
+                        <span className="font-bold text-[#34D399]">{stats.healingMultiplier}x (+{stats.healingBonusPct}% Lv &amp; FTH)</span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Scaled Hit Damage</span>

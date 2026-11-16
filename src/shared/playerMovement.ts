@@ -178,7 +178,7 @@ export function moveWithCollision(
 
 export function computePlayerMoveSpeed(player: MovablePlayerLike): number {
   const def = HERO_CLASSES[player.heroClass];
-  let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 0.0035);
+  let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 0.0025);
   if (player.relics.includes('zephyr_greaves')) moveSpeed *= 1.15;
   if ((player.hasteMs || 0) > 0) moveSpeed *= 1.22;
 

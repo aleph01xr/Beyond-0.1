@@ -89,7 +89,19 @@ function verifyPassword(pw: string, storedHash: string): boolean {
   return legacyHash === storedHash;
 }
 
+function normalizeAccountLevel(acc: AccountRecord): void {
+  const rawLevel = Number(acc.level) || 1;
+  if (rawLevel >= MAX_LEVEL) {
+    acc.level = MAX_LEVEL;
+    acc.xp = 0;
+  } else {
+    acc.level = Math.max(1, Math.floor(rawLevel));
+    acc.xp = Math.max(0, Number(acc.xp) || 0);
+  }
+}
+
 function toPublicProfile(acc: AccountRecord): UserProfile {
+  normalizeAccountLevel(acc);
   return {
     id: acc.id,
     username: acc.username,
@@ -361,6 +373,7 @@ async function initStorage(): Promise<void> {
           faith: Number(row.faith) || 0,
           attributePoints: Number(row.attribute_points) || 0,
         };
+        normalizeAccountLevel(rec);
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
@@ -413,6 +426,7 @@ async function initStorage(): Promise<void> {
           rec.faith = Number(rec.faith) || 0;
           rec.attributePoints = Number(rec.attributePoints) || 0;
         }
+        normalizeAccountLevel(rec);
 
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
@@ -596,8 +610,8 @@ function attachRoomPersistenceCallbacks(room: GameRoom): void {
   room.onProgressionUpdateCallback = async (pid, state) => {
     const acc = accountsById.get(pid);
     if (acc) {
-      acc.level = state.level;
-      acc.xp = state.xp;
+      acc.level = Math.max(1, Math.min(MAX_LEVEL, state.level));
+      acc.xp = acc.level >= MAX_LEVEL ? 0 : Math.max(0, state.xp);
       acc.strength = state.strength;
       acc.vitality = state.vitality;
       acc.dexterity = state.dexterity;
@@ -612,6 +626,7 @@ function attachRoomPersistenceCallbacks(room: GameRoom): void {
 }
 
 function toPartyAccount(acc: AccountRecord): PartyAccountInput {
+  normalizeAccountLevel(acc);
   return {
     id: acc.id,
     username: acc.username,
