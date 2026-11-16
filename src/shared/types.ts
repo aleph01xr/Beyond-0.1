@@ -15,7 +15,7 @@ export type BiomeId =
   | 'wardengate';
 export const MAX_LEVEL = 50;
 export const MAX_ATTRIBUTE = 100;
-export const CRIT_DAMAGE_MULTIPLIER = 1.5;
+export const CRIT_DAMAGE_MULTIPLIER = 1.25;
 
 export interface AccountRecord {
   id: string;
@@ -246,7 +246,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'twinstring_charm',
     name: 'Twinstring Charm',
     category: 'Offense',
-    summary: 'Primary attacks unleash +1 additional projectile or cleave wave, but extra projectiles deal 75% damage.',
+    summary: 'Primary attacks unleash +1 additional projectile or cleave wave, but extra projectiles deal 35% damage.',
     accent: '#E0A94F',
   },
   {
@@ -260,7 +260,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'sunfire_signet',
     name: 'Sunfire Signet',
     category: 'Offense',
-    summary: '+24% primary and skill damage.',
+    summary: '+12% primary and skill damage.',
     accent: '#E88348',
   },
   {
@@ -281,7 +281,7 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'keen_arrowhead',
     name: 'Keen Arrowhead',
     category: 'Offense',
-    summary: '+25% critical strike chance for 1.75x damage.',
+    summary: '+20% critical strike chance (up to 45% total crit cap).',
     accent: '#DFC15E',
   },
   {
@@ -360,7 +360,7 @@ export const FLOOR_BLESSINGS: Record<
   fury: {
     id: 'fury',
     name: "Warlord's Fury",
-    summary: '+10% outgoing attack & skill damage on this floor',
+    summary: '+6% outgoing attack & skill damage on this floor',
     color: '#F97316',
     shortTag: '+DMG',
   },

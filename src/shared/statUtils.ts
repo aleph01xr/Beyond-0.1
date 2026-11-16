@@ -157,9 +157,9 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
     primaryStatValue = fth;
   }
 
-  let damageMultiplier = (1 + (level - 1) * 0.05) * (1 + primaryStatValue * 0.015);
-  if (relics.includes('sunfire_signet')) damageMultiplier *= 1.24;
-  if (furyStacks > 0) damageMultiplier *= 1 + furyStacks * 0.10;
+  let damageMultiplier = (1 + (level - 1) * 0.025) * (1 + primaryStatValue * 0.008);
+  if (relics.includes('sunfire_signet')) damageMultiplier *= 1.12;
+  if (furyStacks > 0) damageMultiplier *= 1 + furyStacks * 0.06;
 
   const rawHealingMult = heroClass === 'cleric' ? (1 + (level - 1) * 0.05) * (1 + fth * 0.02) : 1.0;
   const healingMultiplier = Number(rawHealingMult.toFixed(2));
@@ -207,7 +207,7 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
   const dotDpsContribution = Number(rawDotDps.toFixed(1));
 
   // 9. Sustained DPS Projection (direct attacks + active DoT relics)
-  const extraProjectileFactor = relics.includes('twinstring_charm') ? 0.75 : 0;
+  const extraProjectileFactor = relics.includes('twinstring_charm') ? 0.35 : 0;
   const avgDamagePerHit = (scaledHitDamage * (1 - critChancePct / 100)) + (critHitDamage * (critChancePct / 100));
   const totalPerShotDmg = avgDamagePerHit * (1 + extraProjectileFactor);
   const rawDirectDps = totalPerShotDmg * attacksPerSecond;

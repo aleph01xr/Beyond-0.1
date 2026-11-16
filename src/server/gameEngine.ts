@@ -2148,24 +2148,24 @@ export class GameRoom {
 
   public computeDamageMult(p: PlayerState, category: DamageCategory = 'physical'): number {
     const lvl = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
-    let mult = 1 + (lvl - 1) * 0.05;
+    let mult = 1 + (lvl - 1) * 0.025;
     if (category === 'physical') {
       const physStat = p.heroClass === 'ranger' ? (p.dexterity || 0) : (p.strength || 0);
-      mult *= (1 + physStat * 0.015);
+      mult *= (1 + physStat * 0.008);
     } else if (category === 'arcane') {
-      mult *= (1 + (p.intelligence || 0) * 0.015);
+      mult *= (1 + (p.intelligence || 0) * 0.008);
     } else if (category === 'divine') {
-      mult *= (1 + (p.faith || 0) * 0.015);
+      mult *= (1 + (p.faith || 0) * 0.008);
     } else {
       const mainStat = p.heroClass === 'ranger' ? (p.dexterity || 0)
         : p.heroClass === 'arcanist' ? (p.intelligence || 0)
         : p.heroClass === 'cleric' ? (p.faith || 0)
         : (p.strength || 0);
-      mult *= (1 + mainStat * 0.015);
+      mult *= (1 + mainStat * 0.008);
     }
-    if (p.relics.includes('sunfire_signet')) mult *= 1.24;
+    if (p.relics.includes('sunfire_signet')) mult *= 1.12;
     const furyStacks = this.getBlessingStacks(p, 'fury');
-    if (furyStacks > 0) mult *= 1 + furyStacks * 0.10;
+    if (furyStacks > 0) mult *= 1 + furyStacks * 0.06;
     return mult;
   }
 
@@ -3702,7 +3702,7 @@ export class GameRoom {
     for (let s = 0; s < shotCount; s++) {
       const spread = shotCount === 2 ? (s === 0 ? -0.1 : 0.1) : 0;
       const ang = p.aimAngle + spread;
-      const shotDmg = Math.round(dmg * (s === 0 ? 1.0 : 0.75));
+      const shotDmg = Math.round(dmg * (s === 0 ? 1.0 : 0.35));
 
       if (p.heroClass === 'vanguard') {
         this.spawnProjectile({

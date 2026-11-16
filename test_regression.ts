@@ -1115,7 +1115,7 @@ async function runRegressionTests() {
     });
 
     const pid = 'scaling_check';
-    // Ranger level 10 (+45% level scaling = 1.45x), DEX 10 (+15% stat scaling = 1.15x)
+    // Ranger level 10 (+22.5% level scaling = 1.225x), DEX 10 (+8% stat scaling = 1.08x)
     room.addOrReconnectPlayer(pid, 'RangerScaler', 'ranger', false, {
       level: 10,
       xp: 0,
@@ -1133,12 +1133,12 @@ async function runRegressionTests() {
     room.enemies.push(slime as any);
 
     // Base attack damage = 10.
-    // Scaled base damage using computeDamageMult = 10 * (1 + (10-1)*0.05) * (1 + 10*0.015) = 10 * 1.45 * 1.15 = 16.675 -> 17
+    // Scaled base damage using computeDamageMult = 10 * (1 + (10-1)*0.025) * (1 + 10*0.008) = 10 * 1.225 * 1.08 = 13.23 -> 13
     const scaledBaseDmg = Math.round(10 * room.computeDamageMult(p, 'physical'));
-    assert.strictEqual(scaledBaseDmg, 17);
+    assert.strictEqual(scaledBaseDmg, 13);
 
     const actualDmg = room.damageEnemy(slime as any, scaledBaseDmg, p, 'physical');
-    assert.strictEqual(actualDmg, 17, 'Base 10 damage scaled to 17 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 17 damage without duplicate scaling');
+    assert.strictEqual(actualDmg, 13, 'Base 10 damage scaled to 13 at Lvl 10 + 10 DEX against 0 res slime must deal exactly 13 damage without duplicate scaling');
   });
 
   // --- Test 25: Arcanist tactical damage scales with Intelligence, not Strength ---
@@ -1167,7 +1167,7 @@ async function runRegressionTests() {
     });
     const pB = room.getPlayerState(idB)!;
     const multB = room.computeDamageMult(pB, 'arcane');
-    assert.strictEqual(multB, 1.15, 'Arcanist arcane mult with 10 INT must be 1.15');
+    assert.strictEqual(multB, 1.08, 'Arcanist arcane mult with 10 INT must be 1.08');
 
     // Check spawned tactical projectile damage
     room.performAction(idA, 'tactical');
@@ -1177,7 +1177,7 @@ async function runRegressionTests() {
     room.projectiles = []; // Clear projectiles
     room.performAction(idB, 'tactical');
     const projB = room.projectiles.find(pr => pr.ownerId === idB)!;
-    assert.strictEqual(projB.damage, 28, '10 INT Arcanist tactical projectile damage must be 28 (24 * 1.15 = 27.6 -> 28)');
+    assert.strictEqual(projB.damage, 26, '10 INT Arcanist tactical projectile damage must be 26 (24 * 1.08 = 25.92 -> 26)');
   });
 
   // --- Test 26: Cleric tactical damage scales with Faith, not Strength ---
@@ -1213,12 +1213,12 @@ async function runRegressionTests() {
     const pB = room.getPlayerState(idB)!;
     pB.x = 200; pB.y = 200;
     const multB = room.computeDamageMult(pB, 'divine');
-    assert.strictEqual(multB, 1.15, 'Cleric divine mult with 10 FTH must be 1.15');
+    assert.strictEqual(multB, 1.08, 'Cleric divine mult with 10 FTH must be 1.08');
 
     const dummyB = createTestEnemy('e_dummyB', 'slime', 'Dummy B', 210, 210, 500, { divine: 0 });
     room.enemies.push(dummyB as any);
     room.performAction(idB, 'tactical');
-    assert.strictEqual(dummyB.hp, 468, '10 FTH Cleric tactical deals 32 damage (28 * 1.15 = 32.2 -> 32, 500 - 32 = 468)');
+    assert.strictEqual(dummyB.hp, 470, '10 FTH Cleric tactical deals 30 damage (28 * 1.08 = 30.24 -> 30, 500 - 30 = 470)');
   });
 
   // --- Test 27: Ranger tactical damage scales with Dexterity ---
@@ -1237,11 +1237,11 @@ async function runRegressionTests() {
     });
     const pR = room.getPlayerState(idR)!;
     const multR = room.computeDamageMult(pR, 'physical');
-    assert.strictEqual(multR, 1.15, 'Ranger physical mult with 10 DEX must be 1.15');
+    assert.strictEqual(multR, 1.08, 'Ranger physical mult with 10 DEX must be 1.08');
 
     room.performAction(idR, 'tactical');
     const projR = room.projectiles.find(pr => pr.ownerId === idR)!;
-    assert.strictEqual(projR.damage, 21, '10 DEX Ranger tactical projectile damage must be 21 (18 * 1.15 = 20.7 -> 21)');
+    assert.strictEqual(projR.damage, 19, '10 DEX Ranger tactical projectile damage must be 19 (18 * 1.08 = 19.44 -> 19)');
   });
 
   // --- Test 28: Vanguard tactical damage scales with Strength ---
@@ -1261,12 +1261,12 @@ async function runRegressionTests() {
     const pV = room.getPlayerState(idV)!;
     pV.x = 100; pV.y = 100;
     const multV = room.computeDamageMult(pV, 'physical');
-    assert.strictEqual(multV, 1.15, 'Vanguard physical mult with 10 STR must be 1.15');
+    assert.strictEqual(multV, 1.08, 'Vanguard physical mult with 10 STR must be 1.08');
 
     const dummyV = createTestEnemy('e_dummyV', 'slime', 'Dummy V', 110, 110, 500, { physical: 0 });
     room.enemies.push(dummyV as any);
     room.performAction(idV, 'tactical');
-    assert.strictEqual(dummyV.hp, 463, '10 STR Vanguard tactical deals 37 damage (32 * 1.15 = 36.8 -> 37, 500 - 37 = 463)');
+    assert.strictEqual(dummyV.hp, 465, '10 STR Vanguard tactical deals 35 damage (32 * 1.08 = 34.56 -> 35, 500 - 35 = 465)');
   });
 
   // --- Test 29: Damage resistance still uses the correct category after scaling ---
@@ -1290,10 +1290,10 @@ async function runRegressionTests() {
     const skeleton = createTestEnemy('e_skel_test', 'skeleton', 'Skeleton', 110, 110, 500, { physical: -0.10, divine: -0.25 });
     room.enemies.push(skeleton as any);
 
-    // Cleric uses tactical: 28 base * 1.15 FTH mult = 32 scaled divine damage.
-    // Divine vulnerability (-0.25 res): 32 * (1 - (-0.25)) = 32 * 1.25 = 40 damage.
+    // Cleric uses tactical: 28 base * 1.08 FTH mult = 30 scaled divine damage.
+    // Divine vulnerability (-0.25 res): 30 * (1 - (-0.25)) = 30 * 1.25 = 37.5 -> 38 damage.
     room.performAction(idCleric, 'tactical');
-    assert.strictEqual(skeleton.hp, 460, 'Skeleton hp must be 460 after 40 divine damage (500 - 40 = 460)');
+    assert.strictEqual(skeleton.hp, 462, 'Skeleton hp must be 462 after 38 divine damage (500 - 38 = 462)');
   });
 
   // --- Test 30: A projectile cannot damage the same enemy repeatedly across consecutive update ticks ---
@@ -1555,7 +1555,7 @@ async function runRegressionTests() {
   });
 
   // --- Test 36: Twinstring Charm still generates its intended additional projectile ---
-  test('36. Twinstring Charm generates an additional projectile dealing 75% damage', () => {
+  test('36. Twinstring Charm generates an additional projectile dealing 35% damage', () => {
     const room = new GameRoom({
       roomId: 'EXPEDITION-TWINSTRING',
       name: 'Test Dungeon',
@@ -1572,8 +1572,8 @@ async function runRegressionTests() {
     room.firePrimaryAttack(pR);
     const projs = room.projectiles.filter(pr => pr.ownerId === idR);
     assert.strictEqual(projs.length, 2, 'Twinstring Charm must spawn exactly 2 projectiles');
-    assert.ok(projs[0].damage === 24 || projs[0].damage === 42, `Primary shot deals base damage (got ${projs[0].damage})`);
-    assert.strictEqual(projs[1].damage, Math.round(projs[0].damage * 0.75), 'Secondary shot deals exactly 75% of primary shot damage');
+    assert.ok(projs[0].damage === 24 || projs[0].damage === 30, `Primary shot deals base or 1.25x crit damage (got ${projs[0].damage})`);
+    assert.strictEqual(projs[1].damage, Math.round(projs[0].damage * 0.35), 'Secondary shot deals exactly 35% of primary shot damage');
   });
 
   // --- Test 37: Separate projectiles can independently hit the same enemy ---
@@ -6090,23 +6090,43 @@ async function runRegressionTests() {
       const saved = { level: 30, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0 };
       saved[spec.attr] = 40;
       const st = room.addOrReconnectPlayer(spec.id, spec.id, spec.cls, false, saved);
-      const expectedMult = (1 + 29 * 0.05) * (1 + 40 * 0.015); // 2.45 * 1.60 = 3.92
+      const expectedMult = (1 + 29 * 0.025) * (1 + 40 * 0.008); // 1.725 * 1.32 = 2.277
       assert.ok(Math.abs(room.computeDamageMult(st, spec.cat) - expectedMult) < 1e-9, `${spec.cls} multiplier must equal ${expectedMult}`);
 
       const proj = calculatePlayerStatProjections(st, 1);
       assert.strictEqual(proj.damageMultiplier, Number(expectedMult.toFixed(2)), `${spec.cls} projected damageMultiplier must match engine`);
       assert.strictEqual(proj.scaledHitDamage, Math.round(HERO_CLASSES[spec.cls].damage * expectedMult), `${spec.cls} projected hit damage must match engine`);
-      assert.strictEqual(proj.critMultiplier, 1.5, `${spec.cls} projected critMultiplier must be 1.5x`);
+      assert.strictEqual(proj.critMultiplier, 1.25, `${spec.cls} projected critMultiplier must be 1.25x`);
 
-      // Confirm basic attack projectile receives single-applied scaled damage (non-crit OR 1.5x crit)
+      // Confirm basic attack projectile receives single-applied scaled damage (non-crit OR 1.25x crit)
       room.projectiles = [];
       room.firePrimaryAttack(st);
       const shot = room.projectiles.find((pr) => pr.ownerId === spec.id)!;
       const expectedHit = Math.round(HERO_CLASSES[spec.cls].damage * expectedMult);
-      const expectedCrit = Math.round(HERO_CLASSES[spec.cls].damage * expectedMult * 1.5);
-      assert.strictEqual(proj.critHitDamage, Math.round(proj.scaledHitDamage * 1.5), `${spec.cls} projected critHitDamage must reflect 1.5x crit multiplier`);
+      const expectedCrit = Math.round(HERO_CLASSES[spec.cls].damage * expectedMult * 1.25);
+      assert.strictEqual(proj.critHitDamage, Math.round(proj.scaledHitDamage * 1.25), `${spec.cls} projected critHitDamage must reflect 1.25x crit multiplier`);
       assert.ok(shot.damage === expectedHit || shot.damage === expectedCrit, `${spec.cls} primary shot damage (${shot.damage}) must equal ${expectedHit} or crit ${expectedCrit}`);
     }
+
+    // 2b. Verify DPS curve stays < 1,000 DPS for balanced and even heavily geared Lv50 builds, requiring extreme stacking to cross 1,000 DPS
+    const balancedRanger = room.addOrReconnectPlayer('r_bal', 'BalRanger', 'ranger', false, {
+      level: 50, xp: 0, strength: 0, vitality: 38, dexterity: 60, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    balancedRanger.relics = ['twinstring_charm', 'sunfire_signet'];
+    const balProj = calculatePlayerStatProjections(balancedRanger, 5);
+    assert.ok(balProj.sustainedDps < 600, `Balanced Lv50 Ranger (60 DEX + Twinstring + Sunfire) must stay moderate (got ${balProj.sustainedDps})`);
+
+    const glassRangerNoFury = room.addOrReconnectPlayer('r_glass', 'GlassRanger', 'ranger', false, {
+      level: 50, xp: 0, strength: 0, vitality: 0, dexterity: 98, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    glassRangerNoFury.relics = ['twinstring_charm', 'sunfire_signet', 'keen_arrowhead'];
+    const glassNoFuryProj = calculatePlayerStatProjections(glassRangerNoFury, 5);
+    assert.ok(glassNoFuryProj.directDps < 800, `98 DEX Lv50 Ranger with core offense relics still stays well below 1000 DPS (got ${glassNoFuryProj.directDps})`);
+
+    glassRangerNoFury.relics.push('cinder_heart', 'viper_crucible', 'bloodletter_talisman');
+    glassRangerNoFury.floorBlessings = ['fury', 'fury', 'fury', 'swiftness', 'swiftness'];
+    const extremeProj = calculatePlayerStatProjections(glassRangerNoFury, 5);
+    assert.ok(extremeProj.sustainedDps >= 1000, `Extreme Lv50 98-DEX glass-cannon with 6 offensive relics + 5 offensive blessings reaches >= 1000 DPS (got ${extremeProj.sustainedDps})`);
 
     // 3. Vitality: +5 Max HP per point & max(1, floor(VIT * 0.1)) regen every 2s
     const vitZero = room.addOrReconnectPlayer('vit_zero', 'VitZero', 'vanguard', false, {
@@ -6145,11 +6165,11 @@ async function runRegressionTests() {
     const stacked = room.addOrReconnectPlayer('p_stack', 'StackHero', 'arcanist', false, {
       level: 50,
       xp: 0,
-      strength: 120,
+      strength: 100,
       vitality: 25,
       dexterity: 100,
-      intelligence: 120,
-      faith: 150,
+      intelligence: 100,
+      faith: 100,
       attributePoints: 0,
     });
     stacked.relics = ['sunfire_signet', 'keen_arrowhead', 'runic_carapace', 'hourglass_shard', 'zephyr_greaves', 'bastion_pauldron', 'twinstring_charm'];
@@ -6160,15 +6180,16 @@ async function runRegressionTests() {
     const projStacked = calculatePlayerStatProjections(stacked, 5);
     assert.strictEqual(projStacked.maxHp, stacked.maxHp, 'Projection maxHp with Bastion Pauldron must equal GameRoom maxHp');
     assert.strictEqual(projStacked.critChancePct, 45.0, 'Crit chance must remain capped at 45.0%');
-    assert.strictEqual(projStacked.faithCcTenacityPct, 40.0, 'Faith CC tenacity must remain capped at 40.0%');
+    assert.strictEqual(projStacked.faithCcTenacityPct, 30.0, '100 FTH grants 30.0% CC tenacity');
     // Arcanist base phys resist (0.05) + STR attr cap (0.15) + Runic Carapace (0.15) + Bastion (0.06) = 0.41 -> 41.0%
     assert.strictEqual(projStacked.physicalResistPct, 41.0, 'Physical resistance must combine base + capped 15% STR + Runic Carapace + Bastion');
     assert.strictEqual(room.damagePlayer(stacked, 1000, 'physical'), 590, 'Engine physical resistance mitigation must match 41.0% projection');
     stacked.hp = stacked.maxHp;
 
-    // Damage multiplier includes sunfire_signet (1.24x) and fury blessing (1.10x)
+    // Damage multiplier includes sunfire_signet (1.12x) and fury blessing (1.06x)
     const engineMult = room.computeDamageMult(stacked, 'arcane');
     assert.strictEqual(projStacked.damageMultiplier, Number(engineMult.toFixed(2)), 'Projected damageMultiplier with relics + Fury must match GameRoom');
+    assert.ok(projStacked.sustainedDps < 1000, `Capped 100/100 Arcanist with all offensive relics + Fury remains < 1000 DPS (got ${projStacked.sustainedDps})`);
 
     // Move speed matches computePlayerMoveSpeed
     assert.strictEqual(projStacked.moveSpeedPx, Math.round(computePlayerMoveSpeed(stacked)), 'Projected moveSpeedPx must match computePlayerMoveSpeed');
