@@ -969,7 +969,8 @@ async function runRegressionTests() {
 
     const mainDmg = room.damageEnemy(t1 as any, 100, p, 'frost');
     assert(p.damageDealt > mainDmg, 'Damage dealt must include Frost Shatter AoE damage');
-    assert.strictEqual(t2.hp, 439, 'Secondary target must take 61 frost damage (500 - 61 = 439)');
+    assert.strictEqual(mainDmg, 140, 'Primary frozen target must take 1.4x Shatter hit damage (140)');
+    assert.strictEqual(t2.hp, 453, 'Secondary target must take 35% of 140 frost splash mitigated by 5% res = 47 dmg (500 - 47 = 453)');
   });
 
   // --- Test 20: Chain Lightning respecting lightning resistance & tracking damage ---
@@ -3607,16 +3608,16 @@ async function runRegressionTests() {
     assert.ok(gEnemies.length >= 4, 'Guardian chamber must contain at least 4 enemies');
     assert.ok(gEnemies.some((e) => e.elite && e.name.startsWith('Guardian ')), 'Guardian chamber must contain a Guardian Elite enemy');
 
-    const gLockedChest = room.props.find((pr) => pr.roomId === gRoom.id && pr.kind === 'chest');
-    assert.ok(gLockedChest && gLockedChest.locked, 'Guardian chamber chest must start locked');
+    const gLockedChest = room.props.find((pr) => pr.roomId === gRoom.id && pr.kind === 'totem');
+    assert.ok(gLockedChest && gLockedChest.locked, 'Guardian chamber totem must start locked');
 
-    // Attempt to open locked chest while Guardian enemies remain alive
+    // Attempt to interact with locked totem while Guardian enemies remain alive
     player.x = gLockedChest!.x;
     player.y = gLockedChest!.y;
-    const goldBeforeLocked = player.gold;
-    room.performAction(pid, 'interact');
-    assert.strictEqual(gLockedChest!.opened, false, 'Locked chest must not open while room enemies are alive');
-    assert.strictEqual(player.gold, goldBeforeLocked, 'Gold must not change when chest is locked');
+    const blessingsBefore = player.floorBlessings?.length || 0;
+    room.tick(25);
+    assert.strictEqual(gLockedChest!.opened, false, 'Locked totem must not open while room enemies are alive');
+    assert.strictEqual(player.floorBlessings?.length || 0, blessingsBefore, 'Blessings must not change when totem is locked');
 
     // Boss Sanctum Wards should reduce boss damage taken when side combat rooms are uncleared
     const boss = room.enemies.find((e) => e.kind === 'boss')!;
@@ -5633,6 +5634,385 @@ async function runRegressionTests() {
     assert.strictEqual(midRunReady.ok, false, 'Cannot toggle waiting lobby ready while expedition is active');
 
     coordinator.disposeAllTimers();
+  });
+
+  // --- Test 87: Hybrid DoT Scaling, Refresh Without Stacking & Multiplayer Attribution ---
+  await test('87. Hybrid DoT Scaling: Level + Primary Attribute formula, refresh-without-stacking, bleed velocity, and multiplayer kill credit', async () => {
+    // 1. Verify computeDotMultiplier formula: 1 + 0.003 * (Level - 1) + 0.002 * PrimaryAttr
+    const v1 = { heroClass: 'vanguard', level: 1, strength: 0, dexterity: 0, intelligence: 0, faith: 0 } as any;
+    const r25 = { heroClass: 'ranger', level: 25, strength: 10, dexterity: 25, intelligence: 0, faith: 0 } as any;
+    const a50 = { heroClass: 'arcanist', level: 50, strength: 0, dexterity: 0, intelligence: 50, faith: 10 } as any;
+    const c100 = { heroClass: 'cleric', level: 100, strength: 0, dexterity: 0, intelligence: 0, faith: 100 } as any;
+
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(v1) - 1.0) < 1e-9, 'Level 1 / 0 attr must yield 1.0x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(r25) - 1.122) < 1e-9, 'Level 25 / 25 DEX must yield 1.122x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(a50) - 1.247) < 1e-9, 'Level 50 / 50 INT must yield 1.247x');
+    assert.ok(Math.abs(GameRoom.computeDotMultiplier(c100) - 1.497) < 1e-9, 'Level 100 / 100 FTH must yield 1.497x');
+
+    const room = new GameRoom({
+      roomId: 'R_TEST_DOT_OVERHAUL',
+      name: 'Hybrid DoT Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 8787,
+    });
+    room.status = 'playing';
+    room.enemies.length = 0;
+
+    room.addOrReconnectPlayer('p_high', 'HighArc', 'arcanist', false, {
+      level: 50,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 50,
+      faith: 0,
+      attributePoints: 0,
+    });
+    room.addOrReconnectPlayer('p_low', 'LowVan', 'vanguard', false, {
+      level: 1,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+    });
+
+    const pHigh = room.getPlayerState('p_high')!;
+    const pLow = room.getPlayerState('p_low')!;
+    pHigh.relics = ['cinder_heart', 'viper_crucible', 'crimson_fang'];
+    pLow.relics = ['bloodletter_talisman'];
+    pHigh.damageDealt = 0;
+    pLow.damageDealt = 0;
+    pHigh.kills = 0;
+    pLow.kills = 0;
+    pHigh.hp = 50;
+    pHigh.maxHp = 100;
+
+    // Burn (4.5s) + Poison (6.0s) from HighArc, Bleed (5.0s) from LowVan
+    const dummy = createTestEnemy('e_dot_1', 'slime', 'DoT Dummy', pHigh.x + 300, pHigh.y, 1000, {
+      fire: 0,
+      poison: 0,
+      bleed: 0,
+    });
+    room.enemies.push(dummy as any);
+
+    room.damageEnemy(dummy as any, 30, pHigh, false, 'arcane'); // Triggers cinder_heart (raw>=24) & viper_crucible
+    assert.strictEqual(dummy.burnedMs, 4500, 'Cinder Heart must apply 4.5s Burn duration');
+    assert.strictEqual(dummy.poisonedMs, 6000, 'Viper Crucible must apply 6.0s Poison duration');
+
+    // Reapplying Cinder Heart refreshes duration cleanly rather than multiplying stack damage
+    room.tick(1000); // Advances 1s (one DoT tick fires here)
+    const hpAfterOneTick = dummy.hp;
+    const burnDealtBeforeRefresh = pHigh.damageDealt;
+    room.damageEnemy(dummy as any, 30, pHigh, false, 'arcane');
+    assert.strictEqual(dummy.burnedMs, 4500, 'Re-igniting must refresh Burn duration back to 4.5s');
+
+    // Wait 1s and confirm single-stack DoT tick (Burn = round(8*1.247)=10, Poison = round(6*1.247)=7 -> 17 total DoT)
+    const dmgBeforeSecondPulse = pHigh.damageDealt;
+    const hpBeforeSecondPulse = dummy.hp;
+    room.tick(1000);
+    const dotPulseTotal = pHigh.damageDealt - dmgBeforeSecondPulse;
+    assert.strictEqual(hpBeforeSecondPulse - dummy.hp, dotPulseTotal, 'DoT pulse must match HighArc attributed damageDealt');
+    assert.strictEqual(dotPulseTotal, 17, `Scaled Burn (10) + Poison (7) tick must equal 17 without stacking explosion (got ${dotPulseTotal})`);
+
+    // Bleed: moving enemy deals higher bleed damage than stationary enemy
+    const stationaryBleed = createTestEnemy('e_bleed_stat', 'slime', 'StatBleed', pLow.x + 250, pLow.y, 500, { bleed: 0 }) as any;
+    const movingBleed = createTestEnemy('e_bleed_mov', 'slime', 'MovBleed', pLow.x + 250, pLow.y + 40, 500, { bleed: 0 }) as any;
+    stationaryBleed.vx = 0; stationaryBleed.vy = 0;
+    movingBleed.vx = 45; movingBleed.vy = 0;
+    room.enemies.push(stationaryBleed, movingBleed);
+    room.applyStatusEffect(stationaryBleed, 'bleed', 5000, pLow);
+    room.applyStatusEffect(movingBleed, 'bleed', 5000, pLow);
+    room.tick(1000);
+    // Keep movingBleed velocity up on next tick? Wait - check after 1s tick
+    const statDmg = 500 - stationaryBleed.hp;
+    assert.strictEqual(statDmg, 8, `Stationary floor-1 Level-1 bleed tick must be 8 (got ${statDmg})`);
+
+    // Test Bleed moving tick directly with velocity maintained right before pulse
+    movingBleed.hp = 500;
+    movingBleed.bleedingMs = 5000;
+    movingBleed.vx = 60;
+    (room as any).statusDotAccumMs = 600;
+    movingBleed.stunnedMs = 0;
+    room.tick(50);
+    const movDmg = 500 - movingBleed.hp;
+    assert.ok(movDmg > statDmg, `Moving enemy must suffer bonus bleed tick damage (${movDmg} vs ${statDmg})`);
+
+    // Lethal DoT tick credits killer with kills++, damageDealt, and triggers Crimson Fang sustain cleanly
+    room.enemies = [];
+    const lowHpVictim = createTestEnemy('e_dot_kill', 'slime', 'Victim', 9000, 9000, 5, { fire: 0 });
+    room.enemies.push(lowHpVictim as any);
+    room.applyStatusEffect(lowHpVictim as any, 'burn', 4500, pHigh);
+    pHigh.hp = 40;
+    const killsBefore = pHigh.kills;
+    const hpBeforeKill = pHigh.hp;
+    (room as any).statusDotAccumMs = 600;
+    room.tick(50);
+    assert.ok(!room.enemies.includes(lowHpVictim as any), 'Lethal DoT tick must remove slain enemy');
+    assert.strictEqual(pHigh.kills, killsBefore + 1, 'Lethal DoT tick must credit kill to applying player');
+    assert.strictEqual(pHigh.hp, hpBeforeKill + 5, 'Crimson Fang must heal owner (+5 HP) when their DoT scores a lethal kill');
+  });
+
+  // --- Test 88: Crowd-Control Balance, Diminishing Returns, 8s Reset, Soft-CC Separation & Rimefrost Tuning ---
+  await test('88. Crowd-Control Balance: Hard-CC DR curves, Elite/Boss profiles, 8s reset, Soft-CC separation, and Rimefrost tuning', async () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_CC_DR',
+      name: 'CC DR Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 8888,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p_cc', 'CcTester', 'vanguard');
+
+    // 1. Normal enemy DR curve: 100% -> 50% -> 25% -> 0% (Immune)
+    const normalMob = room.spawnEnemyForTesting('knight', 200, 200, false);
+    assert.strictEqual(room.applyHardCc(normalMob, 'stun', 1000), 1000, 'Normal Stage 1: 100% duration');
+    assert.strictEqual(room.applyHardCc(normalMob, 'stun', 1000), 500, 'Normal Stage 2: 50% duration');
+    assert.strictEqual(room.applyHardCc(normalMob, 'freeze', 1000), 250, 'Normal Stage 3: 25% shared hard-CC DR');
+    assert.strictEqual(room.applyHardCc(normalMob, 'stun', 1000), 0, 'Normal Stage 4: 0% immune');
+    assert.strictEqual(room.getEnemyCcState(normalMob).stage, 3, 'DR stage reaches immune cap at 3');
+
+    // Soft CC (slow) MUST NOT advance Hard-CC DR stage and continues applying full slow duration
+    const freshNormal = room.spawnEnemyForTesting('slime', 240, 200, false);
+    const softDur = room.applySoftCc(freshNormal, 3000);
+    assert.strictEqual(softDur, 3000, 'Soft CC applies full slow duration');
+    assert.strictEqual(room.getEnemyCcState(freshNormal).stage, 0, 'Soft CC must NEVER advance hard-CC DR stage');
+    assert.strictEqual(room.applyHardCc(freshNormal, 'freeze', 1800), 1800, 'First freeze after slows still gets Stage 1 (1800ms)');
+
+    // 2. 8000ms reset window restores DR stage back to 0
+    room.tick(8000);
+    assert.strictEqual(room.getEnemyCcState(normalMob).stage, 0, 'Hard-CC DR must reset to Stage 0 after 8s without hard CC');
+    assert.strictEqual(room.applyHardCc(normalMob, 'stun', 1000), 1000, 'Post-reset stun receives full 100% duration again');
+
+    // 3. Elite profile: 25% duration reduction + [1.0, 0.50, 0.25, 0] DR
+    const eliteMob = room.spawnEnemyForTesting('knight', 300, 200, true);
+    assert.strictEqual(room.applyHardCc(eliteMob, 'stun', 1000), 750, 'Elite Stage 1: 75% duration');
+    assert.strictEqual(room.applyHardCc(eliteMob, 'stun', 1000), 375, 'Elite Stage 2: 75% * 50% = 375ms');
+    assert.strictEqual(room.applyHardCc(eliteMob, 'stun', 1000), 188, 'Elite Stage 3: 75% * 25% = 188ms');
+    assert.strictEqual(room.applyHardCc(eliteMob, 'stun', 1000), 0, 'Elite Stage 4: Immune');
+
+    // 4. Boss profile: 70% duration reduction + [1.0, 0.40, 0] stronger DR + interrupts charge
+    const boss = room.enemies.find(e => e.kind === 'boss')!;
+    boss.charging = true;
+    boss.chargeTimerMs = 500;
+    const bossFirst = room.applyHardCc(boss, 'stun', 1600);
+    assert.strictEqual(bossFirst, 480, 'Boss Stage 1: 1600 * 0.30 = 480ms (>= 400ms interrupt)');
+    assert.strictEqual(boss.charging, false, 'Hard CC must interrupt active boss charge');
+    assert.strictEqual(room.applyHardCc(boss, 'freeze', 1800), 216, 'Boss Stage 2: 1800 * 0.30 * 0.40 = 216ms');
+    assert.strictEqual(room.applyHardCc(boss, 'stun', 1600), 0, 'Boss Stage 3: Immune until 8s reset');
+
+    // 5. Floor change clears old CC metadata cleanly
+    room.loadFloor(2, 1);
+    const newBoss = room.enemies.find(e => e.kind === 'boss')!;
+    assert.strictEqual(room.getEnemyCcState(newBoss).stage, 0, 'New floor enemies must start with clean DR state');
+  });
+
+  // --- Test 89: Boss Overhaul — Phases, Conditional Summons, Safe Spawns, Supernova Single-Hit & Multiplayer Fairness ---
+  await test('89. Boss Overhaul: Differentiated phases, conditional capped safe summons, supernova single-hit, and multiplayer aggro rotation', async () => {
+    // 1. Floor 1 (Malakor): 2 Phases (50%), NO regular summon adds
+    const f1Room = new GameRoom({
+      roomId: 'R_TEST_BOSS_F1_OVERHAUL',
+      name: 'F1 Overhaul',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9101,
+      initialFloor: 1,
+    });
+    f1Room.status = 'playing';
+    f1Room.addOrReconnectPlayer('p1', 'Hero1', 'vanguard');
+    f1Room.addOrReconnectPlayer('p2', 'Hero2', 'arcanist');
+    const p1 = f1Room.getPlayerState('p1')!;
+    const p2 = f1Room.getPlayerState('p2')!;
+    const malakor = f1Room.enemies.find(e => e.kind === 'boss')!;
+    p1.x = malakor.x - 45; p1.y = malakor.y;
+    p2.x = malakor.x + 45; p2.y = malakor.y;
+
+    malakor.hp = Math.round(malakor.maxHp * 0.45);
+    malakor.windupMs = 0;
+    f1Room.tick(50);
+    assert.strictEqual(f1Room.getBossRuntimeInfo(malakor).phase, 2, 'Malakor must enter Phase 2 at <= 50% HP');
+    assert.strictEqual(f1Room.enemies.filter(e => e.id.startsWith('add_')).length, 0, 'Malakor must NEVER spawn regular summon adds');
+
+    // Verify multiplayer boss aggro rotates across connected party members in arena
+    const targetedIds = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      f1Room.tick(1800);
+      p1.downed = false; p1.hp = p1.maxHp;
+      p2.downed = false; p2.hp = p2.maxHp;
+      const picked = (f1Room as any).selectBossTarget(malakor, p1, (f1Room as any).findRoomContaining(malakor.x, malakor.y));
+      targetedIds.add(picked.id);
+    }
+    assert.ok(targetedIds.has('p1') && targetedIds.has('p2'), 'Multiplayer boss aggro must rotate across active arena party members');
+
+    // 2. Floor 2 (Vaelor): 3 Phases (75% & 40%), capped safe non-elite 'Summoned ...' waves (>= 65px away from players)
+    const f2Room = new GameRoom({
+      roomId: 'R_TEST_BOSS_F2_VAELOR',
+      name: 'F2 Vaelor',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9102,
+      initialFloor: 2,
+    });
+    f2Room.status = 'playing';
+    f2Room.addOrReconnectPlayer('pv', 'VaelorChallenger', 'vanguard');
+    const pv = f2Room.getPlayerState('pv')!;
+    const vaelor = f2Room.enemies.find(e => e.kind === 'boss')!;
+    pv.x = vaelor.x + 40;
+    pv.y = vaelor.y;
+    vaelor.hp = Math.round(vaelor.maxHp * 0.70);
+    vaelor.windupMs = 0;
+    f2Room.tick(50);
+    assert.strictEqual(f2Room.getBossRuntimeInfo(vaelor).phase, 2, 'Vaelor must enter Phase 2 at 75% HP');
+    const adds = f2Room.enemies.filter(e => e.id.startsWith('add_'));
+    assert.ok(adds.length >= 1 && adds.length <= 2, `Vaelor wave 1 must summon 1-2 capped adds (got ${adds.length})`);
+    for (const add of adds) {
+      assert.strictEqual(Boolean(add.elite), false, 'Summoned boss adds must be non-elite');
+      assert.ok(add.name.startsWith('Summoned '), `Summoned add name must be prefixed cleanly (got ${add.name})`);
+      const distToPlayer = Math.hypot(add.x - pv.x, add.y - pv.y);
+      assert.ok(distToPlayer >= 64, `Summoned add must spawn safely >= 65px from players (got ${distToPlayer.toFixed(1)}px)`);
+    }
+
+    // 3. Supernova Single-Hit-Per-Wave bug fix verification (Floor 5 Archon)
+    const f5Room = new GameRoom({
+      roomId: 'R_TEST_SUPERNOVA_SINGLE',
+      name: 'Supernova Check',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9105,
+      initialFloor: 5,
+    });
+    f5Room.status = 'playing';
+    f5Room.addOrReconnectPlayer('psn', 'NovaTank', 'vanguard');
+    const psn = f5Room.getPlayerState('psn')!;
+    psn.hp = 500;
+    psn.maxHp = 500;
+    psn.shield = 0;
+    psn.downed = false;
+    const archon = f5Room.enemies.find(e => e.kind === 'boss')!;
+    archon.windupMs = 99999; // Keep Archon from triggering other attacks during test
+    psn.x = archon.x + 120; // Positioned on expanding ring band
+    psn.y = archon.y;
+    f5Room.zones.push({
+      id: 'z_test_supernova',
+      kind: 'supernova',
+      x: archon.x,
+      y: archon.y,
+      radius: 145,
+      ttlMs: 300, // currentRadius starts ~113px and sweeps through 120px over several ticks
+      maxTtlMs: 1350,
+      ownerId: archon.id,
+    });
+    const hpHits: number[] = [];
+    for (let k = 0; k < 6; k++) {
+      const before = psn.hp;
+      f5Room.tick(25);
+      if (psn.hp < before) hpHits.push(before - psn.hp);
+    }
+    assert.strictEqual(hpHits.length, 1, `Supernova wave must hit player at most once per zone, not every frame (hits: ${hpHits.length})`);
+
+    // 4. Solo-no-summon verification for Floors 6, 9, and 10 at low HP
+    for (const soloFloor of [6, 9, 10]) {
+      const sRoom = new GameRoom({
+        roomId: `R_TEST_SOLO_BOSS_F${soloFloor}`,
+        name: `Solo Boss F${soloFloor}`,
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 9200 + soloFloor,
+        initialFloor: soloFloor,
+      });
+      sRoom.status = 'playing';
+      sRoom.addOrReconnectPlayer('ps', 'SoloHero', 'vanguard');
+      const ps = sRoom.getPlayerState('ps')!;
+      const sb = sRoom.enemies.find(e => e.kind === 'boss')!;
+      ps.x = sb.x + 40; ps.y = sb.y;
+      sb.hp = Math.round(sb.maxHp * 0.25);
+      sb.windupMs = 0;
+      sRoom.tick(100);
+      assert.strictEqual(
+        sRoom.enemies.filter(e => e.id.startsWith('add_')).length,
+        0,
+        `Floor ${soloFloor} boss must remain a pure solo duel with 0 regular summons`
+      );
+      assert.strictEqual(sRoom.getBossRuntimeInfo(sb).phase >= 2, true, `Floor ${soloFloor} boss at 25% HP must enter higher phase`);
+    }
+  });
+
+  // --- Test 90: Stat Projections Include Hybrid DoT Scaling & Active Relic DoT DPS ---
+  await test('90. Stat Projections: calculatePlayerStatProjections reflects Hybrid DoT Scaling and equipped DoT relic DPS', async () => {
+    const { calculatePlayerStatProjections } = await import('./src/shared/statUtils.ts');
+
+    const baseHero = {
+      id: 'p_proj',
+      username: 'ProjHero',
+      heroClass: 'arcanist',
+      level: 50,
+      xp: 0,
+      nextXp: 100,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      aimAngle: 0,
+      hp: 200,
+      maxHp: 200,
+      shield: 0,
+      gold: 0,
+      potions: 2,
+      relics: [],
+      storage: [],
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 50,
+      faith: 0,
+      attributePoints: 0,
+      downed: false,
+      downedTimerMs: 0,
+      reviveProgress: 0,
+      skillCooldownMs: 0,
+      maxSkillCooldownMs: 5000,
+      ultCooldownMs: 0,
+      maxUltCooldownMs: 13500,
+      dashCooldownMs: 0,
+      maxDashCooldownMs: 2600,
+      attackAnimMs: 0,
+      hasteMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      statuses: [],
+      kills: 0,
+      damageDealt: 0,
+      healingDone: 0,
+      connected: true,
+      ready: false,
+    } as any;
+
+    const noRelicProj = calculatePlayerStatProjections(baseHero, 1);
+    assert.strictEqual(noRelicProj.dotMultiplier, 1.247, 'Lv50 / 50 INT dotMultiplier must be 1.247x');
+    assert.strictEqual(noRelicProj.dotBonusPct, 24.7, 'Lv50 / 50 INT dotBonusPct must be 24.7%');
+    assert.strictEqual(noRelicProj.dotDpsContribution, 0, 'No DoT relics equipped must yield 0 dotDpsContribution');
+    assert.strictEqual(noRelicProj.burnTickDamage, 10, 'Floor 1 Burn base tick at 1.247x must be 10');
+    assert.strictEqual(noRelicProj.poisonTickDamage, 7, 'Floor 1 Poison base tick at 1.247x must be 7');
+    assert.strictEqual(noRelicProj.sustainedDps, noRelicProj.directDps, 'Without DoT relics sustainedDps equals directDps');
+
+    const dotHero = {
+      ...baseHero,
+      relics: ['cinder_heart', 'viper_crucible', 'bloodletter_talisman'],
+    };
+    const dotProj = calculatePlayerStatProjections(dotHero, 5);
+    assert.strictEqual(dotProj.hasBurnRelic, true);
+    assert.strictEqual(dotProj.hasPoisonRelic, true);
+    assert.strictEqual(dotProj.hasBleedRelic, true);
+    assert.strictEqual(dotProj.burnTickDamage, Math.round((7 + 5) * 1.247), 'Floor 5 Burn tick scales with floor and dotMultiplier');
+    assert.strictEqual(dotProj.poisonTickDamage, Math.round((5 + 5) * 1.247), 'Floor 5 Poison tick scales with floor and dotMultiplier');
+    assert.strictEqual(dotProj.bleedMovingTickDamage, Math.round((14 + 5) * 1.247), 'Floor 5 moving Bleed tick scales with floor and dotMultiplier');
+    assert.ok(dotProj.dotDpsContribution > 0, 'Equipped DoT relics must contribute positive dotDpsContribution');
+    assert.ok(dotProj.sustainedDps > dotProj.directDps, 'sustainedDps must include active DoT DPS contribution');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

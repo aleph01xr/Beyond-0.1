@@ -8,6 +8,7 @@ import { type TouchSettings } from './TouchControls.tsx';
 
 interface GameMenuModalProps {
   player: PlayerState;
+  floor?: number;
   mapBiome: string;
   isTavern: boolean;
   onClose: () => void;
@@ -25,6 +26,7 @@ type MenuTab = 'settings' | 'navigation' | 'character';
 
 export const GameMenuModal: React.FC<GameMenuModalProps> = ({
   player,
+  floor = 1,
   mapBiome,
   isTavern,
   onClose,
@@ -44,7 +46,7 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
   const [isMusicMuted, setIsMusicMuted] = useState(() => soundManager.isMusicMuted());
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
-  const stats = calculatePlayerStatProjections(player);
+  const stats = calculatePlayerStatProjections(player, floor);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe">
@@ -345,7 +347,7 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
 
                 <div className="stone-input p-3 space-y-2">
                   <div className="text-[#34D399] font-bold">Combat Projections Summary</div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
                     <div className="p-2 stone-plaque">
                       <div className="text-[9px] text-[#A19FAF]">Max HP</div>
                       <div className="font-bold text-[#10B981]">{stats.maxHp}</div>
@@ -355,10 +357,14 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
                       <div className="font-bold text-[#FCD34D]">{stats.sustainedDps}</div>
                     </div>
                     <div className="p-2 stone-plaque">
+                      <div className="text-[9px] text-[#A19FAF]">DoT Scale</div>
+                      <div className="font-bold text-[#F97316]">{stats.dotMultiplier}x</div>
+                    </div>
+                    <div className="p-2 stone-plaque">
                       <div className="text-[9px] text-[#A19FAF]">Crit Rate</div>
                       <div className="font-bold text-[#38BDF8]">{stats.critChancePct}%</div>
                     </div>
-                    <div className="p-2 stone-plaque">
+                    <div className="p-2 stone-plaque col-span-2 sm:col-span-1">
                       <div className="text-[9px] text-[#A19FAF]">Phys Armor</div>
                       <div className="font-bold text-[#60A5FA]">{stats.physicalResistPct}%</div>
                     </div>

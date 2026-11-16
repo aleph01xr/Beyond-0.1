@@ -5,6 +5,7 @@ import { sfx } from '../client/sound.ts';
 
 interface CharacterInventoryModalProps {
   player: PlayerState;
+  floor?: number;
   onClose: () => void;
   onSendAdminCommand?: (cmd: any) => void;
   onUnequipRelic?: (relicId: string) => void;
@@ -18,6 +19,7 @@ const DISMANTLE_GOLD_REWARD = 40;
 
 export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = ({
   player,
+  floor = 1,
   onClose,
   onSendAdminCommand,
   onUnequipRelic,
@@ -28,7 +30,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
   const [confirmDiscardPotion, setConfirmDiscardPotion] = useState(false);
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
-  const stats: PlayerStatProjections = calculatePlayerStatProjections(player);
+  const stats: PlayerStatProjections = calculatePlayerStatProjections(player, floor);
 
   const ownedRelics = player.relics || [];
   const ownedRelicDefs = RELIC_CATALOG.filter((r) => ownedRelics.includes(r.id));
@@ -584,14 +586,18 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                     </span>
                   </div>
                   <p className="text-[11px] text-[#A19FAF] mt-1 font-mono">
-                    Calculated sustained output accounting for attack cadence ({stats.attacksPerSecond} atk/s), base hit ({stats.scaledHitDamage}), critical strikes ({stats.critChancePct}% @ {stats.critMultiplier}x), and relic multi-projectiles.
+                    Calculated sustained output accounting for attack cadence ({stats.attacksPerSecond} atk/s), base hit ({stats.scaledHitDamage}), critical strikes ({stats.critChancePct}% @ {stats.critMultiplier}x), relic multi-projectiles{stats.dotDpsContribution > 0 ? `, and hybrid DoT scaling (${stats.dotMultiplier}x)` : ''}.
                   </p>
                 </div>
 
-                <div className="flex items-center gap-4 stone-input p-3 font-mono text-xs">
+                <div className="flex flex-wrap items-center gap-4 stone-input p-3 font-mono text-xs">
                   <div>
                     <span className="text-[#A19FAF] text-[10px] block uppercase">Damage Mult</span>
                     <span className="text-[#FCD34D] font-bold text-sm">{stats.damageMultiplier}x</span>
+                  </div>
+                  <div className="border-l border-[#353442] pl-4">
+                    <span className="text-[#A19FAF] text-[10px] block uppercase">DoT Scale</span>
+                    <span className="text-[#F97316] font-bold text-sm">{stats.dotMultiplier}x</span>
                   </div>
                   <div className="border-l border-[#353442] pl-4">
                     <span className="text-[#A19FAF] text-[10px] block uppercase">Crit Rate</span>
@@ -623,6 +629,24 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Scaled Hit Damage</span>
                       <span className="font-bold text-[#FCD34D]">{stats.scaledHitDamage} Dmg / Hit</span>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2 stone-input">
+                      <span className="text-[#A19FAF]">Hybrid DoT Scaling</span>
+                      <span className="font-bold text-[#F97316]">{stats.dotMultiplier}x (+{stats.dotBonusPct}% Lv & {stats.primaryStatName.slice(0, 3).toUpperCase()})</span>
+                    </div>
+
+                    <div className="flex items-center justify-between p-2 stone-input gap-2">
+                      <span className="text-[#A19FAF]">Active DoT Output</span>
+                      <span className="font-bold text-[#FB923C] text-right">
+                        {stats.dotDpsContribution > 0
+                          ? `+${stats.dotDpsContribution} DPS (${[
+                              stats.hasBurnRelic ? `Burn ${stats.burnTickDamage}` : '',
+                              stats.hasPoisonRelic ? `Poison ${stats.poisonTickDamage}` : '',
+                              stats.hasBleedRelic ? `Bleed ${stats.bleedTickDamage}-${stats.bleedMovingTickDamage}` : '',
+                            ].filter(Boolean).join(' / ')})`
+                          : `0.0 DPS (Base Burn ${stats.burnTickDamage} / Poison ${stats.poisonTickDamage} / Bleed ${stats.bleedTickDamage}-${stats.bleedMovingTickDamage})`}
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-between p-2 stone-input">

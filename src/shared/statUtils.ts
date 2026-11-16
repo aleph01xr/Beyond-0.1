@@ -47,7 +47,20 @@ export interface PlayerStatProjections {
   critHitDamage: number; // Scaled damage when hit crits
 
   // Sustained DPS Projection
-  sustainedDps: number; // Average damage per second against 0-resist target
+  directDps: number; // Direct attack & crit/twinstring DPS before DoTs
+  sustainedDps: number; // Combined average damage per second (direct + active DoT relics)
+
+  // Hybrid DoT Scaling & Relic Projections
+  dotMultiplier: number; // 1 + 0.003 * (Level - 1) + 0.002 * PrimaryAttr
+  dotBonusPct: number; // e.g. 24.7% bonus DoT damage
+  hasBurnRelic: boolean;
+  hasPoisonRelic: boolean;
+  hasBleedRelic: boolean;
+  burnTickDamage: number; // per 0.65s tick (0-res baseline)
+  poisonTickDamage: number; // per 0.65s tick (0-res baseline)
+  bleedTickDamage: number; // stationary per 0.65s tick
+  bleedMovingTickDamage: number; // moving per 0.65s tick
+  dotDpsContribution: number; // combined active relic DoT DPS per second
 
   // Utility & CDR
   moveSpeedPx: number; // e.g. 242 px/s
@@ -61,10 +74,11 @@ export interface PlayerStatProjections {
   extraProjectileCount: number;
 }
 
-export function calculatePlayerStatProjections(p: PlayerState): PlayerStatProjections {
+export function calculatePlayerStatProjections(p: PlayerState, floor = 1): PlayerStatProjections {
   const heroClass = p.heroClass || 'vanguard';
   const def = HERO_CLASSES[heroClass] || HERO_CLASSES.vanguard;
   const level = Math.max(1, p.level || 1);
+  const safeFloor = Math.max(1, floor || 1);
   const str = Math.max(0, p.strength || 0);
   const vit = Math.max(0, p.vitality || 0);
   const dex = Math.max(0, p.dexterity || 0);
@@ -147,14 +161,34 @@ export function calculatePlayerStatProjections(p: PlayerState): PlayerStatProjec
   const critMultiplier = 1.75;
   const critHitDamage = Math.round(scaledHitDamage * critMultiplier);
 
-  // 8. Sustained DPS Projection
+  // 8. Hybrid DoT Scaling & Relic Projections (matches GameRoom.computeDotMultiplier)
+  const rawDotMult = 1 + 0.003 * (level - 1) + 0.002 * primaryStatValue;
+  const dotMultiplier = Number(rawDotMult.toFixed(3));
+  const dotBonusPct = Number(((rawDotMult - 1) * 100).toFixed(1));
+  const hasBurnRelic = relics.includes('cinder_heart');
+  const hasPoisonRelic = relics.includes('viper_crucible');
+  const hasBleedRelic = relics.includes('bloodletter_talisman');
+
+  const burnTickDamage = Math.max(1, Math.round((7 + safeFloor) * rawDotMult));
+  const poisonTickDamage = Math.max(1, Math.round((5 + safeFloor) * rawDotMult));
+  const bleedTickDamage = Math.max(1, Math.round((7 + safeFloor) * rawDotMult));
+  const bleedMovingTickDamage = Math.max(1, Math.round((14 + safeFloor) * rawDotMult));
+
+  const rawDotDps =
+    (hasBurnRelic ? burnTickDamage / 0.65 : 0) +
+    (hasPoisonRelic ? poisonTickDamage / 0.65 : 0) +
+    (hasBleedRelic ? bleedTickDamage / 0.65 : 0);
+  const dotDpsContribution = Number(rawDotDps.toFixed(1));
+
+  // 9. Sustained DPS Projection (direct attacks + active DoT relics)
   const extraProjectileFactor = relics.includes('twinstring_charm') ? 0.75 : 0;
   const avgDamagePerHit = (scaledHitDamage * (1 - critChancePct / 100)) + (critHitDamage * (critChancePct / 100));
   const totalPerShotDmg = avgDamagePerHit * (1 + extraProjectileFactor);
-  const sustainedDps = Number((totalPerShotDmg * attacksPerSecond).toFixed(1));
+  const rawDirectDps = totalPerShotDmg * attacksPerSecond;
+  const directDps = Number(rawDirectDps.toFixed(1));
+  const sustainedDps = Number((rawDirectDps + rawDotDps).toFixed(1));
 
-  // 9. Mobility & Cooldown Reduction
-  const dexMoveBonusPct = dex * 0.35;
+  // 10. Mobility & Cooldown Reduction
   let moveSpeedPx = def.speed * (1 + dex * 0.0035);
   if (relics.includes('zephyr_greaves')) moveSpeedPx *= 1.15;
   if ((p.hasteMs || 0) > 0) moveSpeedPx *= 1.22;
@@ -169,7 +203,7 @@ export function calculatePlayerStatProjections(p: PlayerState): PlayerStatProjec
   const tacticalCooldownSec = Number(((def.tacticalCooldownMs * cdrFactor) / 1000).toFixed(1));
   const ultCooldownSec = Number(((def.ultCooldownMs * cdrFactor) / 1000).toFixed(1));
 
-  // 10. Piercing
+  // 11. Piercing
   let pierceCount = heroClass === 'vanguard' ? 4 : heroClass === 'arcanist' ? 2 : 1;
   if (relics.includes('piercing_prism')) pierceCount += 1;
   const extraProjectileCount = relics.includes('twinstring_charm') ? 1 : 0;
@@ -208,7 +242,18 @@ export function calculatePlayerStatProjections(p: PlayerState): PlayerStatProjec
     relicCritChancePct,
     critMultiplier,
     critHitDamage,
+    directDps,
     sustainedDps,
+    dotMultiplier,
+    dotBonusPct,
+    hasBurnRelic,
+    hasPoisonRelic,
+    hasBleedRelic,
+    burnTickDamage,
+    poisonTickDamage,
+    bleedTickDamage,
+    bleedMovingTickDamage,
+    dotDpsContribution,
     moveSpeedPx,
     moveSpeedBonusPct,
     cooldownReductionPct,

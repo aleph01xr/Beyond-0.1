@@ -643,7 +643,71 @@ export function drawDungeonProp(
     ctx.fillRect(x - 10, y + 7, 1, 1);
     ctx.fillRect(x + 9, y + 7, 1, 1);
 
-  } else if (prop.kind === 'chest') {
+  } else if (prop.kind === 'totem') {
+    // Ancient Guardian Obelisk with towering stepped pedestal, tapering stone spire, and glowing runic channels
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x - 16, y + 10, 32, 6);
+
+    const isAwaken = !prop.locked;
+    const isClaimed = prop.opened;
+    const now = performance.now();
+    const pulse = Math.sin(now * 0.006) * 0.35 + 0.65;
+
+    // Stepped Stone Pedestal Base
+    ctx.fillStyle = '#18181B';
+    ctx.fillRect(x - 14, y + 6, 28, 6);
+    ctx.fillStyle = '#27272A';
+    ctx.fillRect(x - 12, y + 3, 24, 4);
+    ctx.fillStyle = '#3F3F46';
+    ctx.fillRect(x - 10, y + 1, 20, 3);
+
+    // Tapering Obelisk Spire (narrowing towards the top)
+    ctx.fillStyle = isAwaken ? '#1E293B' : '#111827';
+    ctx.fillRect(x - 8, y - 22, 16, 24);
+    ctx.fillStyle = isAwaken ? '#334155' : '#1F2937';
+    ctx.fillRect(x - 6, y - 20, 12, 21);
+    ctx.fillStyle = isAwaken ? '#475569' : '#374151';
+    ctx.fillRect(x - 4, y - 18, 8, 17);
+
+    // Obelisk Pyramidal Capstone Tip
+    ctx.fillStyle = isAwaken ? '#64748B' : '#4B5563';
+    ctx.fillRect(x - 5, y - 26, 10, 4);
+    ctx.fillStyle = isAwaken ? '#94A3B8' : '#6B7280';
+    ctx.fillRect(x - 3, y - 28, 6, 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(x - 1, y - 29, 2, 1);
+
+    // Floor-Themed Runic Glow & Channels
+    let coreColor = '#38BDF8';
+    if ((prop.roomId || 0) % 3 === 0) coreColor = '#F97316';
+    else if ((prop.roomId || 0) % 3 === 1) coreColor = '#34D399';
+
+    if (isClaimed) {
+      // Depleted dim runic channel
+      ctx.fillStyle = '#52525B';
+      ctx.fillRect(x - 2, y - 14, 4, 12);
+    } else if (isAwaken) {
+      // Glowing vertical runic energy channel
+      ctx.fillStyle = coreColor;
+      ctx.globalAlpha = 0.85 + pulse * 0.15;
+      ctx.fillRect(x - 2, y - 15, 4, 14);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(x - 1, y - 12, 2, 8);
+      ctx.globalAlpha = 1.0;
+
+      // Orbiting / floating mystic energy particles around obelisk
+      ctx.fillStyle = coreColor;
+      const floatOffset = Math.sin(now * 0.008) * 5;
+      ctx.fillRect(x - 14, y - 12 + floatOffset, 3, 3);
+      ctx.fillRect(x + 12, y - 16 - floatOffset, 3, 3);
+      ctx.fillRect(x - 10, y - 24 - floatOffset, 2, 2);
+      ctx.fillRect(x + 9, y - 6 + floatOffset, 2, 2);
+    } else {
+      // Dormant unlit runic inlay
+      ctx.fillStyle = '#71717A';
+      ctx.fillRect(x - 2, y - 14, 4, 12);
+    }
+    return;
     // Ironwood treasure chest with brass bands and padlock
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(x - 13, y + 7, 26, 5);

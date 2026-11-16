@@ -1005,13 +1005,13 @@ function generateDungeonFloor(floor, baseSeed, difficulty, partySize) {
       if (room.guardian) {
         props.push({
           id: `prop_${floor}_${propSeq++}`,
-          kind: "chest",
+          kind: "totem",
           x: centerWorldX,
           y: centerWorldY,
           opened: false,
           locked: true,
           roomId: room.id,
-          value: 45 + floor * 12
+          value: floor
         });
       } else if (rng() > 0.35) {
         const propKind = rng() > 0.65 ? "chest" : "crate";
@@ -3731,8 +3731,40 @@ var GameRoom = class _GameRoom {
             p.shield = Math.max(p.shield, 22);
           }
         }
+        if (room.cleared) {
+          for (const prp of this.props) {
+            if (prp.roomId === room.id && prp.kind === "totem" && prp.locked) {
+              prp.locked = false;
+              this.emitEvent("status", prp.x, prp.y - 22, "TOTEM AWAKENED!", "#38BDF8");
+              this.pushSystemChat(`Ancient Guardian Totem awakened in Chamber ${room.id}! Approach to claim your blessing.`);
+            }
+          }
+        }
       }
       for (const prop of this.props) {
+        if (!prop.opened && prop.kind === "totem" && !prop.locked) {
+          if (Math.hypot(prop.x - p.x, prop.y - p.y) <= 56) {
+            prop.opened = true;
+            const blessingOrder = ["fury", "swiftness", "bastion", "swiftness", "fury"];
+            const blessing = blessingOrder[((prop.roomId || 1) + this.floor + (prop.value || 1)) % blessingOrder.length];
+            const blessingMeta = FLOOR_BLESSINGS[blessing];
+            for (const ally of this.players.values()) {
+              const st = ally.state;
+              if (!st.floorBlessings) st.floorBlessings = [];
+              st.floorBlessings.push(blessing);
+              if (blessing === "bastion") {
+                const bastionCap = 60 + this.getBlessingStacks(st, "bastion") * 15;
+                st.shield = Math.min(bastionCap, st.shield + 25);
+              }
+              if (!st.downed) {
+                st.hp = Math.min(st.maxHp, st.hp + 30);
+              }
+              this.emitEvent("status", st.x, st.y - 34, `TOTEM: ${blessingMeta.name}!`, blessingMeta.color);
+            }
+            this.emitEvent("status", prop.x, prop.y - 28, `${blessingMeta.name} CLAIMED!`, blessingMeta.color);
+            this.pushSystemChat(`Ancient Guardian Totem claimed! Entire party received ${blessingMeta.name} blessing.`);
+          }
+        }
         if (!prop.opened && prop.kind === "coin") {
           if (Math.hypot(prop.x - p.x, prop.y - p.y) <= 34) {
             prop.opened = true;
@@ -5126,6 +5158,10 @@ var GameRoom = class _GameRoom {
           for (const prop of this.props) {
             if (prop.roomId === room.id && prop.locked) {
               prop.locked = false;
+              if (prop.kind === "totem") {
+                this.emitEvent("status", prop.x, prop.y - 24, "OBELISK AWAKENED!", "#38BDF8");
+                this.pushSystemChat(`Ancient Guardian Obelisk awakened in Guardian Chamber ${room.id}! Approach to claim your blessing.`);
+              }
             }
           }
           if (room.type === "boss") {

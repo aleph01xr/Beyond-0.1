@@ -1475,6 +1475,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {pauseOpen && snapshot.status === 'playing' && me && (
         <GameMenuModal
           player={me}
+          floor={Math.max(1, snapshot?.floor || 1)}
           mapBiome={map.biomeTitle}
           isTavern={isTavern}
           onClose={() => setPauseOpen(false)}
@@ -1761,7 +1762,8 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
       {/* Stat Allocation Modal Panel */}
       {attributesModalOpen && me && (() => {
-        const liveStats = calculatePlayerStatProjections(me);
+        const currentFloor = Math.max(1, snapshot?.floor || 1);
+        const liveStats = calculatePlayerStatProjections(me, currentFloor);
         return (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 pb-safe pt-safe pl-safe pr-safe">
             <div className="stone-panel w-full max-w-lg max-h-[92dvh] overflow-y-auto shadow-2xl p-3.5 sm:p-6 space-y-3 sm:space-y-5 animate-in fade-in zoom-in duration-200">
@@ -1814,10 +1816,14 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                     Full Inventory Sheet [I]
                   </button>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center font-mono text-[11px]">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center font-mono text-[11px]">
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
                     <div className="text-[9px] text-[#94A3B8] uppercase">Target DPS</div>
                     <div className="font-bold text-[#FCD34D]">{liveStats.sustainedDps}</div>
+                  </div>
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                    <div className="text-[9px] text-[#94A3B8] uppercase">DoT Scale</div>
+                    <div className="font-bold text-[#F97316]">{liveStats.dotMultiplier}x</div>
                   </div>
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
                     <div className="text-[9px] text-[#94A3B8] uppercase">Max HP</div>
@@ -1827,7 +1833,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                     <div className="text-[9px] text-[#94A3B8] uppercase">Crit Rate</div>
                     <div className="font-bold text-[#38BDF8]">{liveStats.critChancePct}%</div>
                   </div>
-                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
+                  <div className="bg-[#1A1828] p-1.5 border border-[#3A384C] col-span-2 sm:col-span-1">
                     <div className="text-[9px] text-[#94A3B8] uppercase">Phys Armor</div>
                     <div className="font-bold text-[#60A5FA]">{liveStats.physicalResistPct}%</div>
                   </div>
@@ -1845,7 +1851,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases physical damage for Vanguard (+3% per point) and grants bonus physical armor mitigation (+0.15% per point).
+                      Increases physical damage (+3% per point) &amp; DoT scaling (+0.2% per point) for Vanguard, and grants physical armor (+0.15% per point).
                     </p>
                   </div>
                   <button
@@ -1897,7 +1903,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Ranger damage (+3%), attack speed (+0.6%), movement speed (+0.35%), and crit chance (+0.4%).
+                      Increases Ranger damage (+3%) &amp; DoT scaling (+0.2%), attack speed (+0.6%), movement speed (+0.35%), and crit chance (+0.4%).
                     </p>
                   </div>
                   <button
@@ -1923,7 +1929,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Arcanist damage (+3%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
+                      Increases Arcanist damage (+3%) &amp; DoT scaling (+0.2%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
                     </p>
                   </div>
                   <button
@@ -1949,7 +1955,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Cleric divine damage & healing (+3% per point) and grants spiritual crowd-control duration resistance (+0.4%).
+                      Increases Cleric divine damage &amp; healing (+3%), boosts DoT scaling (+0.2%), and grants crowd-control duration resistance (+0.4%).
                     </p>
                   </div>
                   <button
@@ -1991,6 +1997,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {inventoryModalOpen && me && (
         <CharacterInventoryModal
           player={me}
+          floor={Math.max(1, snapshot?.floor || 1)}
           onClose={() => setInventoryModalOpen(false)}
           onSendAdminCommand={onSendAdminCommand}
           onUnequipRelic={(relicId) => onSendAdminCommand?.({ type: 'player:unequip_relic', relicId })}

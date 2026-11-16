@@ -127,7 +127,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     stats: { survivability: 5, damage: 3, range: 1, mobility: 2, utility: 4 },
     resistances: { physical: 0.28, fire: 0.15, frost: 0.15, lightning: 0.10, poison: 0.15, bleed: 0.30 },
     tacticalName: 'Bulwark Dash',
-    tacticalDesc: 'Slam forward with tower shield, battering through monsters, stunning them for 1.6s and granting +28 Shield to nearby allies.',
+    tacticalDesc: 'Slam forward with tower shield, battering through monsters, stunning them for 1.7s and granting +28 Shield to nearby allies.',
     tacticalCooldownMs: 4800,
     ultName: 'Aegis Sanctuary',
     ultDesc: 'Plant your colossal shield into the earth, raising a gleaming dome that deflects projectile barrages and boosts party defense.',
@@ -308,14 +308,14 @@ export const RELIC_CATALOG: RelicDef[] = [
     id: 'cinder_heart',
     name: 'Cinder Heart',
     category: 'Offense',
-    summary: 'Critical hits and tactical skills Ignite enemies with Burn DoT (ticks fiery damage every 0.8s for 4s).',
+    summary: 'Critical hits and tactical skills Ignite enemies with Burn DoT for 4.5s (scales with Level & Primary Attribute).',
     accent: '#F97316',
   },
   {
     id: 'rimefrost_shard',
     name: 'Rimefrost Shard',
     category: 'Offense',
-    summary: 'Attacks have 25% chance to Chill. Striking a Chilled enemy Freezes them in solid ice; shattering deals +60% bonus damage.',
+    summary: 'Attacks have 35% chance to Chill (3s). Striking a Chilled enemy Freezes them (1.8s base, subject to DR); shattering deals 1.4x hit damage and 35% frost AoE splash.',
     accent: '#38BDF8',
   },
   {
@@ -580,7 +580,7 @@ export interface ProjectileState {
 
 export interface PropState {
   id: string;
-  kind: 'crate' | 'chest' | 'relic_chest' | 'shrine' | 'coin' | 'potion' | 'warden_gate';
+  kind: 'crate' | 'chest' | 'relic_chest' | 'shrine' | 'coin' | 'potion' | 'warden_gate' | 'totem';
   x: number;
   y: number;
   opened: boolean;

@@ -474,13 +474,13 @@ export function generateDungeonFloor(
       if (room.guardian) {
         props.push({
           id: `prop_${floor}_${propSeq++}`,
-          kind: 'chest',
+          kind: 'totem',
           x: centerWorldX,
           y: centerWorldY,
           opened: false,
           locked: true,
           roomId: room.id,
-          value: 45 + floor * 12,
+          value: floor,
         });
       } else if (rng() > 0.35) {
         const propKind = rng() > 0.65 ? 'chest' : 'crate';
