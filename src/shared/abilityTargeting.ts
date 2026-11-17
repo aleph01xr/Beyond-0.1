@@ -1,9 +1,10 @@
+import type { ArcanistScrollId } from './arcanist.ts';
 import { hasLineOfSight, moveWithCollision } from './playerMovement.ts';
 import type { DungeonMap, HeroClassId, PropState } from './types.ts';
 
 export type AimableAction = 'tactical' | 'ult' | 'dash';
 
-export type AbilityTargetKind = 'dash' | 'cone_volley' | 'ground_aoe' | 'self_aoe';
+export type AbilityTargetKind = 'dash' | 'cone_volley' | 'ground_aoe' | 'self_aoe' | 'line';
 
 export interface AbilityTargetSpec {
   action: AimableAction;
@@ -13,6 +14,8 @@ export interface AbilityTargetSpec {
   range: number;
   /** AoE radius (at destination for ground_aoe / Bulwark stun, or around self for self_aoe) */
   aoeRadius: number;
+  /** Optional line width in world units for line-cast spells */
+  lineWidth?: number;
   /** Optional secondary radius (e.g. Cleric heal vs damage, Vanguard shield wave) */
   secondaryRadius?: number;
   /** Default distance when quick-tapped without dragging (for ground_aoe & dash) */
@@ -121,7 +124,7 @@ const CLASS_ABILITY_SPECS: Record<HeroClassId, Record<'tactical' | 'ult', Abilit
       label: 'Chrono Well',
       kind: 'ground_aoe',
       range: 220,
-      aoeRadius: 100,
+      aoeRadius: 115,
       defaultDist: 110,
       accentColor: '#38BDF8',
       secondaryColor: '#C084FC',
@@ -152,11 +155,95 @@ const CLASS_ABILITY_SPECS: Record<HeroClassId, Record<'tactical' | 'ult', Abilit
   },
 };
 
+const ARCANIST_SCROLL_TARGET_SPECS: Record<ArcanistScrollId, AbilityTargetSpec> = {
+  fireball: {
+    action: 'tactical',
+    label: 'Fireball',
+    kind: 'line',
+    range: 360,
+    aoeRadius: 90,
+    lineWidth: 20,
+    defaultDist: 220,
+    accentColor: '#F97316',
+    secondaryColor: '#FDBA74',
+  },
+  disintegration: {
+    action: 'tactical',
+    label: 'Disintegration',
+    kind: 'line',
+    range: 450,
+    aoeRadius: 0,
+    lineWidth: 42,
+    defaultDist: 450,
+    accentColor: '#A855F7',
+    secondaryColor: '#E9D5FF',
+  },
+  frost_lance: {
+    action: 'tactical',
+    label: 'Frost Lance',
+    kind: 'line',
+    range: 420,
+    aoeRadius: 0,
+    lineWidth: 16,
+    defaultDist: 420,
+    accentColor: '#38BDF8',
+    secondaryColor: '#BAE6FD',
+  },
+  chain_lightning: {
+    action: 'tactical',
+    label: 'Chain Lightning',
+    kind: 'line',
+    range: 340,
+    aoeRadius: 150,
+    lineWidth: 18,
+    defaultDist: 240,
+    accentColor: '#FACC15',
+    secondaryColor: '#FEF08A',
+  },
+  arcane_meteor: {
+    action: 'tactical',
+    label: 'Arcane Meteor',
+    kind: 'ground_aoe',
+    range: 280,
+    aoeRadius: 125,
+    defaultDist: 180,
+    accentColor: '#E879F9',
+    secondaryColor: '#F5D0FE',
+  },
+  arcane_orb: {
+    action: 'tactical',
+    label: 'Arcane Orb',
+    kind: 'line',
+    range: 460,
+    aoeRadius: 22,
+    lineWidth: 44,
+    defaultDist: 280,
+    accentColor: '#818CF8',
+    secondaryColor: '#C7D2FE',
+  },
+  arcane_barrage: {
+    action: 'tactical',
+    label: 'Arcane Barrage',
+    kind: 'line',
+    range: 450,
+    aoeRadius: 0,
+    lineWidth: 28,
+    defaultDist: 450,
+    accentColor: '#60A5FA',
+    secondaryColor: '#BFDBFE',
+  },
+};
+
 export function getAbilityTargetSpec(
   heroClass: HeroClassId,
-  action: AimableAction
+  action: AimableAction,
+  equippedScrollId?: ArcanistScrollId | null
 ): AbilityTargetSpec {
   if (action === 'dash') return DASH_TARGET_SPEC;
+  if (heroClass === 'arcanist' && action === 'tactical' && equippedScrollId) {
+    const scrollSpec = ARCANIST_SCROLL_TARGET_SPECS[equippedScrollId];
+    if (scrollSpec) return scrollSpec;
+  }
   return CLASS_ABILITY_SPECS[heroClass][action];
 }
 

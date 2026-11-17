@@ -1317,6 +1317,14 @@ async function startServer() {
           });
           broadcastRoomList();
         }
+      } else if (msg.type === 'player:channel_start') {
+        room.startDisintegrationChannel(acc.id, msg.aimAngle);
+      } else if (msg.type === 'player:channel_update') {
+        room.updateDisintegrationTarget(acc.id, msg.aimAngle);
+      } else if (msg.type === 'player:channel_stop') {
+        room.stopDisintegrationChannel(acc.id);
+      } else if (msg.type === 'player:select_scroll') {
+        room.selectArcanistScroll(acc.id, msg.scrollId);
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
         acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];
@@ -1373,6 +1381,13 @@ async function startServer() {
         if (acc.isAdmin) {
           const isSpeed = room.togglePlayerSpeedBoost(acc.id, msg.enabled);
           room.pushSystemChat(`[ADMIN] Speed Boost ${isSpeed ? 'ENABLED' : 'DISABLED'} for ${acc.username}`);
+        } else {
+          sendJson(ws, { type: 'error', message: 'Admin access required.' });
+        }
+      } else if (msg.type === 'admin:toggle_no_cooldown') {
+        if (acc.isAdmin) {
+          const isNoCd = room.togglePlayerNoCooldown(acc.id, msg.enabled);
+          room.pushSystemChat(`[ADMIN] No Cooldown Mode ${isNoCd ? 'ENABLED' : 'DISABLED'} for ${acc.username}`);
         } else {
           sendJson(ws, { type: 'error', message: 'Admin access required.' });
         }

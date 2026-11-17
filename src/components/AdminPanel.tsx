@@ -130,9 +130,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               {/* Toggles */}
               <div>
                 <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                  Invincibility & Movement Enhancements
+                  Invincibility &amp; Combat Enhancements
                 </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     type="button"
                     onClick={() =>
@@ -141,28 +141,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         enabled: !me.godMode,
                       })
                     }
-                    className={`p-3.5 stone-plaque text-left flex items-center justify-between gap-3 border transition-all cursor-pointer ${
+                    className={`p-3.5 stone-plaque text-left flex flex-col justify-between gap-2 border transition-all cursor-pointer ${
                       me.godMode
                         ? 'border-[#FACC15] bg-[#423a1a]'
                         : 'border-[#383548] hover:border-[#D9AA52]/60'
                     }`}
                   >
                     <div>
-                      <div className={`font-display font-bold text-sm flex items-center gap-1.5 ${me.godMode ? 'text-[#FCD34D]' : 'text-[#A19FAF]'}`}>
-                        <span>God Mode (Invincible)</span>
+                      <div className={`font-display font-bold text-sm flex items-center justify-between ${me.godMode ? 'text-[#FCD34D]' : 'text-[#A19FAF]'}`}>
+                        <span>God Mode</span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 border ${
+                          me.godMode
+                            ? 'bg-[#FACC15] text-[#111219] border-[#85632e]'
+                            : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
+                        }`}>
+                          {me.godMode ? 'ON' : 'OFF'}
+                        </span>
                       </div>
-                      <p className="text-[11px] text-[#A19FAF] mt-0.5">
-                        Absorbs 100% of all incoming physical & elemental damage.
+                      <p className="text-[11px] text-[#A19FAF] mt-1">
+                        100% damage absorption against all attacks.
                       </p>
-                    </div>
-                    <div
-                      className={`text-[10px] font-mono font-bold px-2.5 py-1 border shrink-0 ${
-                        me.godMode
-                          ? 'bg-[#FACC15] text-[#111219] border-[#85632e]'
-                          : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
-                      }`}
-                    >
-                      {me.godMode ? 'ACTIVE' : 'OFF'}
                     </div>
                   </button>
 
@@ -174,28 +172,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         enabled: !me.speedBoost,
                       })
                     }
-                    className={`p-3.5 stone-plaque text-left flex items-center justify-between gap-3 border transition-all cursor-pointer ${
+                    className={`p-3.5 stone-plaque text-left flex flex-col justify-between gap-2 border transition-all cursor-pointer ${
                       me.speedBoost
                         ? 'border-[#34D399] bg-[#1a3325]'
                         : 'border-[#383548] hover:border-[#D9AA52]/60'
                     }`}
                   >
                     <div>
-                      <div className={`font-display font-bold text-sm flex items-center gap-1.5 ${me.speedBoost ? 'text-[#34D399]' : 'text-[#A19FAF]'}`}>
-                        <span>Swiftness (+80% Speed)</span>
+                      <div className={`font-display font-bold text-sm flex items-center justify-between ${me.speedBoost ? 'text-[#34D399]' : 'text-[#A19FAF]'}`}>
+                        <span>Swiftness</span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 border ${
+                          me.speedBoost
+                            ? 'bg-[#34D399] text-[#111219] border-[#14532d]'
+                            : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
+                        }`}>
+                          {me.speedBoost ? 'ON' : 'OFF'}
+                        </span>
                       </div>
-                      <p className="text-[11px] text-[#A19FAF] mt-0.5">
-                        Massively increases movement velocity across all floor biomes.
+                      <p className="text-[11px] text-[#A19FAF] mt-1">
+                        +80% movement velocity boost.
                       </p>
                     </div>
-                    <div
-                      className={`text-[10px] font-mono font-bold px-2.5 py-1 border shrink-0 ${
-                        me.speedBoost
-                          ? 'bg-[#34D399] text-[#111219] border-[#14532d]'
-                          : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
-                      }`}
-                    >
-                      {me.speedBoost ? 'ACTIVE' : 'OFF'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleCommand({
+                        type: 'admin:toggle_no_cooldown',
+                        enabled: !me.noCooldownMode,
+                      })
+                    }
+                    className={`p-3.5 stone-plaque text-left flex flex-col justify-between gap-2 border transition-all cursor-pointer ${
+                      me.noCooldownMode
+                        ? 'border-[#38BDF8] bg-[#17303f]'
+                        : 'border-[#383548] hover:border-[#D9AA52]/60'
+                    }`}
+                  >
+                    <div>
+                      <div className={`font-display font-bold text-sm flex items-center justify-between ${me.noCooldownMode ? 'text-[#38BDF8]' : 'text-[#A19FAF]'}`}>
+                        <span>No Cooldown</span>
+                        <span className={`text-[9px] font-mono font-bold px-2 py-0.5 border ${
+                          me.noCooldownMode
+                            ? 'bg-[#38BDF8] text-[#111219] border-[#0369a1]'
+                            : 'bg-[#252332] text-[#A19FAF] border-[#383548]'
+                        }`}>
+                          {me.noCooldownMode ? 'ON' : 'OFF'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#A19FAF] mt-1">
+                        Zero cooldowns on all skills &amp; dashes.
+                      </p>
                     </div>
                   </button>
                 </div>

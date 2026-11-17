@@ -1,3 +1,10 @@
+import type {
+  ArcanistCastState,
+  ArcanistScrollId,
+  ArcanistSpellId,
+  DisintegrationChannelState,
+} from './arcanist.ts';
+
 export type HeroClassId = 'vanguard' | 'ranger' | 'arcanist' | 'cleric';
 
 export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
@@ -188,11 +195,11 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     stats: { survivability: 2, damage: 5, range: 4, mobility: 3, utility: 4 },
     resistances: { physical: 0.05, fire: 0.25, frost: 0.35, lightning: 0.45, poison: 0.15, bleed: 0.10 },
     tacticalName: 'Astral Nova',
-    tacticalDesc: 'Unleash 8 piercing arcane shards in a starburst, knocking back surrounding monsters with void energy.',
+    tacticalDesc: 'Unleash 8 piercing arcane shards in a starburst. Ancient Scrolls (Fireball, Disintegration, Frost Lance, Chain Lightning, Arcane Meteor, Arcane Orb, Arcane Barrage) replace this Tactical Skill.',
     tacticalCooldownMs: 5000,
     ultName: 'Chrono Well',
-    ultDesc: 'Anchor a cosmic gravitational well that snares enemies, pulling them in while accelerating allied cooldowns by 50%.',
-    ultCooldownMs: 13500,
+    ultDesc: 'Anchor a 3s temporal distortion field that suspends enemies, bosses, allies, and ALL projectiles (including player projectiles) in time while leaving the caster unaffected.',
+    ultCooldownMs: 45000,
   },
   cleric: {
     id: 'cleric',
@@ -470,6 +477,7 @@ export interface PlayerState {
   isAdmin?: boolean;
   godMode?: boolean;
   speedBoost?: boolean;
+  noCooldownMode?: boolean;
   dexterity: number;
   vitality: number;
   strength: number;
@@ -479,6 +487,11 @@ export interface PlayerState {
   statuses: PlayerStatusEffect[];
   floorBlessings?: FloorBlessingId[];
   lastInputSeq?: number;
+  spellCastState?: ArcanistCastState | null;
+  disintegrationState?: DisintegrationChannelState | null;
+  equippedScrollId?: ArcanistScrollId | null;
+  pendingScrollChoices?: ArcanistScrollId[];
+  chronoSuspendedMs?: number;
 }
 
 export type PlayerStatusType =
@@ -556,13 +569,24 @@ export interface EnemyState {
   summonWave?: number;
   shieldWallMs?: number;
   abilityCdMs?: number;
+  chronoSuspendedMs?: number;
 }
 
 export interface ProjectileState {
   id: string;
   ownerType: 'player' | 'enemy';
   ownerId: string;
-  style: 'slash' | 'arrow' | 'arcane' | 'radiant' | 'bone' | 'voidorb' | 'fireball';
+  style:
+    | 'slash'
+    | 'arrow'
+    | 'arcane'
+    | 'radiant'
+    | 'bone'
+    | 'voidorb'
+    | 'fireball'
+    | 'frost_lance'
+    | 'arcane_orb'
+    | 'arcane_barrage';
   x: number;
   y: number;
   vx: number;
@@ -578,6 +602,15 @@ export interface ProjectileState {
   ttlMs: number;
   targetEnemyId?: string;
   hitEntityIds?: string[];
+  chronoSuspendedMs?: number;
+  spellId?: ArcanistSpellId;
+  damageCategory?: DamageCategory;
+  explosionRadius?: number;
+  originX?: number;
+  originY?: number;
+  elapsedMs?: number;
+  helixPhase?: number;
+  helixSign?: number;
 }
 
 export interface PropState {
@@ -615,7 +648,9 @@ export interface FieldZoneState {
     | 'warden_edict'
     | 'warden_parry'
     | 'verdict_combo'
-    | 'warden_shatter';
+    | 'warden_shatter'
+    | 'arcane_meteor'
+    | 'chain_lightning_arc';
   x: number;
   y: number;
   radius: number;
@@ -629,6 +664,9 @@ export interface FieldZoneState {
   ttlMs: number;
   maxTtlMs: number;
   ownerId: string;
+  chronoSuspendedMs?: number;
+  damage?: number;
+  chainPoints?: { x: number; y: number }[];
 }
 
 export interface FloatingEvent {
@@ -803,6 +841,7 @@ export type ClientMessage =
   | { type: 'room:restart' }
   | { type: 'admin:godmode'; enabled?: boolean }
   | { type: 'admin:toggle_speed'; enabled?: boolean }
+  | { type: 'admin:toggle_no_cooldown'; enabled?: boolean }
   | { type: 'admin:add_gold'; amount?: number }
   | { type: 'admin:add_potions'; amount?: number }
   | { type: 'admin:set_level'; level?: number }
@@ -825,6 +864,10 @@ export type ClientMessage =
   | { type: 'player:reset_attributes' }
   | { type: 'player:dialogue_close' }
   | { type: 'player:dialogue_pick'; optionId: string }
+  | { type: 'player:channel_start'; aimAngle: number; spellId?: 'disintegration' }
+  | { type: 'player:channel_update'; aimAngle: number }
+  | { type: 'player:channel_stop' }
+  | { type: 'player:select_scroll'; scrollId: ArcanistScrollId }
   | { type: 'room:resync' }
   | { type: 'ping'; t: number };
 

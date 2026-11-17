@@ -6510,8 +6510,82 @@ export function drawEnhancedProjectile(
     ctx.fillRect(-4, -4, 8, 8);
     ctx.fillStyle = '#C084FC';
     ctx.fillRect(-2, -2, 4, 4);
+    // Black hole center
     ctx.fillStyle = '#0F172A';
-    ctx.fillRect(-1, -1, 2, 2); // Black hole center
+    ctx.fillRect(-1, -1, 2, 2);
+
+  } else if (proj.style === 'frost_lance') {
+    // Crystalline piercing spearhead with icy trail
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+    ctx.fillRect(-18, -5, 36, 10);
+    ctx.fillStyle = '#0284C7';
+    ctx.beginPath();
+    ctx.moveTo(18, 0);
+    ctx.lineTo(2, -6);
+    ctx.lineTo(-14, -2);
+    ctx.lineTo(-14, 2);
+    ctx.lineTo(2, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#BAE6FD';
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(3, -3.5);
+    ctx.lineTo(-10, 0);
+    ctx.lineTo(3, 3.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(-6, -1, 18, 2);
+
+  } else if (proj.style === 'arcane_orb') {
+    // Persistent floating cosmic energy sphere with orbiting rune arcs
+    const r = Math.max(14, proj.radius || 22);
+    const spin = now * 0.004;
+    const orbGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
+    orbGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+    orbGrad.addColorStop(0.35, 'rgba(192, 132, 252, 0.85)');
+    orbGrad.addColorStop(0.75, 'rgba(99, 102, 241, 0.55)');
+    orbGrad.addColorStop(1, 'rgba(56, 189, 248, 0.08)');
+    ctx.fillStyle = orbGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.rotate(spin);
+    ctx.strokeStyle = 'rgba(165, 180, 252, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 1.25);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, Math.PI, Math.PI * 2.25);
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+  } else if (proj.style === 'arcane_barrage') {
+    // Helix weaving arcane bolt
+    ctx.fillStyle = 'rgba(232, 121, 249, 0.35)';
+    ctx.beginPath();
+    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#C084FC';
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-4, -4);
+    ctx.lineTo(-8, 0);
+    ctx.lineTo(-4, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(-3, -1.5, 8, 3);
 
   } else {
     // Fireball: Molten core with blazing outer flames
@@ -6535,6 +6609,15 @@ export function drawEnhancedProjectile(
     ctx.fillRect(-11, -2 + flicker, 4, 4);
     ctx.fillStyle = '#EF4444';
     ctx.fillRect(-14, -1 - flicker, 3, 2);
+  }
+
+  if ((proj.chronoSuspendedMs || 0) > 0) {
+    ctx.rotate(-proj.angle);
+    ctx.strokeStyle = 'rgba(125, 211, 252, 0.95)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, 0, Math.max(10, proj.radius + 3), 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   ctx.restore();

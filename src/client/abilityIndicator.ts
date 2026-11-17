@@ -5,6 +5,7 @@ import {
   simulateDashEndpoint,
   type AbilityAimState,
 } from '../shared/abilityTargeting.ts';
+import { distancePointToSegment } from '../shared/arcanist.ts';
 import type {
   DungeonMap,
   GameSnapshot,
@@ -49,7 +50,7 @@ export function drawAbilityTargetingIndicator(
   aim: AbilityAimState,
   now: number
 ): void {
-  const spec = getAbilityTargetSpec(player.heroClass, aim.action);
+  const spec = getAbilityTargetSpec(player.heroClass, aim.action, player.equippedScrollId);
   const cancelled = aim.cancelled;
   const primary = cancelled ? '#EF4444' : spec.accentColor;
   const secondary = cancelled
@@ -465,6 +466,68 @@ export function drawAbilityTargetingIndicator(
         if (Math.hypot(en.x - playerX, en.y - playerY) <= spec.aoeRadius) {
           drawTargetBracket(ctx, en.x, en.y, en.radius, secondary, now);
         }
+      }
+    }
+  } else if (spec.kind === 'line') {
+    const lineLen = spec.range;
+    const halfW = (spec.lineWidth ?? 20) / 2;
+
+    ctx.save();
+    ctx.translate(playerX, playerY);
+    ctx.rotate(aim.aimAngle);
+
+    ctx.fillStyle = hexToRgba(primary, 0.16 * pulse);
+    ctx.fillRect(14, -halfW, Math.max(20, lineLen - 14), halfW * 2);
+
+    ctx.strokeStyle = hexToRgba(primary, 0.85);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(14, -halfW);
+    ctx.lineTo(lineLen, -halfW);
+    ctx.moveTo(14, halfW);
+    ctx.lineTo(lineLen, halfW);
+    ctx.stroke();
+
+    ctx.setLineDash([7, 5]);
+    ctx.strokeStyle = hexToRgba(secondary, 0.9);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(14, 0);
+    ctx.lineTo(lineLen, 0);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const step = 36;
+    const offset = (now * 0.08) % step;
+    ctx.strokeStyle = hexToRgba(secondary, 0.9);
+    ctx.lineWidth = 2;
+    for (let d = 24 + offset; d < lineLen - 10; d += step) {
+      ctx.beginPath();
+      ctx.moveTo(d - 5, -5);
+      ctx.lineTo(d, 0);
+      ctx.lineTo(d - 5, 5);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    const endX = playerX + Math.cos(aim.aimAngle) * lineLen;
+    const endY = playerY + Math.sin(aim.aimAngle) * lineLen;
+
+    if (spec.aoeRadius > 24 && player.equippedScrollId === 'fireball') {
+      ctx.strokeStyle = hexToRgba(primary, 0.78);
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.arc(endX, endY, spec.aoeRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    for (const en of snap.enemies) {
+      if (en.hp <= 0) continue;
+      if (distancePointToSegment(en.x, en.y, playerX, playerY, endX, endY) <= halfW + en.radius) {
+        drawTargetBracket(ctx, en.x, en.y, en.radius, secondary, now);
       }
     }
   }

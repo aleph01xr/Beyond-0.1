@@ -6573,6 +6573,713 @@ async function runRegressionTests() {
     assert.strictEqual(player.attributePoints, 0, 'Attribute points must be 0 after MAX spend');
   });
 
+  // Helper: carve a deterministic walkable arena patch on a test room map
+  function carveOpenArena(room: GameRoom, centerTileX: number, centerTileY: number, halfTiles = 18): { x: number; y: number } {
+    for (let ty = Math.max(1, centerTileY - halfTiles); ty <= Math.min(room.map.height - 2, centerTileY + halfTiles); ty++) {
+      for (let tx = Math.max(1, centerTileX - halfTiles); tx <= Math.min(room.map.width - 2, centerTileX + halfTiles); tx++) {
+        room.map.tiles[ty * room.map.width + tx] = 1;
+      }
+    }
+    room.props = [];
+    for (const r of room.map.rooms) {
+      r.cleared = true;
+    }
+    return {
+      x: centerTileX * TILE_SIZE + TILE_SIZE / 2,
+      y: centerTileY * TILE_SIZE + TILE_SIZE / 2,
+    };
+  }
+
+  function makeNeutralDummyEnemy(
+    id: string,
+    x: number,
+    y: number,
+    hp = 5000,
+    opts?: { kind?: 'skeleton' | 'knight' | 'boss' }
+  ): EnemyState {
+    return {
+      id,
+      kind: opts?.kind ?? 'skeleton',
+      name: `Dummy ${id}`,
+      roomId: 0,
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      hp,
+      maxHp: hp,
+      radius: 16,
+      state: 'idle',
+      windupMs: 0,
+      targetX: x,
+      targetY: y,
+      markedMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
+      elite: false,
+      resistances: { physical: 0, fire: 0, frost: 0, lightning: 0, arcane: 0, divine: 0, poison: 0, bleed: 0, tenacity: 0 },
+    };
+  }
+
+  // --- Test 97: Arcanist Default Astral Nova + 7 Spell Scrolls, Cooldowns, INT Scaling & Hit Limits ---
+  await test('97. Arcanist Spells: Astral Nova default + all 7 Spell Scrolls replace [Q], enforce CDs, INT scaling, and hit limits', async () => {
+    const {
+      ARCANIST_SPELL_ORDER,
+      ARCANIST_SPELLS,
+      computeArcanistSpellDamage,
+    } = await import('./src/shared/arcanist.ts');
+
+    const room = new GameRoom({
+      roomId: 'R_ARC_SPELLS_97',
+      name: 'Arcanist Spell Range',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9701,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 20);
+
+    // Zero INT / Lv1 caster for exact base cooldown & base damage check
+    const arc0 = room.addOrReconnectPlayer('arc0', 'NoviceArc', 'arcanist', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    arc0.x = origin.x;
+    arc0.y = origin.y;
+
+    // 0) Default [Q] without Scroll = Astral Nova (8-way burst, 5000ms CD)
+    assert.strictEqual(arc0.equippedScrollId || null, null, 'Arcanist must start with no Scroll equipped (Astral Nova default)');
+    room.performAction(arc0.id, 'tactical', 0, { aimDistance: 120, explicitAim: true });
+    assert.strictEqual(room.projectiles.length, 8, 'Default Astral Nova [Q] must fire 8 radial projectiles');
+    assert.strictEqual(arc0.skillCooldownMs, HERO_CLASSES.arcanist.tacticalCooldownMs, 'Astral Nova must start 5000ms tactical CD');
+    room.projectiles = [];
+    arc0.skillCooldownMs = 0;
+
+    // 1) All 7 Spell Scrolls equip onto [Q], activate via tactical action, and enforce exact CDs
+    for (const spellId of ARCANIST_SPELL_ORDER) {
+      const spec = ARCANIST_SPELLS[spellId];
+      arc0.pendingScrollChoices = [spellId];
+      room.selectArcanistScroll(arc0.id, spellId);
+      assert.strictEqual(arc0.equippedScrollId, spellId, `Must equip ${spellId} Scroll onto [Q]`);
+      arc0.skillCooldownMs = 0;
+
+      if (spellId === 'chain_lightning') {
+        // Without a target in range, Chain Lightning fails gracefully without wasting cooldown
+        room.performAction(arc0.id, 'tactical', 0, { aimDistance: 180, explicitAim: true });
+        assert.strictEqual(arc0.skillCooldownMs, 0, 'Chain Lightning must preserve cooldown when no target is in range');
+        const t1 = makeNeutralDummyEnemy('cl_target', origin.x + 120, origin.y, 1000);
+        room.enemies.push(t1);
+      }
+
+      room.performAction(arc0.id, 'tactical', 0, { aimDistance: 180, explicitAim: true });
+      if (spellId === 'disintegration') {
+        assert.strictEqual(arc0.disintegrationState?.active, true, 'Disintegration Scroll must enter active channel on [Q]');
+        assert.strictEqual(arc0.skillCooldownMs, 0, 'Disintegration cooldown must NOT start while channeling');
+        room.stopDisintegrationChannel(arc0.id);
+      } else if (spec.castTimeMs > 0) {
+        assert.ok(arc0.spellCastState && arc0.spellCastState.spellId === spellId, `${spellId} must enter cast state`);
+        for (let step = 0; step < Math.ceil(spec.castTimeMs / 25); step++) {
+          room.tick(25);
+        }
+      }
+      assert.strictEqual(
+        arc0.skillCooldownMs,
+        spec.cooldownMs,
+        `${spellId} must start exact ${spec.cooldownMs}ms tactical cooldown (0 INT/CDR)`
+      );
+      assert.strictEqual(
+        arc0.maxSkillCooldownMs,
+        spec.cooldownMs,
+        `${spellId} maxSkillCooldownMs must reflect ${spec.cooldownMs}ms`
+      );
+      // Attempting recast while on cooldown must not fire extra projectiles/zones
+      const prevProjCount = room.projectiles.length;
+      const prevZoneCount = room.zones.length;
+      room.performAction(arc0.id, 'tactical', 0, { aimDistance: 180, explicitAim: true });
+      assert.strictEqual(room.projectiles.length, prevProjCount, `${spellId} must not spawn projectiles while on cooldown`);
+      assert.strictEqual(room.zones.length, prevZoneCount, `${spellId} must not spawn zones while on cooldown`);
+
+      room.enemies = [];
+      room.projectiles = [];
+      room.zones = [];
+      arc0.skillCooldownMs = 0;
+      arc0.spellCastState = null;
+    }
+
+    // Single-application INT scaling verification (Lv25, 60 INT, Sunfire Signet, 2 Fury stacks)
+    const arc25 = room.addOrReconnectPlayer('arc25', 'Archmage', 'arcanist', false, {
+      level: 25, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 60, faith: 0, attributePoints: 0,
+    });
+    arc25.x = origin.x;
+    arc25.y = origin.y;
+    arc25.relics = ['sunfire_signet'];
+    arc25.floorBlessings = ['fury', 'fury'];
+
+    // D = 42 * (1 + 0.025 * 24) * (1 + 0.01 * 60) * 1.12 * 1.12 = 42 * 1.6 * 1.6 * 1.2544 = 134.87 -> 135
+    const expectedFireball = computeArcanistSpellDamage(
+      ARCANIST_SPELLS.fireball.baseDamage,
+      { level: 25, intelligence: 60, relics: ['sunfire_signet'], furyStacks: 2 },
+      ARCANIST_SPELLS.fireball.intCoeff
+    );
+    assert.strictEqual(expectedFireball, 135, 'Single-application Fireball INT formula must yield 135 (no double-dip)');
+
+    const equipAndCast = (spellId: (typeof ARCANIST_SPELL_ORDER)[number], aimDistance: number) => {
+      arc25.pendingScrollChoices = [spellId];
+      room.selectArcanistScroll(arc25.id, spellId);
+      arc25.skillCooldownMs = 0;
+      arc25.spellCastState = null;
+      room.performAction(arc25.id, 'tactical', 0, { aimDistance, explicitAim: true });
+    };
+
+    // 1) Fireball: 90u AoE, no burn DoT
+    const fbDirect = makeNeutralDummyEnemy('fb_1', origin.x + 160, origin.y, 2000);
+    const fbSplashIn = makeNeutralDummyEnemy('fb_2', origin.x + 225, origin.y + 10, 2000); // ~66u away (<90u)
+    const fbOut = makeNeutralDummyEnemy('fb_3', origin.x + 280, origin.y, 2000); // 120u away (>90u)
+    room.enemies.push(fbDirect, fbSplashIn, fbOut);
+    equipAndCast('fireball', 180);
+    for (let i = 0; i < 45; i++) room.tick(25);
+    assert.ok(fbDirect.hp < 2000, 'Fireball direct enemy must take damage');
+    assert.ok(fbSplashIn.hp < 2000, 'Fireball 90u AoE must hit splash enemy within radius');
+    assert.strictEqual(fbOut.hp, 2000, 'Fireball must NOT hit enemies outside 90u AoE');
+    assert.strictEqual(fbDirect.burnedMs, 0, 'Fireball must NOT apply Burn DoT');
+
+    room.enemies = [];
+    room.projectiles = [];
+    room.zones = [];
+
+    // 2) Frost Lance (Ice Lance): 3-pierce straight line, no freeze
+    const flEnemies = [
+      makeNeutralDummyEnemy('fl_1', origin.x + 80, origin.y, 2000),
+      makeNeutralDummyEnemy('fl_2', origin.x + 140, origin.y, 2000),
+      makeNeutralDummyEnemy('fl_3', origin.x + 200, origin.y, 2000),
+      makeNeutralDummyEnemy('fl_4', origin.x + 260, origin.y, 2000),
+    ];
+    room.enemies.push(...flEnemies);
+    equipAndCast('frost_lance', 300);
+    for (let i = 0; i < 50; i++) room.tick(25);
+    assert.ok(flEnemies[0].hp < 2000 && flEnemies[1].hp < 2000 && flEnemies[2].hp < 2000, 'Frost Lance must pierce up to 3 enemies');
+    assert.strictEqual(flEnemies[3].hp, 2000, 'Frost Lance must stop after 3 hits and NOT hit 4th enemy');
+    assert.strictEqual(flEnemies[0].frozenMs, 0, 'Frost Lance must NOT apply freeze status');
+
+    room.enemies = [];
+    room.projectiles = [];
+    room.zones = [];
+
+    // 3) Chain Lightning: max 4 targets, 150u max jump, -15% decay per jump, no repeats
+    const cl1 = makeNeutralDummyEnemy('cl1', origin.x + 100, origin.y, 5000);
+    const cl2 = makeNeutralDummyEnemy('cl2', origin.x + 210, origin.y, 5000); // 110u jump
+    const cl3 = makeNeutralDummyEnemy('cl3', origin.x + 320, origin.y, 5000); // 110u jump
+    const cl4 = makeNeutralDummyEnemy('cl4', origin.x + 430, origin.y, 5000); // 110u jump
+    const cl5 = makeNeutralDummyEnemy('cl5', origin.x + 480, origin.y, 5000); // 5th target (>4 max)
+    const clFar = makeNeutralDummyEnemy('clFar', origin.x + 100, origin.y + 220, 5000); // >150u away
+    room.enemies.push(cl1, cl2, cl3, cl4, cl5, clFar);
+    equipAndCast('chain_lightning', 100);
+    assert.ok(cl1.hp < 5000 && cl2.hp < 5000 && cl3.hp < 5000 && cl4.hp < 5000, 'Chain Lightning must hit 4 chained targets');
+    assert.strictEqual(cl5.hp, 5000, 'Chain Lightning must NOT exceed 4 targets');
+    assert.strictEqual(clFar.hp, 5000, 'Chain Lightning must NOT jump >150u');
+    const d1 = 5000 - cl1.hp;
+    const d2 = 5000 - cl2.hp;
+    assert.ok(d2 < d1, `Jump 2 damage (${d2}) must decay ~15% from jump 1 (${d1})`);
+    assert.ok(room.zones.some((z) => z.kind === 'chain_lightning_arc' && (z.chainPoints?.length || 0) === 5), 'Chain Lightning arc zone must record player + 4 targets');
+
+    room.enemies = [];
+    room.zones = [];
+
+    // 4) Arcane Meteor: 0.5s cast + 1.0s delay + 125u AoE, no DoT
+    const metIn = makeNeutralDummyEnemy('met_in', origin.x + 180, origin.y, 5000);
+    const metOut = makeNeutralDummyEnemy('met_out', origin.x + 330, origin.y, 5000); // 150u from target (>125u)
+    room.enemies.push(metIn, metOut);
+    equipAndCast('arcane_meteor', 180);
+    for (let i = 0; i < 20; i++) room.tick(25); // 500ms cast completes
+    assert.ok(room.zones.some((z) => z.kind === 'arcane_meteor'), 'Arcane Meteor must spawn ground warning zone after 0.5s cast');
+    assert.strictEqual(metIn.hp, 5000, 'Arcane Meteor must NOT deal damage before 1.0s delay');
+    for (let i = 0; i < 42; i++) room.tick(25); // +1050ms delay completes
+    assert.ok(metIn.hp < 5000, 'Arcane Meteor must deal heavy AoE damage on impact');
+    assert.strictEqual(metOut.hp, 5000, 'Arcane Meteor must NOT damage targets outside 125u AoE');
+    assert.strictEqual(metIn.burnedMs, 0, 'Arcane Meteor must NOT leave Burn DoT');
+
+    room.enemies = [];
+    room.zones = [];
+    room.projectiles = [];
+
+    // 5) Arcane Orb: 4s duration, 0.5s tick interval, max 2 hits per enemy, persists through enemies
+    const orbHitCounts = new Map<string, number>();
+    const orbVictim = makeNeutralDummyEnemy('orb_v1', origin.x + 65, origin.y, 5000);
+    const orbSecond = makeNeutralDummyEnemy('orb_v2', origin.x + 140, origin.y, 5000);
+    room.enemies.push(orbVictim, orbSecond);
+    equipAndCast('arcane_orb', 200);
+    let prevHp = orbVictim.hp;
+    let hitsOnVictim = 0;
+    for (let step = 0; step < 80; step++) {
+      room.tick(25);
+      if (orbVictim.hp < prevHp) {
+        hitsOnVictim++;
+        prevHp = orbVictim.hp;
+      }
+      if (orbSecond.hp < 5000 && !orbHitCounts.has('second')) {
+        orbHitCounts.set('second', 1);
+      }
+    }
+    assert.ok(hitsOnVictim >= 1 && hitsOnVictim <= 2, `Arcane Orb must cap at max 2 hits per enemy (got ${hitsOnVictim})`);
+    assert.ok(orbHitCounts.has('second'), 'Arcane Orb must persist through enemies to hit further targets');
+
+    room.enemies = [];
+    room.projectiles = [];
+
+    // 6) Arcane Barrage: 6 helix projectiles, 450u max range, multiple bolts can hit same target
+    const barTarget = makeNeutralDummyEnemy('bar_t1', origin.x + 160, origin.y, 5000);
+    barTarget.radius = 28;
+    room.enemies.push(barTarget);
+    equipAndCast('arcane_barrage', 300);
+    const spawnedBolts = room.projectiles.filter((pr) => pr.spellId === 'arcane_barrage');
+    assert.strictEqual(spawnedBolts.length, 6, 'Arcane Barrage must spawn 6 helix projectiles');
+    let barrageDamageTicks = 0;
+    let barPrevHp = barTarget.hp;
+    for (let step = 0; step < 50; step++) {
+      room.tick(25);
+      if (barTarget.hp < barPrevHp) {
+        barrageDamageTicks++;
+        barPrevHp = barTarget.hp;
+      }
+    }
+    assert.ok(barrageDamageTicks >= 2, `Multiple Arcane Barrage bolts must independently hit same large/aligned target (hits=${barrageDamageTicks})`);
+  });
+
+  // --- Test 98: Disintegration Scroll Channeling, Movement Lock, 180 deg/s Turn Cap, 42u/450u Wall-Clip & Interrupts ---
+  await test('98. Disintegration Scroll: requires equipped Scroll, stationary lock, 180deg/s turn cap, 42u/450u clip, & CC/death cooldown', async () => {
+    const room = new GameRoom({
+      roomId: 'R_ARC_BEAM_98',
+      name: 'Disintegration Beam Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9802,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 22);
+
+    const arc = room.addOrReconnectPlayer('arc_beam', 'BeamMage', 'arcanist', false, {
+      level: 10, xp: 0, strength: 0, vitality: 20, dexterity: 0, intelligence: 40, faith: 0, attributePoints: 0,
+    });
+    arc.x = origin.x;
+    arc.y = origin.y;
+
+    // Server must reject Disintegration channel unless the Disintegration Scroll is equipped on [Q]
+    assert.strictEqual(room.startDisintegrationChannel(arc.id, 0), false, 'Disintegration must reject when Scroll is not equipped');
+
+    arc.pendingScrollChoices = ['disintegration'];
+    room.selectArcanistScroll(arc.id, 'disintegration');
+    assert.strictEqual(arc.equippedScrollId, 'disintegration', 'Disintegration Scroll must be equipped on [Q]');
+
+    // Place targets at exact coordinates:
+    // insideBeam: x+160, y+20 (dist 20 <= beamHalfWidth(21) + enemyRadius(16)=37)
+    // outsideWidth: x+160, y+60 (dist 60 > 37)
+    // insideRange: x+430, y (<=450u)
+    // beyondRange: x+500, y (>450u)
+    const inBeam = makeNeutralDummyEnemy('b_in', origin.x + 160, origin.y + 20, 5000);
+    const outWidth = makeNeutralDummyEnemy('b_outW', origin.x + 160, origin.y + 60, 5000);
+    const inRange = makeNeutralDummyEnemy('b_inR', origin.x + 430, origin.y, 5000);
+    const outRange = makeNeutralDummyEnemy('b_outR', origin.x + 500, origin.y, 5000);
+    room.enemies.push(inBeam, outWidth, inRange, outRange);
+
+    assert.strictEqual(room.startDisintegrationChannel(arc.id, 0), true, 'Disintegration channel must start when equipped');
+
+    // Attempt movement while holding channel
+    room.updateInput(arc.id, { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0, stickX: 1, stickY: 0 });
+
+    // Activation delay is 150ms -> first 125ms deals 0 ticks, 200ms after activation deals 1 tick cleanly
+    for (let i = 0; i < 5; i++) room.tick(25); // 125ms
+    assert.strictEqual(inBeam.hp, 5000, 'Disintegration must not tick before 0.15s activation delay');
+    assert.strictEqual(arc.x, origin.x, 'Player movement X must be completely locked while channeling');
+    assert.strictEqual(arc.y, origin.y, 'Player movement Y must be completely locked while channeling');
+
+    // Advance +250ms (total 375ms -> 150ms activation + 225ms => exactly 1 tick at 200ms)
+    for (let i = 0; i < 10; i++) room.tick(25);
+    const expectedTickDmg = 5000 - inBeam.hp;
+    assert.ok(expectedTickDmg > 0, 'Disintegration must deal damage after 0.15s activation + 0.2s tick');
+    assert.strictEqual(outWidth.hp, 5000, 'Enemy outside 42u beam width must take 0 damage');
+    assert.strictEqual(inRange.hp, 5000 - expectedTickDmg, 'Enemy at 430u (<450u range) must be hit by beam');
+    assert.strictEqual(outRange.hp, 5000, 'Enemy beyond 450u max range must NOT be hit');
+
+    // Next 200ms -> exactly 1 additional tick (no duplicate ticks)
+    for (let i = 0; i < 8; i++) room.tick(25);
+    assert.strictEqual(5000 - inBeam.hp, expectedTickDmg * 2, 'Each 0.2s interval must produce exactly 1 tick without duplication');
+
+    // Rotation speed cap: 180 deg/s (Math.PI rad/s). Command instant 180 deg turn (Math.PI).
+    room.updateDisintegrationTarget(arc.id, Math.PI);
+    for (let i = 0; i < 20; i++) room.tick(25); // 500ms -> max ~PI/2 rad turn
+    const angleAfterHalfSec = arc.disintegrationState!.angle;
+    assert.ok(
+      Math.abs(angleAfterHalfSec - Math.PI / 2) < 0.08,
+      `After 500ms turning toward PI at 180deg/s, angle should be ~PI/2 (${angleAfterHalfSec.toFixed(3)})`
+    );
+
+    // Cooldown must NOT start until termination
+    assert.strictEqual(arc.skillCooldownMs, 0, 'Cooldown must not start while channeling');
+    room.stopDisintegrationChannel(arc.id);
+    assert.strictEqual(arc.disintegrationState, null, 'Releasing stops Disintegration immediately');
+    assert.ok(arc.skillCooldownMs > 10000, `Tactical cooldown (${arc.skillCooldownMs}ms) must start only after channel termination`);
+
+    // Wall clipping test
+    arc.skillCooldownMs = 0;
+    const wallTileX = Math.floor((origin.x + 128) / TILE_SIZE);
+    const wallTileY = Math.floor(origin.y / TILE_SIZE);
+    room.map.tiles[wallTileY * room.map.width + wallTileX] = 2; // solid wall ~128u right
+    inRange.hp = 5000;
+    room.startDisintegrationChannel(arc.id, 0);
+    for (let i = 0; i < 16; i++) room.tick(25); // 400ms
+    assert.strictEqual(inRange.hp, 5000, 'Wall must clip Disintegration beam before reaching enemy behind wall');
+    room.map.tiles[wallTileY * room.map.width + wallTileX] = 1;
+
+    // Crowd control (stun) interrupts Disintegration and starts cooldown
+    const chAfterWall = arc.disintegrationState as { active?: boolean } | null;
+    assert.strictEqual(Boolean(chAfterWall?.active), true);
+    arc.stunnedMs = 800;
+    room.tick(25);
+    assert.strictEqual(arc.disintegrationState, null, 'Hard CC stun must immediately interrupt Disintegration');
+    assert.ok(arc.skillCooldownMs > 0, 'CC interruption must trigger post-channel cooldown');
+
+    // Death / downed interrupts Disintegration and starts cooldown
+    arc.stunnedMs = 0;
+    arc.skillCooldownMs = 0;
+    assert.strictEqual(room.startDisintegrationChannel(arc.id, 0), true);
+    arc.downed = true;
+    arc.hp = 0;
+    room.tick(25);
+    assert.strictEqual(arc.disintegrationState, null, 'Downed/death must immediately interrupt Disintegration');
+    assert.ok(arc.skillCooldownMs > 0, 'Downed interruption must trigger post-channel cooldown');
+  });
+
+  // --- Test 99: Spell Scroll Draft RNG, [Q] Replacement, Targeting Specs & Vault/Relic Isolation ---
+  await test('99. Spell Scrolls: draft rolls 3 spells, replaces [Q] Astral Nova, updates targeting specs, & isolates Relics/Vault/Gold', async () => {
+    const {
+      ARCANIST_SCROLLS,
+      ARCANIST_SPELL_ORDER,
+      getArcanistScrollDef,
+    } = await import('./src/shared/arcanist.ts');
+    const { getAbilityTargetSpec } = await import('./src/shared/abilityTargeting.ts');
+
+    assert.deepStrictEqual(
+      ARCANIST_SCROLLS.map((s) => s.id),
+      ARCANIST_SPELL_ORDER,
+      'ARCANIST_SCROLLS must strictly equal the 7 offensive Arcanist spells'
+    );
+
+    const room = new GameRoom({
+      roomId: 'R_ARC_SCROLLS_99',
+      name: 'Scroll Chamber',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9903,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 18);
+
+    const arc = room.addOrReconnectPlayer('arc_scr', 'ScrollMage', 'arcanist', false, {
+      level: 12, xp: 0, strength: 0, vitality: 10, dexterity: 0, intelligence: 30, faith: 0, attributePoints: 0,
+    });
+    arc.x = origin.x;
+    arc.y = origin.y;
+    arc.relics = ['twinstring_charm'];
+    arc.storage = ['sunfire_signet'];
+    arc.gold = 250;
+    arc.potions = 2;
+
+    // RNG draft offers 3 valid choices excluding already-equipped scroll
+    assert.strictEqual(room.grantScrollChoices(arc.id), true, 'grantScrollChoices must succeed for Arcanist');
+    assert.strictEqual(arc.pendingScrollChoices?.length, 3, 'Must roll 3 distinct Spell Scroll choices');
+    for (const choiceId of arc.pendingScrollChoices!) {
+      assert.ok(ARCANIST_SPELL_ORDER.includes(choiceId), `Drafted scroll ${choiceId} must be one of the 7 real spells`);
+    }
+
+    // Default [Q] spec uses Astral Nova self_aoe; equipped Scrolls return accurate line / ground_aoe specs
+    assert.strictEqual(getAbilityTargetSpec('arcanist', 'tactical', null).label, 'Astral Nova');
+
+    for (const scroll of ARCANIST_SCROLLS) {
+      arc.pendingScrollChoices = [scroll.id];
+      room.selectArcanistScroll(arc.id, scroll.id);
+      assert.strictEqual(arc.equippedScrollId, scroll.id, `Must equip ${scroll.id}`);
+      assert.deepStrictEqual(arc.relics, ['twinstring_charm'], 'Scroll inscription must never alter Relics');
+      assert.deepStrictEqual(arc.storage, ['sunfire_signet'], 'Scroll inscription must never alter Vault storage');
+      assert.strictEqual(arc.gold, 250, 'Scroll must never alter Gold');
+      assert.strictEqual(arc.potions, 2, 'Scroll must never alter Potions');
+      assert.strictEqual(
+        arc.maxSkillCooldownMs,
+        Math.round(scroll.cooldownMs * (1 - 30 * 0.002)),
+        `${scroll.id} must update [Q] tactical max CD`
+      );
+      assert.ok(getArcanistScrollDef(arc.equippedScrollId), 'Equipped scroll helper must resolve cleanly');
+
+      const spec = getAbilityTargetSpec('arcanist', 'tactical', scroll.id);
+      if (scroll.id === 'arcane_meteor') {
+        assert.strictEqual(spec.kind, 'ground_aoe', `${scroll.id} must use ground_aoe targeting preview`);
+      } else {
+        assert.strictEqual(spec.kind, 'line', `${scroll.id} must use line targeting preview`);
+      }
+
+      // Subsequent RNG draft excludes currently equipped scroll
+      assert.strictEqual(room.grantScrollChoices(arc.id), true);
+      assert.strictEqual(arc.pendingScrollChoices!.includes(scroll.id), false, 'RNG draft must not re-offer currently equipped scroll');
+      arc.pendingScrollChoices = [];
+    }
+  });
+
+  // --- Test 100: Chrono Well Time Suspension, Bosses/Allies/ALL Projectiles (Including Caster's)/Zones & Clean Resumption ---
+  await test('100. Chrono Well: suspends bosses, allies, zones, AND ALL projectiles including caster/player projectiles, exempting caster player', async () => {
+    const room = new GameRoom({
+      roomId: 'R_ARC_CHRONO_100',
+      name: 'Chrono Sanctuary',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10004,
+      initialFloor: 10, // Floor 10 boss Oriphiel (high CC resistance / tenacity)
+    });
+    room.status = 'playing';
+    const origin = carveOpenArena(room, 25, 25, 20);
+
+    const p1 = room.addOrReconnectPlayer('arc_chrono1', 'ChronoMaster', 'arcanist', false, {
+      level: 30, xp: 0, strength: 0, vitality: 20, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    const p2 = room.addOrReconnectPlayer('ally_cleric', 'FrozenCleric', 'cleric', false, {
+      level: 30, xp: 0, strength: 0, vitality: 20, dexterity: 0, intelligence: 0, faith: 40, attributePoints: 0,
+    });
+    p1.x = origin.x;
+    p1.y = origin.y;
+    p2.x = origin.x + 50;
+    p2.y = origin.y;
+
+    // Position boss inside 115u Chrono Well radius
+    const boss = room.enemies.find((e) => e.kind === 'boss')!;
+    boss.x = origin.x + 80;
+    boss.y = origin.y;
+    boss.windupMs = 700;
+
+    // Enemy projectile, Ally projectile, AND Caster's OWN projectile inside well
+    const enemyProj = room.spawnProjectile({
+      ownerType: 'enemy',
+      ownerId: boss.id,
+      style: 'fireball',
+      x: origin.x + 40,
+      y: origin.y + 30,
+      vx: 200,
+      vy: 0,
+      angle: 0,
+      radius: 8,
+      damage: 25,
+      pierce: 1,
+      ttlMs: 2500,
+    });
+    const allyProj = room.spawnProjectile({
+      ownerType: 'player',
+      ownerId: p2.id,
+      style: 'radiant',
+      x: origin.x + 40,
+      y: origin.y - 30,
+      vx: 200,
+      vy: 0,
+      angle: 0,
+      radius: 8,
+      damage: 20,
+      pierce: 1,
+      ttlMs: 2500,
+    });
+    room.zones.push({
+      id: 'z_boss_suspend',
+      kind: 'warden_edict',
+      x: origin.x + 70,
+      y: origin.y,
+      radius: 80,
+      quadrant: 0,
+      ttlMs: 1200,
+      maxTtlMs: 1200,
+      ownerId: boss.id,
+    });
+
+    // Cast Chrono Well centered on caster (check 45000ms CD base on 0-INT caster)
+    assert.strictEqual(HERO_CLASSES.arcanist.ultCooldownMs, 45000, 'Arcanist ultCooldownMs must be 45000ms');
+    p1.ultCooldownMs = 0;
+    room.performAction(p1.id, 'ult', 0, { aimDistance: 0, explicitAim: true });
+    assert.strictEqual(p1.ultCooldownMs, 45000, 'Chrono Well must enforce exact 45s cooldown');
+
+    const well = room.zones.find((z) => z.kind === 'chrono_well');
+    assert.ok(well && well.radius === 115 && well.ttlMs === 3000, 'Chrono Well zone must spawn with 115u radius and 3000ms duration');
+
+    // Caster fires Frost Lance & Arcane Barrage inside OWN Chrono Well — caster's own projectiles MUST also freeze inside Chrono Well!
+    p1.pendingScrollChoices = ['arcane_barrage'];
+    room.selectArcanistScroll(p1.id, 'arcane_barrage');
+    p1.skillCooldownMs = 0;
+    room.performAction(p1.id, 'tactical', 0, { aimDistance: 200, explicitAim: true });
+    const casterProj = room.projectiles.find((pr) => pr.ownerId === p1.id && pr.spellId === 'arcane_barrage')!;
+    assert.ok(casterProj, 'Caster must be able to fire Spell Scroll projectiles while standing inside own Chrono Well');
+    assert.ok((casterProj.chronoSuspendedMs || 0) > 0, 'Caster own projectile spawned inside Chrono Well must be immediately suspended');
+
+    // Step 500ms: ALL entities & ALL projectiles inside well suspend EXCEPT caster player entity
+    const bossStartX = boss.x;
+    const bossStartY = boss.y;
+    const bossStartWindup = boss.windupMs;
+    const p2StartX = p2.x;
+    const enemyProjStartX = enemyProj.x;
+    const allyProjStartX = allyProj.x;
+    const casterProjStartX = casterProj.x;
+    const casterProjStartTtl = casterProj.ttlMs;
+    room.updateInput(p2.id, { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0, stickX: 1, stickY: 0 });
+    room.updateInput(p1.id, { up: false, down: false, left: true, right: false, attack: false, aimAngle: Math.PI, stickX: -1, stickY: 0 });
+
+    for (let i = 0; i < 20; i++) room.tick(25); // 500ms elapsed inside 3000ms Chrono Well
+
+    assert.strictEqual(p1.chronoSuspendedMs || 0, 0, 'Chrono Well caster player entity must remain unaffected');
+    assert.ok(p1.x < origin.x - 10, 'Caster must move freely inside own Chrono Well');
+    assert.ok((p2.chronoSuspendedMs || 0) > 0, 'Ally inside Chrono Well must be suspended');
+    assert.strictEqual(p2.x, p2StartX, 'Suspended ally must not move while inside Chrono Well');
+    assert.ok((boss.chronoSuspendedMs || 0) > 0, 'Floor 10 boss must be suspended inside Chrono Well');
+    assert.strictEqual(boss.x, bossStartX, 'Suspended boss X must remain frozen');
+    assert.strictEqual(boss.y, bossStartY, 'Suspended boss Y must remain frozen');
+    assert.strictEqual(boss.windupMs, bossStartWindup, 'Suspended boss windup must pause without resetting');
+    assert.ok((enemyProj.chronoSuspendedMs || 0) > 0 && enemyProj.x === enemyProjStartX, 'Enemy projectile must freeze in Chrono Well');
+    assert.ok((allyProj.chronoSuspendedMs || 0) > 0 && allyProj.x === allyProjStartX, 'Ally projectile must freeze in Chrono Well');
+    assert.ok((casterProj.chronoSuspendedMs || 0) > 0 && casterProj.x === casterProjStartX && casterProj.ttlMs === casterProjStartTtl, 'Caster own projectile inside Chrono Well must also freeze in position and TTL');
+    const bossZone = room.zones.find((z) => z.id === 'z_boss_suspend')!;
+    assert.ok((bossZone.chronoSuspendedMs || 0) > 0 && bossZone.ttlMs === 1200, 'Enemy/boss hazard zone ttlMs must pause inside Chrono Well');
+
+    // Step past remaining 2600ms (total 3100ms > 3000ms) -> clean resumption
+    for (let i = 0; i < 106; i++) room.tick(25);
+    assert.strictEqual(room.zones.some((z) => z.kind === 'chrono_well'), false, 'Chrono Well must expire after 3s');
+    assert.strictEqual(boss.chronoSuspendedMs || 0, 0, 'Boss must resume cleanly after Chrono Well expires');
+    assert.strictEqual(p2.chronoSuspendedMs || 0, 0, 'Ally must resume cleanly after Chrono Well expires');
+    assert.ok(enemyProj.x > enemyProjStartX || !room.projectiles.includes(enemyProj), 'Suspended enemy projectile must resume advancing cleanly');
+    assert.ok(casterProj.x > casterProjStartX || !room.projectiles.includes(casterProj), 'Suspended caster projectile must resume advancing cleanly after Chrono Well ends');
+    assert.ok(p2.x > p2StartX, 'Ally must resume moving cleanly after Chrono Well ends');
+
+    // Disconnect safety: active Chrono Well caster disconnects -> clears zone & never leaves permanently suspended entities
+    const arc2 = room.addOrReconnectPlayer('arc_dc', 'DisconnectingArc', 'arcanist', false, {
+      level: 10, xp: 0, strength: 0, vitality: 10, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    arc2.x = origin.x;
+    arc2.y = origin.y;
+    boss.x = origin.x + 40;
+    boss.y = origin.y;
+    p2.x = origin.x + 20;
+    p2.y = origin.y;
+    room.performAction(arc2.id, 'ult', 0, { aimDistance: 0, explicitAim: true });
+    room.tick(25);
+    assert.ok((boss.chronoSuspendedMs || 0) > 0 && (p2.chronoSuspendedMs || 0) > 0, 'Second Chrono Well suspends nearby entities');
+    room.removePlayer(arc2.id);
+    assert.strictEqual(room.zones.some((z) => z.ownerId === arc2.id && z.kind === 'chrono_well'), false, 'Disconnecting caster must clean up active Chrono Well');
+    assert.strictEqual(boss.chronoSuspendedMs || 0, 0, 'Disconnect must not leave boss permanently suspended');
+    assert.strictEqual(p2.chronoSuspendedMs || 0, 0, 'Disconnect must not leave ally permanently suspended');
+  });
+
+  // --- Test 101: Arcanist Multiplayer Delta Sync, Client Prediction & HUD Key Reactivity ---
+  await test('101. Multiplayer Sync & Prediction: snapshotDelta preserves Scroll/channel states, prediction locks movement, and HUD key refreshes', async () => {
+    const {
+      cloneSnapshotBaseline,
+      computeSnapshotDelta,
+      applySnapshotDelta,
+    } = await import('./src/shared/snapshotDelta.ts');
+    const { LocalPredictionController } = await import('./src/client/prediction.ts');
+    const { buildSnapshotHudKey } = await import('./src/client/networkStats.ts');
+
+    const room = new GameRoom({
+      roomId: 'R_ARC_SYNC_101',
+      name: 'Delta Sync Arena',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10105,
+    });
+    room.status = 'playing';
+    const origin = carveOpenArena(room, 25, 25, 18);
+
+    const p1 = room.addOrReconnectPlayer('arc_sync', 'SyncMage', 'arcanist', false, {
+      level: 15, xp: 0, strength: 0, vitality: 15, dexterity: 0, intelligence: 30, faith: 0, attributePoints: 0,
+    });
+    p1.x = origin.x;
+    p1.y = origin.y;
+
+    let clientSnap = cloneSnapshotBaseline(room.buildNetworkSnapshot());
+    let prevServer = cloneSnapshotBaseline(clientSnap);
+
+    // 1. Grant Scroll choices -> delta syncs pendingScrollChoices -> HUD key changes
+    const baseHudKey = buildSnapshotHudKey(clientSnap, p1.id, room.map);
+    room.grantScrollChoices(p1.id);
+    let nextSnap = room.buildNetworkSnapshot();
+    let wireDelta = JSON.parse(JSON.stringify(computeSnapshotDelta(prevServer, nextSnap, 1, 2)));
+    clientSnap = applySnapshotDelta(clientSnap, wireDelta);
+    prevServer = cloneSnapshotBaseline(nextSnap);
+
+    const clientP1Draft = clientSnap.players.find((p) => p.id === p1.id)!;
+    assert.ok((clientP1Draft.pendingScrollChoices?.length || 0) === 3, 'Delta sync must deliver pendingScrollChoices');
+    assert.notStrictEqual(buildSnapshotHudKey(clientSnap, p1.id, room.map), baseHudKey, 'HUD key must refresh on pendingScrollChoices');
+
+    // 2. Equip Disintegration Scroll & start channel -> delta syncs equippedScrollId + active disintegrationState -> end clears cleanly & delivers skillCooldownMs
+    p1.pendingScrollChoices = ['disintegration'];
+    room.selectArcanistScroll(p1.id, 'disintegration');
+    room.startDisintegrationChannel(p1.id, 0.4);
+    room.tick(25);
+    nextSnap = room.buildNetworkSnapshot();
+    wireDelta = JSON.parse(JSON.stringify(computeSnapshotDelta(prevServer, nextSnap, 2, 3)));
+    clientSnap = applySnapshotDelta(clientSnap, wireDelta);
+    prevServer = cloneSnapshotBaseline(nextSnap);
+
+    const clientP1Chan = clientSnap.players.find((p) => p.id === p1.id)!;
+    assert.strictEqual(clientP1Chan.equippedScrollId, 'disintegration', 'Delta sync must deliver equippedScrollId');
+    assert.strictEqual(clientP1Chan.disintegrationState?.active, true, 'Delta sync must deliver active disintegrationState');
+
+    // Client-side prediction must freeze movement when channeling or Chrono-suspended
+    const pred = new LocalPredictionController();
+    pred.step({
+      me: clientP1Chan,
+      liveInput: { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0, stickX: 1, stickY: 0 },
+      latestSentSeq: 1,
+      map: room.map,
+      props: [],
+      dtSec: 0.05,
+      nowMs: Date.now(),
+      isNewSnapshot: true,
+    });
+    const predChan = pred.step({
+      me: clientP1Chan,
+      liveInput: { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0, stickX: 1, stickY: 0 },
+      latestSentSeq: 2,
+      map: room.map,
+      props: [],
+      dtSec: 0.05,
+      nowMs: Date.now() + 50,
+      isNewSnapshot: false,
+    });
+    assert.strictEqual(predChan.x, clientP1Chan.x, 'Client prediction must lock X during Disintegration channel');
+    assert.strictEqual(predChan.y, clientP1Chan.y, 'Client prediction must lock Y during Disintegration channel');
+
+    // Stop channel -> JSON delta cleanly clears disintegrationState & delivers skillCooldownMs
+    room.stopDisintegrationChannel(p1.id);
+    nextSnap = room.buildNetworkSnapshot();
+    wireDelta = JSON.parse(JSON.stringify(computeSnapshotDelta(prevServer, nextSnap, 3, 4)));
+    clientSnap = applySnapshotDelta(clientSnap, wireDelta);
+    const clientP1Post = clientSnap.players.find((p) => p.id === p1.id)!;
+    assert.strictEqual(Boolean(clientP1Post.disintegrationState), false, 'Delta sync must clear ended disintegrationState');
+    assert.ok(clientP1Post.skillCooldownMs > 0, 'Delta sync must deliver post-channel tactical skillCooldownMs');
+
+    // Prediction lock under Chrono suspension
+    const suspendedClientState = { ...clientP1Post, chronoSuspendedMs: 1800 };
+    const predSusp = pred.step({
+      me: suspendedClientState,
+      liveInput: { up: false, down: false, left: false, right: true, attack: false, aimAngle: 0, stickX: 1, stickY: 0 },
+      latestSentSeq: 3,
+      map: room.map,
+      props: [],
+      dtSec: 0.05,
+      nowMs: Date.now() + 100,
+      isNewSnapshot: true,
+    });
+    assert.strictEqual(predSusp.x, suspendedClientState.x, 'Client prediction must lock X during Chrono suspension');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

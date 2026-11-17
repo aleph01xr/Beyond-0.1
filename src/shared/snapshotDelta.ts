@@ -252,6 +252,13 @@ export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
         statuses: p.statuses.map((s) => ({ ...s })),
       };
       if (p.floorBlessings) copy.floorBlessings = [...p.floorBlessings];
+      if (p.spellCastState !== undefined) {
+        copy.spellCastState = p.spellCastState ? { ...p.spellCastState } : null;
+      }
+      if (p.disintegrationState !== undefined) {
+        copy.disintegrationState = p.disintegrationState ? { ...p.disintegrationState } : null;
+      }
+      if (p.pendingScrollChoices) copy.pendingScrollChoices = [...p.pendingScrollChoices];
       return copy;
     }),
     enemies: snap.enemies.map((e) => {
@@ -261,7 +268,11 @@ export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
     }),
     projectiles: snap.projectiles.map((pr) => ({ ...pr })),
     props: snap.props.map((pr) => ({ ...pr })),
-    zones: snap.zones.map((z) => ({ ...z })),
+    zones: snap.zones.map((z) => {
+      const copy: FieldZoneState = { ...z };
+      if (z.chainPoints) copy.chainPoints = z.chainPoints.map((pt) => ({ ...pt }));
+      return copy;
+    }),
     npcs: snap.npcs.map((n) => {
       const copy: NpcState = { ...n };
       if (n.options) copy.options = n.options.map((o) => ({ ...o }));

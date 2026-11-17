@@ -43,8 +43,10 @@ import {
 } from '../client/directionalFacing.ts';
 import {
   hasMovementInput,
+  isWallAtWorld,
   normalizePlayerInputDirection,
 } from '../shared/playerMovement.ts';
+import { ARCANIST_SPELLS } from '../shared/arcanist.ts';
 import {
   findBestAutoTarget,
   getAbilityTargetSpec,
@@ -65,6 +67,7 @@ import { voiceManager } from '../client/voice/voiceClient.ts';
 import {
   HERO_CLASSES,
   TILE_SIZE,
+  type ClientMessage,
   type DungeonMap,
   type EnemyKind,
   type FieldZoneState,
@@ -104,6 +107,7 @@ interface GameCanvasProps {
     aimAngle: number,
     opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
+  onSendCommand?: (msg: ClientMessage) => void;
   onSendPing: (label: string, x: number, y: number) => void;
   chatFocused: boolean;
   controlsBlocked?: boolean;
@@ -130,6 +134,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   onAbilityAimUiChange,
   onSendKeyboardInput,
   onTriggerAction,
+  onSendCommand,
   onSendPing,
   chatFocused,
   controlsBlocked = false,
@@ -173,8 +178,13 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   onSendKeyboardInputRef.current = onSendKeyboardInput;
   const onTriggerActionRef = useRef(onTriggerAction);
   onTriggerActionRef.current = onTriggerAction;
+  const onSendCommandRef = useRef(onSendCommand);
+  onSendCommandRef.current = onSendCommand;
   const onSendPingRef = useRef(onSendPing);
   onSendPingRef.current = onSendPing;
+  const disintegrationHoldSourceRef = useRef<'q' | 'rmb' | null>(null);
+  const lastChannelUpdateAtRef = useRef(0);
+  const lastSentChannelAngleRef = useRef(0);
   const localInputPropRef = useRef(localInputRef);
   localInputPropRef.current = localInputRef;
   const latestInputSeqPropRef = useRef(latestInputSeqRef);
@@ -216,7 +226,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       sfx.playUiClick();
       return false;
     }
-    if (action === 'tactical' && me.skillCooldownMs > 0) return false;
+    if (action === 'tactical' && (me.skillCooldownMs > 0 || me.spellCastState || me.disintegrationState?.active)) return false;
     if (action === 'ult' && me.ultCooldownMs > 0) return false;
     if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return false;
     return true;
@@ -229,7 +239,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   ): { aimAngle: number; aimDistance: number; magnitude: number } => {
     const snap = latestSnapshotRef.current;
     const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
-    const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action);
+    const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action, me?.equippedScrollId);
     const pos = localPlayerPosRef.current || (me ? { x: me.x, y: me.y } : null);
     const vp = viewportRef.current;
     // Quick-tap on HUD ability button before dragging >12px preserves pre-click aim
@@ -307,10 +317,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     if (cur.action === 'dash') {
       sfx.playDash();
     } else if (cur.action === 'tactical') {
-      sfx.playSkill('tactical');
+      const snap = latestSnapshotRef.current;
+      const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+      if (me?.heroClass === 'arcanist' && me.equippedScrollId) {
+        sfx.playArcanistSpell(me.equippedScrollId);
+      } else {
+        sfx.playSkill('tactical');
+      }
       triggerLocalSwing('tactical');
     } else {
-      sfx.playSkill('ult');
+      const snap = latestSnapshotRef.current;
+      const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+      if (me?.heroClass === 'arcanist') {
+        sfx.playChronoWell();
+      } else {
+        sfx.playSkill('ult');
+      }
       triggerLocalSwing('ult');
     }
 
@@ -650,6 +672,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     if (abilityAimPropRef.current.current && abilityAimPropRef.current.current.source !== 'touch') {
       commitDesktopAbilityAim(true);
     }
+    if (disintegrationHoldSourceRef.current) {
+      disintegrationHoldSourceRef.current = null;
+      onSendCommandRef.current?.({ type: 'player:channel_stop' });
+    }
     const hadInputs =
       keysRef.current.up ||
       keysRef.current.down ||
@@ -706,6 +732,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         abilityAimPropRef.current.current.source !== 'touch'
       ) {
         commitDesktopAbilityAim(true);
+      }
+      if (disintegrationHoldSourceRef.current) {
+        disintegrationHoldSourceRef.current = null;
+        onSendCommandRef.current?.({ type: 'player:channel_stop' });
       }
       const hadActive =
         keysRef.current.up ||
@@ -785,6 +815,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           k === 'q' ? 'tactical' : k === 'r' || e.key === 'Shift' ? 'ult' : 'dash';
         if (!canStartAbilityAim(action)) return;
         syncDirectionalAimFromKeys();
+        const snap = latestSnapshotRef.current;
+        const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+        if (action === 'tactical' && me?.heroClass === 'arcanist' && me.equippedScrollId === 'disintegration') {
+          if ((me.chronoSuspendedMs || 0) > 0) return;
+          disintegrationHoldSourceRef.current = 'q';
+          lastSentChannelAngleRef.current = aimAngleRef.current;
+          lastChannelUpdateAtRef.current = performance.now();
+          sfx.playArcanistSpell('disintegration');
+          onSendCommandRef.current?.({
+            type: 'player:channel_start',
+            spellId: 'disintegration',
+            aimAngle: aimAngleRef.current,
+          });
+          return;
+        }
         const target = computeDesktopAimTarget(action, 'keyboard');
         activeAimKeyRef.current = e.key === 'Shift' ? 'shift' : k;
         abilityAimPropRef.current.current = {
@@ -796,7 +841,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           cancelled: false,
         };
         syncAimUi(abilityAimPropRef.current.current);
-      } else if (k === 'h' || k === '1') {
+      } else if (k === '1' || k === 'h') {
         if (e.repeat) return;
         const snap = latestSnapshotRef.current;
         const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
@@ -826,6 +871,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       const normAimKey = e.key === 'Shift' ? 'shift' : k;
       if (activeAimKeyRef.current && normAimKey === activeAimKeyRef.current) {
         commitDesktopAbilityAim(false);
+      }
+
+      if (k === 'q' && disintegrationHoldSourceRef.current === 'q') {
+        disintegrationHoldSourceRef.current = null;
+        onSendCommandRef.current?.({ type: 'player:channel_stop' });
       }
 
       let changed = false;
@@ -928,6 +978,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           keysRef.current.attack = nextAttack;
           emitKeys();
         }
+      }
+      if (e.button === 2 && disintegrationHoldSourceRef.current === 'rmb') {
+        disintegrationHoldSourceRef.current = null;
+        onSendCommandRef.current?.({ type: 'player:channel_stop' });
       }
       const cur = abilityAimPropRef.current.current;
       if (cur && cur.source === 'mouse') {
@@ -1507,6 +1561,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
                 particleManager.spawnOriphielVerdictStage(prevZ.x, prevZ.y, prevZ.radius, prevZ.stage || 1, now);
               } else if (prevZ.kind === 'warden_shatter') {
                 particleManager.spawnOriphielBastionShatter(prevZ.x, prevZ.y, prevZ.radius, now);
+              } else if (prevZ.kind === 'arcane_meteor') {
+                particleManager.spawnIgnisMagmaEruption(prevZ.x, prevZ.y, prevZ.radius, now);
               }
             }
           }
@@ -1612,7 +1668,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (!cur || Math.hypot(p.x - cur.x, p.y - cur.y) > 100) {
           smoothedPlayers.set(p.id, { x: p.x, y: p.y });
         } else {
-          const hasVel = Math.hypot(p.vx, p.vy) > 10;
+          const isSuspended = (p.chronoSuspendedMs || 0) > 0;
+          const hasVel = !isSuspended && Math.hypot(p.vx, p.vy) > 10;
           const targetX = hasVel ? p.x + p.vx * snapAgeSec : p.x;
           const targetY = hasVel ? p.y + p.vy * snapAgeSec : p.y;
           cur.x += (targetX - cur.x) * remoteBlend;
@@ -1625,7 +1682,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (!cur || Math.hypot(en.x - cur.x, en.y - cur.y) > 100) {
           smoothedEnemies.set(en.id, { x: en.x, y: en.y });
         } else {
-          const hasVel = Math.hypot(en.vx, en.vy) > 10;
+          const isSuspended = (en.chronoSuspendedMs || 0) > 0;
+          const hasVel = !isSuspended && Math.hypot(en.vx, en.vy) > 10;
           const targetX = hasVel ? en.x + en.vx * snapAgeSec : en.x;
           const targetY = hasVel ? en.y + en.vy * snapAgeSec : en.y;
           cur.x += (targetX - cur.x) * remoteBlend;
@@ -1721,6 +1779,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           !hasMouseMovedRef.current
         ) {
           aimAngleRef.current = localInputPropRef.current.current.aimAngle;
+        }
+
+        // Stream Disintegration channel target angle smoothly (supports mouse, WASD, or touch)
+        if (
+          me.disintegrationState?.active &&
+          !controlsBlockedRef.current &&
+          now - lastChannelUpdateAtRef.current >= 35 &&
+          angleDeltaRad(aimAngleRef.current, lastSentChannelAngleRef.current) >= 0.02
+        ) {
+          lastChannelUpdateAtRef.current = now;
+          lastSentChannelAngleRef.current = aimAngleRef.current;
+          onSendCommandRef.current?.({
+            type: 'player:channel_update',
+            aimAngle: aimAngleRef.current,
+          });
         }
 
         // Keep active desktop ability aim synchronized as the player moves or turns
@@ -3222,6 +3295,93 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.stroke();
 
           ctx.restore();
+        } else if (z.kind === 'arcane_meteor') {
+          const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // Target blast area fill + warning rim
+          ctx.fillStyle = `rgba(249, 115, 22, ${0.14 + progress * 0.22})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(251, 146, 60, 0.92)';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Shrinking countdown lock-on ring
+          const shrinkR = Math.max(6, z.radius * (1 - progress));
+          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Falling meteor core descending from above
+          const dropY = -(1 - progress) * 180;
+          const mRadius = 10 + progress * 12;
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+          ctx.beginPath();
+          ctx.moveTo(-mRadius * 0.7, dropY);
+          ctx.lineTo(0, dropY - 56);
+          ctx.lineTo(mRadius * 0.7, dropY);
+          ctx.closePath();
+          ctx.fill();
+
+          const metGrad = ctx.createRadialGradient(0, dropY, 2, 0, dropY, mRadius);
+          metGrad.addColorStop(0, '#FFFFFF');
+          metGrad.addColorStop(0.4, '#FDE047');
+          metGrad.addColorStop(0.8, '#EA580C');
+          metGrad.addColorStop(1, '#7C2D12');
+          ctx.fillStyle = metGrad;
+          ctx.beginPath();
+          ctx.arc(0, dropY, mRadius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else if (z.kind === 'chain_lightning_arc' && z.chainPoints && z.chainPoints.length >= 2) {
+          const alpha = Math.max(0.15, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          ctx.save();
+          for (let i = 0; i < z.chainPoints.length - 1; i++) {
+            const p1 = z.chainPoints[i];
+            const p2 = z.chainPoints[i + 1];
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const len = Math.max(1, Math.hypot(dx, dy));
+            const nx = -dy / len;
+            const ny = dx / len;
+            const segs = 6;
+            const pts: { x: number; y: number }[] = [p1];
+            for (let s = 1; s < segs; s++) {
+              const t = s / segs;
+              const jitter = Math.sin(now * 0.05 + i * 7 + s * 3.1) * 11;
+              pts.push({
+                x: p1.x + dx * t + nx * jitter,
+                y: p1.y + dy * t + ny * jitter,
+              });
+            }
+            pts.push(p2);
+
+            ctx.strokeStyle = `rgba(56, 189, 248, ${(0.85 * alpha).toFixed(2)})`;
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            pts.forEach((pt, pi) => (pi === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
+            ctx.stroke();
+
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            pts.forEach((pt, pi) => (pi === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
+            ctx.stroke();
+
+            ctx.fillStyle = `rgba(186, 230, 253, ${alpha.toFixed(2)})`;
+            ctx.beginPath();
+            ctx.arc(p2.x, p2.y, 7, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
         }
       }
 
@@ -4524,6 +4684,35 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.fill();
           ctx.restore();
         }
+
+        // Chrono Well Time-Suspension Overlay on Enemies & Bosses
+        if ((en.chronoSuspendedMs || 0) > 0) {
+          ctx.save();
+          const stR = en.radius + 7;
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
+          ctx.beginPath();
+          ctx.arc(ex, ey, stR, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(125, 211, 252, 0.92)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          ctx.arc(ex, ey, stR, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Temporal stasis lock cross-tick
+          ctx.strokeStyle = '#E0F2FE';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(ex, ey - stR * 0.55);
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(ex + stR * 0.4, ey + stR * 0.2);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
       // Players
@@ -4727,22 +4916,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           facingDirection: playerPose.dir,
         });
 
-        // Player Name Tag
-        const displayLabel = p.username;
+        // Player Name Tag (Username Lvl X without border box; Green for players, Purple for admin)
+        const isPlayerAdmin = Boolean(p.isAdmin || p.username.toLowerCase() === 'admin' || p.username.toLowerCase() === 'aleph');
+        const displayLevel = Math.max(1, p.level || 1);
+        const displayLabel = `${p.username} Lvl ${displayLevel}`;
 
         ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';
         const labelWidth = ctx.measureText(displayLabel).width;
-
-        // Name Tag Translucent Badge
         const badgeY = hy - 38;
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-        ctx.fillRect(hx - labelWidth / 2 - 6, badgeY - 11, labelWidth + 12, 17);
-
-        // Border: Gold for Local Player, Azure Blue for Allies
-        ctx.strokeStyle = isLocalPlayer ? '#F59E0B' : '#0284C7';
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(hx - labelWidth / 2 - 6, badgeY - 11, labelWidth + 12, 17);
 
         // Gold Marker Arrow for Local Player
         if (isLocalPlayer) {
@@ -4755,8 +4937,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.fill();
         }
 
-        // Name text
-        ctx.fillStyle = isLocalPlayer ? '#FCD34D' : '#7DD3FC';
+        // Text shadow for readability
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillText(displayLabel, hx + 1, badgeY + 2);
+
+        // Name text: Purple for admin, Green for default players
+        ctx.fillStyle = isPlayerAdmin ? '#C084FC' : '#34D399';
         ctx.fillText(displayLabel, hx, badgeY + 1);
 
         // Live Proximity Voice Speaking Indicator beside player nameplate
@@ -4791,6 +4977,109 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillRect(hx - pBarW / 2, hy - 20, Math.max(2, Math.round(pBarW * pShieldRatio)), 2);
           }
         }
+
+        // Chrono Well Time-Suspension Overlay on Allied Players
+        if ((p.chronoSuspendedMs || 0) > 0) {
+          ctx.save();
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+          ctx.beginPath();
+          ctx.arc(hx, hy, 22, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(125, 211, 252, 0.92)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.arc(hx, hy, 22, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+
+        // Arcanist Spell Cast Bar (e.g. Arcane Meteor 0.5s cast)
+        if (p.spellCastState && p.spellCastState.totalMs > 0) {
+          const castPct = Math.max(
+            0,
+            Math.min(1, 1 - p.spellCastState.remainingMs / p.spellCastState.totalMs)
+          );
+          const cbW = 46;
+          const cbX = hx - cbW / 2;
+          const cbY = hy - 56;
+          ctx.save();
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+          ctx.fillRect(cbX - 1, cbY - 1, cbW + 2, 7);
+          ctx.fillStyle = '#F97316';
+          ctx.fillRect(cbX, cbY, Math.round(cbW * castPct), 5);
+          ctx.strokeStyle = '#FDBA74';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(cbX - 1, cbY - 1, cbW + 2, 7);
+          ctx.restore();
+        }
+
+        // Arcanist Disintegration Channel Beam (42u wide, up to 450u wall-clipped)
+        if (p.disintegrationState?.active) {
+          const ch = p.disintegrationState;
+          const beamSpec = ARCANIST_SPELLS.disintegration;
+          const maxRange = beamSpec.maxRange ?? 450;
+          const beamWidth = beamSpec.beamWidth ?? 42;
+          const bCos = Math.cos(ch.angle);
+          const bSin = Math.sin(ch.angle);
+          let bDist = 0;
+          const step = 14;
+          while (bDist + step <= maxRange) {
+            const nx = hx + bCos * (bDist + step);
+            const ny = hy + bSin * (bDist + step);
+            if (isWallAtWorld(map, snap.props, nx, ny, snap.npcs)) {
+              break;
+            }
+            bDist += step;
+          }
+          const finalLen = Math.max(18, Math.min(maxRange, bDist));
+          const warmingUp = ch.activationRemainingMs > 0;
+          const widthScale = warmingUp ? 0.32 : 1.0 + Math.sin(now * 0.03) * 0.08;
+
+          ctx.save();
+          ctx.translate(hx, hy);
+          ctx.rotate(ch.angle);
+
+          // Outer violet plasma field (42u width when active)
+          const outerW = beamWidth * widthScale;
+          ctx.fillStyle = warmingUp ? 'rgba(192, 132, 252, 0.35)' : 'rgba(147, 51, 234, 0.38)';
+          ctx.fillRect(8, -outerW / 2, finalLen - 8, outerW);
+
+          // Mid magenta/indigo beam
+          const midW = outerW * 0.54;
+          ctx.fillStyle = warmingUp ? 'rgba(232, 121, 249, 0.55)' : 'rgba(217, 70, 239, 0.72)';
+          ctx.fillRect(8, -midW / 2, finalLen - 8, midW);
+
+          // High-energy white-cyan beam core
+          const coreW = Math.max(3, outerW * 0.22);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(8, -coreW / 2, finalLen - 8, coreW);
+
+          // Moving pulse rings along beam axis
+          if (!warmingUp) {
+            ctx.strokeStyle = 'rgba(186, 230, 253, 0.85)';
+            ctx.lineWidth = 2;
+            const ringOffset = (now * 0.35) % 56;
+            for (let rx = 24 + ringOffset; rx < finalLen - 12; rx += 56) {
+              ctx.beginPath();
+              ctx.ellipse(rx, 0, 4, outerW * 0.48, 0, 0, Math.PI * 2);
+              ctx.stroke();
+            }
+          }
+
+          // Tip terminus flare
+          ctx.fillStyle = '#E879F9';
+          ctx.beginPath();
+          ctx.arc(finalLen, 0, outerW * 0.42, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.arc(finalLen, 0, coreW, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+        }
       }
 
       // Enhanced Projectiles & Combat Trails (smoothly extrapolated at display refresh rate)
@@ -4798,8 +5087,13 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       const activeProjIds = new Set<string>();
       for (const proj of snap.projectiles) {
         activeProjIds.add(proj.id);
+        const isSuspendedProj = (proj.chronoSuspendedMs || 0) > 0;
         const drawProj =
-          projLeadSec > 0 && proj.style !== 'slash' && (proj.vx !== 0 || proj.vy !== 0)
+          projLeadSec > 0 &&
+          !isSuspendedProj &&
+          proj.style !== 'slash' &&
+          proj.style !== 'arcane_barrage' &&
+          (proj.vx !== 0 || proj.vy !== 0)
             ? {
                 ...proj,
                 x: proj.x + proj.vx * projLeadSec,
@@ -4807,7 +5101,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               }
             : proj;
         drawEnhancedProjectile(ctx, drawProj, now);
-        particleManager.spawnProjectileWake(drawProj, now);
+        if (!isSuspendedProj) {
+          particleManager.spawnProjectileWake(drawProj, now);
+        }
       }
       particleManager.cleanupInactiveProjectiles(activeProjIds);
 
@@ -5194,6 +5490,22 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       lastSentAimAngleRef.current = aimAngleRef.current;
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     }
+    const snap = latestSnapshotRef.current;
+    const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+    if (me?.disintegrationState?.active) {
+      const nowMs = performance.now();
+      if (
+        nowMs - lastChannelUpdateAtRef.current >= 30 &&
+        angleDeltaRad(aimAngleRef.current, lastSentChannelAngleRef.current) >= 0.02
+      ) {
+        lastChannelUpdateAtRef.current = nowMs;
+        lastSentChannelAngleRef.current = aimAngleRef.current;
+        onSendCommandRef.current?.({
+          type: 'player:channel_update',
+          aimAngle: aimAngleRef.current,
+        });
+      }
+    }
   };
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -5217,6 +5529,25 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       e.preventDefault();
       if (abilityAimPropRef.current.current?.source === 'keyboard') {
         commitDesktopAbilityAim(true);
+        return;
+      }
+      const snap = latestSnapshotRef.current;
+      const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
+      if (
+        me?.heroClass === 'arcanist' &&
+        me.equippedScrollId === 'disintegration' &&
+        canStartAbilityAim('tactical') &&
+        (me.chronoSuspendedMs || 0) <= 0
+      ) {
+        disintegrationHoldSourceRef.current = 'rmb';
+        lastSentChannelAngleRef.current = aimAngleRef.current;
+        lastChannelUpdateAtRef.current = performance.now();
+        sfx.playArcanistSpell('disintegration');
+        onSendCommandRef.current?.({
+          type: 'player:channel_start',
+          spellId: 'disintegration',
+          aimAngle: aimAngleRef.current,
+        });
         return;
       }
       if (!abilityAimPropRef.current.current && canStartAbilityAim('tactical')) {

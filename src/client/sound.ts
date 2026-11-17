@@ -357,6 +357,135 @@ class RetroAudioEngine {
     }
   }
 
+  public playArcanistSpell(spellId: string): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    const noise = this.getNoiseBuffer();
+
+    if (spellId === 'fireball' || spellId === 'arcane_meteor') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(spellId === 'arcane_meteor' ? 140 : 210, now);
+      osc.frequency.exponentialRampToValueAtTime(42, now + 0.28);
+      gain.gain.setValueAtTime(0.11, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.31);
+      if (noise) {
+        const src = ctx.createBufferSource();
+        const filter = ctx.createBiquadFilter();
+        const nGain = ctx.createGain();
+        src.buffer = noise;
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(950, now);
+        filter.frequency.exponentialRampToValueAtTime(160, now + 0.22);
+        nGain.gain.setValueAtTime(0.09, now);
+        nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+        src.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(dest);
+        src.start(now);
+        src.stop(now + 0.25);
+      }
+    } else if (spellId === 'frost_lance') {
+      [880, 1320].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        const t = now + i * 0.03;
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.4, t + 0.12);
+        gain.gain.setValueAtTime(0.06, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+        osc.connect(gain);
+        gain.connect(dest);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      });
+    } else if (spellId === 'chain_lightning') {
+      [1100, 760, 1480].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        const t = now + i * 0.035;
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.45, t + 0.08);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+        osc.connect(gain);
+        gain.connect(dest);
+        osc.start(t);
+        osc.stop(t + 0.1);
+      });
+    } else if (spellId === 'disintegration') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.linearRampToValueAtTime(440, now + 0.15);
+      gain.gain.setValueAtTime(0.075, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.23);
+    } else if (spellId === 'arcane_barrage') {
+      [520, 680, 860].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        const t = now + i * 0.03;
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.5, t + 0.1);
+        gain.gain.setValueAtTime(0.05, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        osc.connect(gain);
+        gain.connect(dest);
+        osc.start(t);
+        osc.stop(t + 0.13);
+      });
+    } else {
+      // Arcane Orb / Chrono fallback
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(310, now);
+      osc.frequency.exponentialRampToValueAtTime(620, now + 0.2);
+      gain.gain.setValueAtTime(0.075, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.25);
+    }
+  }
+
+  public playChronoWell(): void {
+    const ctx = this.ensureContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+    const now = ctx.currentTime;
+    [523.25, 392.0, 261.63].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      const t = now + i * 0.05;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.5, t + 0.35);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(t);
+      osc.stop(t + 0.4);
+    });
+  }
+
   /**
    * Universal dash/evasion sound effect: swift wind swoosh & acoustic pitch lift.
    */

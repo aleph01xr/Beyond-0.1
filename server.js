@@ -10,8 +10,9 @@ import pg from "pg";
 import { WebSocket, WebSocketServer } from "ws";
 
 // src/shared/types.ts
-var MAX_LEVEL = 100;
+var MAX_LEVEL = 50;
 var MAX_ATTRIBUTE = 100;
+var CRIT_DAMAGE_MULTIPLIER = 1.25;
 var HERO_CLASSES = {
   vanguard: {
     id: "vanguard",
@@ -37,7 +38,7 @@ var HERO_CLASSES = {
     stats: { survivability: 5, damage: 3, range: 1, mobility: 2, utility: 4 },
     resistances: { physical: 0.28, fire: 0.15, frost: 0.15, lightning: 0.1, poison: 0.15, bleed: 0.3 },
     tacticalName: "Bulwark Dash",
-    tacticalDesc: "Slam forward with tower shield, battering through monsters, stunning them for 1.6s and granting +28 Shield to nearby allies.",
+    tacticalDesc: "Slam forward with tower shield, battering through monsters, stunning them for 1.7s and granting +28 Shield to nearby allies.",
     tacticalCooldownMs: 4800,
     ultName: "Aegis Sanctuary",
     ultDesc: "Plant your colossal shield into the earth, raising a gleaming dome that deflects projectile barrages and boosts party defense.",
@@ -97,11 +98,11 @@ var HERO_CLASSES = {
     stats: { survivability: 2, damage: 5, range: 4, mobility: 3, utility: 4 },
     resistances: { physical: 0.05, fire: 0.25, frost: 0.35, lightning: 0.45, poison: 0.15, bleed: 0.1 },
     tacticalName: "Astral Nova",
-    tacticalDesc: "Unleash 8 piercing arcane shards in a starburst, knocking back surrounding monsters with void energy.",
+    tacticalDesc: "Unleash 8 piercing arcane shards in a starburst. Ancient Scrolls (Fireball, Disintegration, Frost Lance, Chain Lightning, Arcane Meteor, Arcane Orb, Arcane Barrage) replace this Tactical Skill.",
     tacticalCooldownMs: 5e3,
     ultName: "Chrono Well",
-    ultDesc: "Anchor a cosmic gravitational well that snares enemies, pulling them in while accelerating allied cooldowns by 50%.",
-    ultCooldownMs: 13500
+    ultDesc: "Anchor a 3s temporal distortion field that suspends enemies, bosses, allies, and ALL projectiles (including player projectiles) in time while leaving the caster unaffected.",
+    ultCooldownMs: 45e3
   },
   cleric: {
     id: "cleric",
@@ -112,7 +113,7 @@ var HERO_CLASSES = {
     weapon: "Dawnstar Flanged Mace & Reliquary",
     weaponType: "Radiant Smite & Holy Relic",
     passiveName: "Radiant Aura",
-    passiveDesc: "Emits a sacred 140-range warmth that heals wounded party members every 2 seconds (scales with Level & Faith, base 4 HP, +50% when critical), and increases revive speed by 40%.",
+    passiveDesc: "Emits a sacred 140-range warmth that heals wounded party members every 2 seconds (scales with Level & Faith, base 2 HP, +50% when critical), and increases revive speed by 40%.",
     maxHp: 128,
     speed: 185,
     damage: 22,
@@ -127,11 +128,11 @@ var HERO_CLASSES = {
     stats: { survivability: 4, damage: 3, range: 3, mobility: 2, utility: 5 },
     resistances: { physical: 0.15, fire: 0.4, frost: 0.2, lightning: 0.15, poison: 0.35, bleed: 0.25 },
     tacticalName: "Sanctified Pulse",
-    tacticalDesc: "Release a blinding wave of golden light, healing you and all nearby party members (scales with Level & Faith, base 36 HP) while searing adjacent undead.",
-    tacticalCooldownMs: 5400,
+    tacticalDesc: "Release a blinding wave of golden light, healing you and all nearby party members (scales with Level & Faith, base 24 HP) while searing adjacent undead.",
+    tacticalCooldownMs: 6800,
     ultName: "Solar Beacon",
-    ultDesc: "Consecrate holy ground with an avatar of the Sun that continuously heals all allies (scales with Level & Faith, base 9 HP) and rapidly revives downed teammates who enter.",
-    ultCooldownMs: 14e3
+    ultDesc: "Consecrate holy ground with an avatar of the Sun that continuously heals all allies (scales with Level & Faith, base 4 HP) and rapidly revives downed teammates who enter.",
+    ultCooldownMs: 18e3
   }
 };
 var RELIC_CATALOG = [
@@ -146,21 +147,21 @@ var RELIC_CATALOG = [
     id: "twinstring_charm",
     name: "Twinstring Charm",
     category: "Offense",
-    summary: "Primary attacks unleash +1 additional projectile or cleave wave, but extra projectiles deal 75% damage.",
+    summary: "Primary attacks unleash +1 additional projectile or cleave wave, but extra projectiles deal 35% damage.",
     accent: "#E0A94F"
   },
   {
     id: "zephyr_greaves",
     name: "Zephyr Greaves",
     category: "Mobility",
-    summary: "+18% movement speed across all terrain.",
+    summary: "+15% movement speed across all terrain.",
     accent: "#68B89E"
   },
   {
     id: "sunfire_signet",
     name: "Sunfire Signet",
     category: "Offense",
-    summary: "+24% primary and skill damage.",
+    summary: "+12% primary and skill damage.",
     accent: "#E88348"
   },
   {
@@ -181,14 +182,14 @@ var RELIC_CATALOG = [
     id: "keen_arrowhead",
     name: "Keen Arrowhead",
     category: "Offense",
-    summary: "+25% critical strike chance for 1.75x damage.",
+    summary: "+20% critical strike chance (up to 45% total crit cap).",
     accent: "#DFC15E"
   },
   {
     id: "oathbound_censer",
     name: "Oathbound Censer",
     category: "Co-op",
-    summary: "Using your Tactical skill heals nearby co-op allies for +14 HP.",
+    summary: "Using your Tactical skill heals nearby co-op allies for +8 HP.",
     accent: "#E8CE76"
   },
   {
@@ -209,14 +210,14 @@ var RELIC_CATALOG = [
     id: "cinder_heart",
     name: "Cinder Heart",
     category: "Offense",
-    summary: "Critical hits and tactical skills Ignite enemies with Burn DoT (ticks fiery damage every 0.8s for 4s).",
+    summary: "Critical hits and tactical skills Ignite enemies with Burn DoT for 4.5s (scales with Level & Primary Attribute).",
     accent: "#F97316"
   },
   {
     id: "rimefrost_shard",
     name: "Rimefrost Shard",
     category: "Offense",
-    summary: "Attacks have 25% chance to Chill. Striking a Chilled enemy Freezes them in solid ice; shattering deals +60% bonus damage.",
+    summary: "Attacks have 35% chance to Chill (3s). Striking a Chilled enemy Freezes them (1.8s base, subject to DR); shattering deals 1.4x hit damage and 35% frost AoE splash.",
     accent: "#38BDF8"
   },
   {
@@ -253,7 +254,7 @@ var FLOOR_BLESSINGS = {
   fury: {
     id: "fury",
     name: "Warlord's Fury",
-    summary: "+10% outgoing attack & skill damage on this floor",
+    summary: "+6% outgoing attack & skill damage on this floor",
     color: "#F97316",
     shortTag: "+DMG"
   },
@@ -383,7 +384,7 @@ function moveWithCollision(map, props, entity, dx, dy, radius, npcs) {
 }
 function computePlayerMoveSpeed(player) {
   const def = HERO_CLASSES[player.heroClass];
-  let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 35e-4);
+  let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 25e-4);
   if (player.relics.includes("zephyr_greaves")) moveSpeed *= 1.15;
   if ((player.hasteMs || 0) > 0) moveSpeed *= 1.22;
   if (player.floorBlessings && player.floorBlessings.length > 0) {
@@ -513,7 +514,7 @@ var CLASS_ABILITY_SPECS = {
       label: "Chrono Well",
       kind: "ground_aoe",
       range: 220,
-      aoeRadius: 100,
+      aoeRadius: 115,
       defaultDist: 110,
       accentColor: "#38BDF8",
       secondaryColor: "#C084FC"
@@ -543,8 +544,90 @@ var CLASS_ABILITY_SPECS = {
     }
   }
 };
-function getAbilityTargetSpec(heroClass, action) {
+var ARCANIST_SCROLL_TARGET_SPECS = {
+  fireball: {
+    action: "tactical",
+    label: "Fireball",
+    kind: "line",
+    range: 360,
+    aoeRadius: 90,
+    lineWidth: 20,
+    defaultDist: 220,
+    accentColor: "#F97316",
+    secondaryColor: "#FDBA74"
+  },
+  disintegration: {
+    action: "tactical",
+    label: "Disintegration",
+    kind: "line",
+    range: 450,
+    aoeRadius: 0,
+    lineWidth: 42,
+    defaultDist: 450,
+    accentColor: "#A855F7",
+    secondaryColor: "#E9D5FF"
+  },
+  frost_lance: {
+    action: "tactical",
+    label: "Frost Lance",
+    kind: "line",
+    range: 420,
+    aoeRadius: 0,
+    lineWidth: 16,
+    defaultDist: 420,
+    accentColor: "#38BDF8",
+    secondaryColor: "#BAE6FD"
+  },
+  chain_lightning: {
+    action: "tactical",
+    label: "Chain Lightning",
+    kind: "line",
+    range: 340,
+    aoeRadius: 150,
+    lineWidth: 18,
+    defaultDist: 240,
+    accentColor: "#FACC15",
+    secondaryColor: "#FEF08A"
+  },
+  arcane_meteor: {
+    action: "tactical",
+    label: "Arcane Meteor",
+    kind: "ground_aoe",
+    range: 280,
+    aoeRadius: 125,
+    defaultDist: 180,
+    accentColor: "#E879F9",
+    secondaryColor: "#F5D0FE"
+  },
+  arcane_orb: {
+    action: "tactical",
+    label: "Arcane Orb",
+    kind: "line",
+    range: 460,
+    aoeRadius: 22,
+    lineWidth: 44,
+    defaultDist: 280,
+    accentColor: "#818CF8",
+    secondaryColor: "#C7D2FE"
+  },
+  arcane_barrage: {
+    action: "tactical",
+    label: "Arcane Barrage",
+    kind: "line",
+    range: 450,
+    aoeRadius: 0,
+    lineWidth: 28,
+    defaultDist: 450,
+    accentColor: "#60A5FA",
+    secondaryColor: "#BFDBFE"
+  }
+};
+function getAbilityTargetSpec(heroClass, action, equippedScrollId) {
   if (action === "dash") return DASH_TARGET_SPEC;
+  if (heroClass === "arcanist" && action === "tactical" && equippedScrollId) {
+    const scrollSpec = ARCANIST_SCROLL_TARGET_SPECS[equippedScrollId];
+    if (scrollSpec) return scrollSpec;
+  }
   return CLASS_ABILITY_SPECS[heroClass][action];
 }
 function clampGroundTargetDistance(rawDistance, spec) {
@@ -1640,6 +1723,198 @@ function generateTavernFloor() {
   };
 }
 
+// src/shared/arcanist.ts
+var ARCANIST_SPELL_ORDER = [
+  "fireball",
+  "disintegration",
+  "frost_lance",
+  "chain_lightning",
+  "arcane_meteor",
+  "arcane_orb",
+  "arcane_barrage"
+];
+var ARCANIST_SPELLS = {
+  fireball: {
+    id: "fireball",
+    name: "Fireball",
+    scrollName: "Scroll of Fireball",
+    tacticalTitle: "Fireball",
+    role: "Burst / AoE",
+    baseDamage: 42,
+    intCoeff: 0.01,
+    cooldownMs: 6e3,
+    castTimeMs: 350,
+    explosionRadius: 90,
+    maxRange: 360,
+    projectileSpeed: 380,
+    damageCategory: "fire",
+    accentColor: "#F97316",
+    summary: "Replaces Astral Nova [Q]. 0.35s cast; hurls an explosive fireball (90u AoE, no burn) on impact or max range.",
+    chronoInteraction: "Fireball projectile freezes mid-flight inside ANY Chrono Well (including caster projectiles) until time resumes."
+  },
+  disintegration: {
+    id: "disintegration",
+    name: "Disintegration",
+    scrollName: "Scroll of Disintegration",
+    tacticalTitle: "Disintegration",
+    role: "Sustained Beam",
+    baseDamage: 10,
+    intCoeff: 8e-3,
+    cooldownMs: 12e3,
+    castTimeMs: 0,
+    tickIntervalMs: 200,
+    beamWidth: 42,
+    maxRange: 450,
+    activationMs: 150,
+    maxRotationRadPerSec: Math.PI,
+    // 180 deg/s
+    isChannel: true,
+    damageCategory: "arcane",
+    accentColor: "#A855F7",
+    summary: "Replaces Astral Nova [Q]. Hold [Q / RMB] to channel a 450u violet beam (5 ticks/s, stationary, 180\xB0/s turn cap; 12s CD starts on end).",
+    chronoInteraction: "Interrupted if caster is suspended by another Chrono Well; own Chrono Well lets caster channel freely."
+  },
+  frost_lance: {
+    id: "frost_lance",
+    name: "Frost Lance",
+    scrollName: "Scroll of Frost Lance (Ice Lance)",
+    tacticalTitle: "Frost Lance",
+    role: "Precision / Piercing",
+    baseDamage: 36,
+    intCoeff: 0.012,
+    cooldownMs: 4500,
+    castTimeMs: 200,
+    pierce: 3,
+    maxRange: 420,
+    projectileSpeed: 480,
+    damageCategory: "frost",
+    accentColor: "#38BDF8",
+    summary: "Replaces Astral Nova [Q]. 0.2s cast; fires a straight crystalline ice lance piercing up to 3 enemies (no homing/freeze).",
+    chronoInteraction: "Ice lance projectile suspends mid-air inside ANY Chrono Well until the field ends."
+  },
+  chain_lightning: {
+    id: "chain_lightning",
+    name: "Chain Lightning",
+    scrollName: "Scroll of Chain Lightning",
+    tacticalTitle: "Chain Lightning",
+    role: "Multi-Target Arc",
+    baseDamage: 32,
+    intCoeff: 0.01,
+    cooldownMs: 7e3,
+    castTimeMs: 0,
+    maxTargets: 4,
+    jumpDamageDecay: 0.15,
+    maxJumpDistance: 150,
+    maxRange: 340,
+    damageCategory: "lightning",
+    accentColor: "#FACC15",
+    summary: "Replaces Astral Nova [Q]. Strikes target and arcs up to 3 additional foes within 150u (-15% dmg/jump, no repeats).",
+    chronoInteraction: "Instant lightning discharge hits suspended foes inside Chrono Well; blocked while caster is Chrono-suspended."
+  },
+  arcane_meteor: {
+    id: "arcane_meteor",
+    name: "Arcane Meteor",
+    scrollName: "Scroll of Arcane Meteor",
+    tacticalTitle: "Arcane Meteor",
+    role: "Heavy AoE Burst",
+    baseDamage: 75,
+    intCoeff: 0.013,
+    cooldownMs: 11e3,
+    castTimeMs: 500,
+    impactDelayMs: 1e3,
+    explosionRadius: 125,
+    maxRange: 280,
+    damageCategory: "arcane",
+    accentColor: "#E879F9",
+    summary: "Replaces Astral Nova [Q]. 0.5s cast + 1.0s warning delay; drops an arcane meteor for heavy 125u AoE damage (no burn).",
+    chronoInteraction: "Marked meteor impact timer freezes while covered by ANY Chrono Well and detonates once time resumes."
+  },
+  arcane_orb: {
+    id: "arcane_orb",
+    name: "Arcane Orb",
+    scrollName: "Scroll of Arcane Orb",
+    tacticalTitle: "Arcane Orb",
+    role: "Persistent Pressure",
+    baseDamage: 12,
+    intCoeff: 7e-3,
+    cooldownMs: 9e3,
+    castTimeMs: 0,
+    durationMs: 4e3,
+    hitIntervalMs: 500,
+    maxHitsPerEnemy: 2,
+    projectileSpeed: 115,
+    damageCategory: "arcane",
+    accentColor: "#818CF8",
+    summary: "Replaces Astral Nova [Q]. 4s slow sphere damaging enemies every 0.5s (max 2 hits/enemy) without vanishing on hit.",
+    chronoInteraction: "Orb movement and lifetime freeze completely inside ANY Chrono Well without losing hit cooldown timing."
+  },
+  arcane_barrage: {
+    id: "arcane_barrage",
+    name: "Arcane Barrage",
+    scrollName: "Scroll of Arcane Barrage",
+    tacticalTitle: "Arcane Barrage",
+    role: "Multi-Projectile Helix",
+    baseDamage: 12,
+    intCoeff: 45e-4,
+    cooldownMs: 8e3,
+    castTimeMs: 0,
+    projectileCount: 6,
+    projectileSpeed: 400,
+    maxRange: 450,
+    damageCategory: "arcane",
+    accentColor: "#60A5FA",
+    summary: "Replaces Astral Nova [Q]. Fires 6 alternating helix bolts up to 450u forward; multiple bolts can strike the same target.",
+    chronoInteraction: "All 6 helix bolts suspend inside ANY Chrono Well (including the caster\u2019s own) and burst forward together on resume."
+  }
+};
+var ARCANIST_SCROLLS = ARCANIST_SPELL_ORDER.map(
+  (id) => ARCANIST_SPELLS[id]
+);
+function getArcanistScrollDef(scrollId) {
+  if (!scrollId) return null;
+  return ARCANIST_SPELLS[scrollId] || null;
+}
+function computeArcanistSpellDamage(baseDamage, params, intCoeff) {
+  const level = Math.max(1, Math.min(MAX_LEVEL, params.level || 1));
+  const intStat = Math.max(0, params.intelligence || 0);
+  const levelMult = 1 + 0.025 * (level - 1);
+  const intMult = 1 + intCoeff * intStat;
+  let total = baseDamage * levelMult * intMult;
+  if (params.relics?.includes("sunfire_signet")) {
+    total *= 1.12;
+  }
+  const fury = Math.max(0, params.furyStacks || 0);
+  if (fury > 0) {
+    total *= 1 + fury * 0.06;
+  }
+  return Math.max(1, Math.round(total));
+}
+function normalizeAngle(angle) {
+  let a = angle;
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+function rotateAngleToward(currentAngle, targetAngle, maxDeltaRad) {
+  const diff = normalizeAngle(targetAngle - currentAngle);
+  if (Math.abs(diff) <= maxDeltaRad) {
+    return normalizeAngle(targetAngle);
+  }
+  return normalizeAngle(currentAngle + Math.sign(diff) * maxDeltaRad);
+}
+function distancePointToSegment(px, py, ax, ay, bx, by) {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const lenSq = abx * abx + aby * aby;
+  if (lenSq <= 1e-6) {
+    return Math.hypot(px - ax, py - ay);
+  }
+  const t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / lenSq));
+  const closestX = ax + t * abx;
+  const closestY = ay + t * aby;
+  return Math.hypot(px - closestX, py - closestY);
+}
+
 // src/server/gameEngine.ts
 var MAX_FLOORS_FOR_VICTORY = 10;
 var GameRoom = class _GameRoom {
@@ -1657,7 +1932,11 @@ var GameRoom = class _GameRoom {
     this.spawnPoint = { x: 256, y: 256 };
     this.lastRunSummary = null;
     this.players = /* @__PURE__ */ new Map();
+    this.enemyMeta = /* @__PURE__ */ new Map();
+    this.zoneHitPlayers = /* @__PURE__ */ new Map();
+    this.arcaneOrbHits = /* @__PURE__ */ new Map();
     this.entitySeq = 1;
+    this.simTimeMs = 0;
     this.startedAt = Date.now();
     this.endedAt = null;
     this.zoneTickAccumMs = 0;
@@ -1692,8 +1971,9 @@ var GameRoom = class _GameRoom {
   static computePlayerMaxHp(heroClass, level, vitality, relics = []) {
     const def = HERO_CLASSES[heroClass];
     const baseHp = def ? def.maxHp : 100;
-    const levelBonus = (Math.max(1, level) - 1) * 12;
-    const vitBonus = (vitality || 0) * 6;
+    const clampedLvl = Math.max(1, Math.min(MAX_LEVEL, level || 1));
+    const levelBonus = (clampedLvl - 1) * 12;
+    const vitBonus = (vitality || 0) * 5;
     const relicBonus = relics.includes("bastion_pauldron") ? 30 : 0;
     return baseHp + levelBonus + vitBonus + relicBonus;
   }
@@ -1701,10 +1981,10 @@ var GameRoom = class _GameRoom {
     if (baseHealing <= 0) return 0;
     let healing = baseHealing;
     if (healer && healer.heroClass === "cleric") {
-      const lvl = Math.max(1, healer.level || 1);
+      const lvl = Math.max(1, Math.min(MAX_LEVEL, healer.level || 1));
       const fth = Math.max(0, healer.faith || 0);
-      const levelMult = 1 + (lvl - 1) * 0.05;
-      const faithMult = 1 + fth * 0.03;
+      const levelMult = 1 + (lvl - 1) * 0.015;
+      const faithMult = 1 + fth * 6e-3;
       healing = healing * levelMult * faithMult;
     }
     if (target && target.statuses && target.statuses.some((s) => s.type === "ashen_curse")) {
@@ -1752,8 +2032,8 @@ var GameRoom = class _GameRoom {
     if (this.floor <= 0 || !this.map) return 0;
     return this.map.rooms.filter((r) => r.type === "combat" && r.guardian && !r.cleared).length;
   }
-  computeHealingAmount(baseHealing, healer) {
-    return _GameRoom.computeHealingAmount(baseHealing, healer);
+  computeHealingAmount(baseHealing, healer, target) {
+    return _GameRoom.computeHealingAmount(baseHealing, healer, target);
   }
   static getEnemyResistance(res, category) {
     if (!res) return 0;
@@ -1800,6 +2080,9 @@ var GameRoom = class _GameRoom {
       floorNum = 0;
     }
     this.floor = floorNum;
+    this.enemyMeta.clear();
+    this.zoneHitPlayers.clear();
+    this.arcaneOrbHits.clear();
     if (floorNum === 0) {
       const tav = generateTavernFloor();
       this.map = tav.map;
@@ -1835,6 +2118,9 @@ var GameRoom = class _GameRoom {
       pr.state.readyNextFloor = false;
       pr.state.statuses = [];
       pr.state.floorBlessings = [];
+      pr.state.spellCastState = null;
+      pr.state.disintegrationState = null;
+      pr.state.chronoSuspendedMs = 0;
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -1861,7 +2147,7 @@ var GameRoom = class _GameRoom {
     if (statusType === "frostbite") resMult = 1 - (res.frost || 0);
     if (statusType === "scorched") resMult = 1 - (res.fire || 0);
     if (statusType === "ashen_curse") resMult = 1 - (res.poison || 0);
-    const faithTenacity = Math.min(0.4, (p.faith || 0) * 4e-3);
+    const faithTenacity = Math.min(0.4, (p.faith || 0) * 3e-3);
     const effectiveDuration = Math.round(durationMs * Math.max(0.2, resMult * (1 - faithTenacity)));
     const existing = p.statuses.find((s) => s.type === statusType);
     if (existing) {
@@ -1960,44 +2246,212 @@ var GameRoom = class _GameRoom {
       }
     }
   }
-  applyStatusEffect(target, kind, durationMs) {
+  static getPrimaryAttributeValue(p) {
+    switch (p.heroClass) {
+      case "vanguard":
+        return p.strength || 0;
+      case "ranger":
+        return p.dexterity || 0;
+      case "arcanist":
+        return p.intelligence || 0;
+      case "cleric":
+        return p.faith || 0;
+      default:
+        return p.strength || 0;
+    }
+  }
+  static computeDotMultiplier(p) {
+    if (!p) return 1;
+    const level = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
+    const primaryAttr = Math.max(0, _GameRoom.getPrimaryAttributeValue(p));
+    return 1 + 3e-3 * (level - 1) + 1e-3 * primaryAttr;
+  }
+  getEnemyMeta(enemy) {
+    let meta = this.enemyMeta.get(enemy.id);
+    if (!meta) {
+      meta = {
+        hardCcStage: 0,
+        lastHardCcAtMs: -999999,
+        burnOwnerId: null,
+        burnMultiplier: null,
+        burnBaseTick: null,
+        poisonOwnerId: null,
+        poisonMultiplier: null,
+        poisonBaseTick: null,
+        bleedOwnerId: null,
+        bleedMultiplier: null,
+        bossPhase: 1,
+        lastBossAbility: -1,
+        bossTargetId: null,
+        bossTargetSwitchAtMs: 0,
+        bossAbilityCooldowns: {},
+        chargeHitPlayerIds: /* @__PURE__ */ new Set()
+      };
+      this.enemyMeta.set(enemy.id, meta);
+    }
+    return meta;
+  }
+  clearEnemyChargeState(enemy) {
+    enemy.charging = false;
+    enemy.chargeWindupMs = 0;
+    enemy.chargeTimerMs = 0;
+    enemy.chargeAngle = void 0;
+    const meta = this.enemyMeta.get(enemy.id);
+    if (meta) {
+      meta.chargeHitPlayerIds.clear();
+    }
+  }
+  removeEntityZones(entityId, kinds) {
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const z = this.zones[i];
+      if (z.ownerId === entityId && (!kinds || kinds.includes(z.kind))) {
+        this.zoneHitPlayers.delete(z.id);
+        this.zones.splice(i, 1);
+      }
+    }
+  }
+  getEnemyCcState(enemy) {
+    const meta = this.getEnemyMeta(enemy);
+    const effectiveStage = meta.hardCcStage > 0 && this.simTimeMs - meta.lastHardCcAtMs >= 8e3 ? 0 : meta.hardCcStage;
+    return {
+      stage: effectiveStage,
+      lastHardCcAtMs: meta.lastHardCcAtMs,
+      simTimeMs: this.simTimeMs
+    };
+  }
+  getBossRuntimeInfo(boss) {
+    const meta = this.getEnemyMeta(boss);
+    return {
+      phase: meta.bossPhase,
+      summonWave: boss.summonWave || 0,
+      lastAbility: meta.lastBossAbility
+    };
+  }
+  applyHardCc(enemy, kind, baseDurationMs) {
+    if (!enemy || enemy.hp <= 0 || baseDurationMs <= 0) return 0;
+    const meta = this.getEnemyMeta(enemy);
+    if (meta.hardCcStage > 0 && this.simTimeMs - meta.lastHardCcAtMs >= 8e3) {
+      meta.hardCcStage = 0;
+    }
+    const isBoss = enemy.kind === "boss";
+    const isElite = !isBoss && Boolean(enemy.elite);
+    const profileMult = isBoss ? 0.3 : isElite ? 0.75 : 1;
+    const drStages = isBoss ? [1, 0.4, 0] : [1, 0.5, 0.25, 0];
+    const stageIdx = Math.min(meta.hardCcStage, drStages.length - 1);
+    const drMult = drStages[stageIdx];
+    if (drMult <= 0) {
+      this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "CC IMMUNE!", "#94A3B8");
+      return 0;
+    }
+    const effectiveDuration = Math.max(0, Math.round(baseDurationMs * profileMult * drMult));
+    if (effectiveDuration <= 0) return 0;
+    meta.hardCcStage = Math.min(drStages.length - 1, meta.hardCcStage + 1);
+    meta.lastHardCcAtMs = this.simTimeMs;
+    if (kind === "stun") {
+      enemy.stunnedMs = Math.max(enemy.stunnedMs, effectiveDuration);
+    } else {
+      enemy.frozenMs = Math.max(enemy.frozenMs, effectiveDuration);
+    }
+    if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== void 0) {
+      this.clearEnemyChargeState(enemy);
+      if (enemy.state === "charge") enemy.state = "recover";
+    }
+    if (enemy.kind === "boss") {
+      const hadParry = this.zones.some((z) => z.kind === "warden_parry" && z.ownerId === enemy.id);
+      if (hadParry) {
+        this.removeEntityZones(enemy.id, ["warden_parry"]);
+        this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, "PARRY BROKEN!", "#38BDF8");
+      }
+    }
+    return effectiveDuration;
+  }
+  applySoftCc(enemy, baseDurationMs) {
+    if (!enemy || enemy.hp <= 0 || baseDurationMs <= 0) return 0;
+    const effectiveDuration = Math.max(0, Math.round(baseDurationMs));
+    enemy.slowedMs = Math.max(enemy.slowedMs, effectiveDuration);
+    return effectiveDuration;
+  }
+  applyDotStatus(enemy, kind, attacker, durationMs) {
+    if (!enemy || enemy.hp <= 0 || durationMs <= 0) return;
+    const meta = this.getEnemyMeta(enemy);
+    const mult = _GameRoom.computeDotMultiplier(attacker);
+    const ownerId = attacker ? attacker.id : null;
+    const effectiveDur = Math.max(0, Math.round(durationMs));
+    if (kind === "burn") {
+      enemy.burnedMs = effectiveDur;
+      meta.burnOwnerId = ownerId;
+      meta.burnMultiplier = mult;
+      meta.burnBaseTick = (7 + this.floor) * mult;
+    } else if (kind === "poison") {
+      enemy.poisonedMs = effectiveDur;
+      meta.poisonOwnerId = ownerId;
+      meta.poisonMultiplier = mult;
+      meta.poisonBaseTick = (5 + this.floor) * mult;
+    } else {
+      enemy.bleedingMs = effectiveDur;
+      meta.bleedOwnerId = ownerId;
+      meta.bleedMultiplier = mult;
+    }
+  }
+  applyDotDamageTick(enemy, kind, rawScaledTick, ownerId, color) {
+    if (enemy.hp <= 0) return false;
+    const resCat = kind === "burn" ? "fire" : kind === "poison" ? "poison" : "bleed";
+    const res = _GameRoom.getEnemyResistance(enemy.resistances, resCat);
+    const finalDmg = Math.max(1, Math.round(rawScaledTick * (1 - res)));
+    enemy.hp -= finalDmg;
+    const ownerState = ownerId ? this.players.get(ownerId)?.state ?? null : null;
+    if (ownerState) {
+      ownerState.damageDealt += finalDmg;
+    }
+    this.emitEvent(
+      "damage",
+      enemy.x + (Math.random() * 12 - 6),
+      enemy.y - enemy.radius - 8,
+      `${finalDmg}`,
+      color
+    );
+    if (enemy.hp <= 0) {
+      this.processEnemyDeath(enemy, ownerState);
+      return true;
+    }
+    return false;
+  }
+  applyStatusEffect(target, kind, durationMs, attacker = null) {
     if ("heroClass" in target) {
       if (kind === "slow") this.applyPlayerStatus(target, "frostbite", durationMs);
       else if (kind === "burn") this.applyPlayerStatus(target, "scorched", durationMs);
       else if (kind === "silence") this.applyPlayerStatus(target, "silenced", durationMs);
       else {
-        const faithTenacity = Math.min(0.4, (target.faith || 0) * 4e-3);
-        const reducedDuration = Math.round(durationMs * (1 - faithTenacity));
+        const faithTenacity = Math.min(0.4, (target.faith || 0) * 3e-3);
+        const reducedDuration = Math.max(0, Math.round(durationMs * (1 - faithTenacity)));
         target.stunnedMs = Math.max(target.stunnedMs, reducedDuration);
       }
       return;
     }
-    const tenacity = target.resistances?.tenacity || 0;
-    const effectiveDuration = kind === "stun" || kind === "freeze" ? Math.max(400, Math.round(durationMs * (1 - tenacity))) : durationMs;
     switch (kind) {
       case "slow":
-        target.slowedMs = Math.max(target.slowedMs, effectiveDuration);
+        this.applySoftCc(target, durationMs);
         break;
       case "stun":
-        target.stunnedMs = Math.max(target.stunnedMs, effectiveDuration);
-        break;
-      case "burn":
-        target.burnedMs = Math.max(target.burnedMs, effectiveDuration);
+        this.applyHardCc(target, "stun", durationMs);
         break;
       case "freeze":
-        target.frozenMs = Math.max(target.frozenMs, effectiveDuration);
+        this.applyHardCc(target, "freeze", durationMs);
         break;
-      case "shock":
-        target.shockedMs = Math.max(target.shockedMs, effectiveDuration);
+      case "burn":
+        this.applyDotStatus(target, "burn", attacker, durationMs);
         break;
       case "poison":
-        target.poisonedMs = Math.max(target.poisonedMs, effectiveDuration);
+        this.applyDotStatus(target, "poison", attacker, durationMs);
         break;
       case "bleed":
-        target.bleedingMs = Math.max(target.bleedingMs, effectiveDuration);
+        this.applyDotStatus(target, "bleed", attacker, durationMs);
+        break;
+      case "shock":
+        target.shockedMs = Math.max(target.shockedMs, Math.max(0, Math.round(durationMs)));
         break;
       case "silence":
-        target.silencedMs = Math.max(target.silencedMs, effectiveDuration);
+        target.silencedMs = Math.max(target.silencedMs || 0, Math.max(0, Math.round(durationMs)));
         break;
     }
   }
@@ -2031,17 +2485,28 @@ var GameRoom = class _GameRoom {
     const idx = this.enemies.findIndex((e) => e.id === entityId);
     if (idx >= 0) {
       const removed = this.enemies.splice(idx, 1)[0];
+      this.removeEntityZones(removed.id);
+      this.enemyMeta.delete(removed.id);
       this.pushSystemChat(`[ADMIN] Despawned entity ${removed.name} (${removed.id}).`);
     }
   }
   clearAllEnemies() {
     const count = this.enemies.length;
+    for (const en of this.enemies) {
+      this.removeEntityZones(en.id);
+    }
     this.enemies = [];
+    this.enemyMeta.clear();
     this.pushSystemChat(`[ADMIN] Cleared all ${count} active enemies from the room.`);
   }
   clearSummonedEntities() {
     const before = this.enemies.length;
-    this.enemies = this.enemies.filter((e) => e.kind === "boss");
+    this.enemies = this.enemies.filter((e) => {
+      if (e.kind === "boss") return true;
+      this.removeEntityZones(e.id);
+      this.enemyMeta.delete(e.id);
+      return false;
+    });
     const cleared = before - this.enemies.length;
     this.pushSystemChat(`[ADMIN] Cleared ${cleared} summoned entities (retained primary bosses).`);
   }
@@ -2081,9 +2546,26 @@ var GameRoom = class _GameRoom {
         en.enraged = false;
         en.shieldWallMs = 0;
         en.stunnedMs = 0;
+        en.frozenMs = 0;
+        en.summonWave = 0;
+        this.clearEnemyChargeState(en);
+        this.removeEntityZones(en.id);
+        const meta = this.getEnemyMeta(en);
+        meta.hardCcStage = 0;
+        meta.lastHardCcAtMs = -999999;
+        meta.bossPhase = 1;
+        meta.lastBossAbility = -1;
+        meta.bossAbilityCooldowns = {};
+      }
+      en.chronoSuspendedMs = 0;
+    }
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      if (this.zones[i].kind === "chrono_well") {
+        this.zones.splice(i, 1);
       }
     }
-    this.pushSystemChat(`[ADMIN] Reset active boss encounter (HP restored, enrage cleared).`);
+    this.refreshChronoSuspensionState();
+    this.pushSystemChat(`[ADMIN] Reset active boss encounter (HP restored, phase/enrage/CC cleared).`);
   }
   resetCurrentRoom() {
     this.loadFloor(this.floor, this.players.size);
@@ -2123,6 +2605,11 @@ var GameRoom = class _GameRoom {
       pr.state.poisonedMs = 0;
       pr.state.bleedingMs = 0;
       pr.state.silencedMs = 0;
+      pr.state.spellCastState = null;
+      pr.state.disintegrationState = null;
+      pr.state.equippedScrollId = null;
+      pr.state.pendingScrollChoices = [];
+      pr.state.chronoSuspendedMs = 0;
       pr.input = {
         up: false,
         down: false,
@@ -2294,6 +2781,9 @@ var GameRoom = class _GameRoom {
       existing.state.username = username;
       existing.state.isAdmin = isAdmin || Boolean(existing.state.isAdmin);
       if (!existing.state.storage) existing.state.storage = [];
+      if (existing.state.heroClass === "arcanist") {
+        if (!existing.state.pendingScrollChoices) existing.state.pendingScrollChoices = [];
+      }
       if (wasDisconnected && this.roomId !== "TAVERN-HUB") {
         this.pushSystemChat(`${username} reconnected.`);
       }
@@ -2310,6 +2800,8 @@ var GameRoom = class _GameRoom {
         break;
       }
     }
+    const clampedLevel = Math.max(1, Math.min(MAX_LEVEL, Number(savedStats?.level) || 1));
+    const clampedXp = clampedLevel >= MAX_LEVEL ? 0 : Math.max(0, Number(savedStats?.xp) || 0);
     const state = {
       id: playerId,
       username,
@@ -2322,9 +2814,9 @@ var GameRoom = class _GameRoom {
       hp: def.maxHp,
       maxHp: def.maxHp,
       shield: 15,
-      level: savedStats?.level || 1,
-      xp: savedStats?.xp || 0,
-      nextXp: savedStats ? Math.round(80 * Math.pow(1.35, savedStats.level - 1)) : 80,
+      level: clampedLevel,
+      xp: clampedXp,
+      nextXp: _GameRoom.computeNextXp(clampedLevel),
       gold: 0,
       potions: 2,
       relics: [],
@@ -2365,7 +2857,14 @@ var GameRoom = class _GameRoom {
       faith: savedStats?.faith || 0,
       attributePoints: savedStats?.attributePoints || 0,
       statuses: [],
-      floorBlessings: []
+      floorBlessings: [],
+      ...heroClass === "arcanist" ? {
+        spellCastState: null,
+        disintegrationState: null,
+        equippedScrollId: null,
+        pendingScrollChoices: []
+      } : {},
+      chronoSuspendedMs: 0
     };
     if (state.level >= MAX_LEVEL) {
       state.nextXp = 999999;
@@ -2411,6 +2910,11 @@ var GameRoom = class _GameRoom {
     };
     pr.state.vx = 0;
     pr.state.vy = 0;
+    if (pr.state.disintegrationState?.active) {
+      this.stopDisintegrationChannel(playerId);
+    }
+    pr.state.spellCastState = null;
+    this.cleanupChronoWellsForOwner(playerId);
     if (pr.state.connected) {
       pr.state.connected = false;
       if (this.roomId !== "TAVERN-HUB") {
@@ -2442,6 +2946,10 @@ var GameRoom = class _GameRoom {
   removePlayer(playerId) {
     const pr = this.players.get(playerId);
     if (!pr) return;
+    if (pr.state.disintegrationState?.active) {
+      this.stopDisintegrationChannel(playerId);
+    }
+    this.cleanupChronoWellsForOwner(playerId);
     const wasHost = playerId === this.hostId || pr.state.username === this.hostName;
     this.players.delete(playerId);
     this.pushSystemChat(`${pr.state.username} departed the party.`);
@@ -2522,6 +3030,10 @@ var GameRoom = class _GameRoom {
     pr.state.hp = Math.max(1, Math.round(pr.state.maxHp * hpRatio));
     pr.state.maxSkillCooldownMs = def.tacticalCooldownMs;
     pr.state.maxUltCooldownMs = def.ultCooldownMs;
+    pr.state.disintegrationState = null;
+    pr.state.spellCastState = null;
+    pr.state.equippedScrollId = null;
+    pr.state.pendingScrollChoices = [];
     this.emitEvent("status", pr.state.x, pr.state.y - 22, def.name, def.accentColor);
   }
   addPing(playerId, label, x, y) {
@@ -2739,15 +3251,15 @@ var GameRoom = class _GameRoom {
     if (!pr) return;
     const p = pr.state;
     const def = HERO_CLASSES[p.heroClass];
-    p.level = Math.max(1, Math.min(MAX_LEVEL, targetLevel));
+    p.level = Math.max(1, Math.min(MAX_LEVEL, Math.floor(targetLevel) || 1));
     p.xp = 0;
-    p.nextXp = p.level >= MAX_LEVEL ? 999999 : Math.round(80 * Math.pow(1.35, p.level - 1));
+    p.nextXp = _GameRoom.computeNextXp(p.level);
     p.strength = 0;
     p.vitality = 0;
     p.dexterity = 0;
     p.intelligence = 0;
     p.faith = 0;
-    p.attributePoints = (p.level - 1) * 2;
+    p.attributePoints = (p.level - 1) * 3;
     p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
     p.hp = p.maxHp;
     this.emitEvent("status", p.x, p.y - 26, `Level ${p.level} Set!`, "#F4D378");
@@ -2826,17 +3338,527 @@ var GameRoom = class _GameRoom {
     }
     return picked;
   }
+  rollScrollChoices(equippedId) {
+    const pool = ARCANIST_SCROLLS.filter((s) => s.id !== equippedId);
+    const copy = [...pool];
+    const picked = [];
+    while (picked.length < 3 && copy.length > 0) {
+      const idx = Math.floor(Math.random() * copy.length);
+      picked.push(copy[idx].id);
+      copy.splice(idx, 1);
+    }
+    return picked;
+  }
+  grantScrollChoices(playerId) {
+    const pr = this.players.get(playerId);
+    if (!pr || pr.state.heroClass !== "arcanist") return false;
+    if (pr.state.pendingScrollChoices && pr.state.pendingScrollChoices.length > 0) return false;
+    const choices = this.rollScrollChoices(pr.state.equippedScrollId);
+    if (choices.length === 0) return false;
+    pr.state.pendingScrollChoices = choices;
+    return true;
+  }
+  selectArcanistScroll(playerId, scrollId) {
+    const pr = this.players.get(playerId);
+    if (!pr || pr.state.heroClass !== "arcanist") return;
+    const p = pr.state;
+    if (!p.pendingScrollChoices || !p.pendingScrollChoices.includes(scrollId)) return;
+    const scrollDef = getArcanistScrollDef(scrollId);
+    if (!scrollDef) return;
+    p.pendingScrollChoices = [];
+    if (p.disintegrationState?.active) {
+      p.disintegrationState = null;
+    }
+    p.spellCastState = null;
+    p.equippedScrollId = scrollId;
+    const cdrMult = this.getPlayerCdrMult(p);
+    p.maxSkillCooldownMs = Math.round(scrollDef.cooldownMs * cdrMult);
+    p.skillCooldownMs = Math.min(p.skillCooldownMs, p.maxSkillCooldownMs);
+    this.emitEvent("status", p.x, p.y - 26, `Scroll: ${scrollDef.tacticalTitle}`, scrollDef.accentColor);
+    this.pushSystemChat(`${p.username} inscribed ${scrollDef.scrollName}, replacing Astral Nova.`);
+  }
+  getPlayerCdrMult(p) {
+    const intCdr = Math.min(0.2, (p.intelligence || 0) * 2e-3);
+    const relicCdr = p.relics.includes("hourglass_shard") ? 0.25 : 0;
+    const blessingCdr = this.getBlessingStacks(p, "swiftness") * 0.08;
+    return Math.max(0.5, 1 - (intCdr + relicCdr + blessingCdr));
+  }
+  getArcanistSpellDamage(p, spellId) {
+    const spec = ARCANIST_SPELLS[spellId];
+    return computeArcanistSpellDamage(
+      spec.baseDamage,
+      {
+        level: p.level,
+        intelligence: p.intelligence,
+        relics: p.relics,
+        furyStacks: this.getBlessingStacks(p, "fury")
+      },
+      spec.intCoeff
+    );
+  }
+  isPlayerCcInterrupted(p) {
+    if (p.downed || !p.connected) return true;
+    if ((p.stunnedMs || 0) > 0 || (p.frozenMs || 0) > 0 || (p.chronoSuspendedMs || 0) > 0) return true;
+    return Boolean(
+      p.statuses && p.statuses.some((s) => s.type === "silenced" || s.type === "charmed" || s.type === "impaled")
+    );
+  }
+  triggerArcanistScrollTactical(p, scrollId, aimAngle, aimDistance) {
+    if (p.heroClass !== "arcanist" || this.isPlayerCcInterrupted(p)) return false;
+    const spec = ARCANIST_SPELLS[scrollId];
+    if (!spec) return false;
+    if (p.spellCastState || p.disintegrationState?.active) return false;
+    if (p.skillCooldownMs > 0) return false;
+    const cleanAngle = Number.isFinite(aimAngle) ? normalizeAngle(aimAngle) : p.aimAngle;
+    p.aimAngle = cleanAngle;
+    if (scrollId === "disintegration") {
+      return this.startDisintegrationChannel(p.id, cleanAngle);
+    }
+    const maxRange = spec.maxRange ?? 280;
+    const dist = typeof aimDistance === "number" && Number.isFinite(aimDistance) ? Math.max(0, Math.min(maxRange, aimDistance)) : Math.min(maxRange, 180);
+    const targetX = p.x + Math.cos(cleanAngle) * dist;
+    const targetY = p.y + Math.sin(cleanAngle) * dist;
+    if (spec.castTimeMs > 0) {
+      p.spellCastState = {
+        spellId: scrollId,
+        remainingMs: spec.castTimeMs,
+        totalMs: spec.castTimeMs,
+        aimAngle: cleanAngle,
+        targetX,
+        targetY
+      };
+      p.attackAnimMs = Math.max(p.attackAnimMs, spec.castTimeMs);
+      return true;
+    }
+    return this.executeArcanistSpell(p, scrollId, cleanAngle, targetX, targetY);
+  }
+  executeArcanistSpell(p, spellId, aimAngle, targetX, targetY) {
+    const spec = ARCANIST_SPELLS[spellId];
+    const cdrMult = this.getPlayerCdrMult(p);
+    const applyScrollCooldown = () => {
+      p.skillCooldownMs = Math.round(spec.cooldownMs * cdrMult);
+      p.maxSkillCooldownMs = p.skillCooldownMs;
+    };
+    const critChance = Math.min(
+      0.45,
+      0.1 + (p.dexterity || 0) * 3e-3 + (p.relics.includes("keen_arrowhead") ? 0.2 : 0)
+    );
+    const rollSpellCrit = () => {
+      const baseScaled = this.getArcanistSpellDamage(p, spellId);
+      const hasCrit = Math.random() < critChance;
+      return {
+        hasCrit,
+        dmg: hasCrit ? Math.round(baseScaled * CRIT_DAMAGE_MULTIPLIER) : baseScaled
+      };
+    };
+    if (spellId === "fireball") {
+      applyScrollCooldown();
+      p.attackAnimMs = 220;
+      const speed = spec.projectileSpeed ?? 380;
+      const range = spec.maxRange ?? 360;
+      const { hasCrit, dmg } = rollSpellCrit();
+      this.spawnProjectile({
+        ownerType: "player",
+        ownerId: p.id,
+        style: "fireball",
+        spellId: "fireball",
+        damageCategory: "fire",
+        explosionRadius: spec.explosionRadius ?? 90,
+        x: p.x + Math.cos(aimAngle) * 16,
+        y: p.y + Math.sin(aimAngle) * 16,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 10,
+        damage: dmg,
+        pierce: 1,
+        crit: hasCrit,
+        ttlMs: Math.round(range / speed * 1e3)
+      });
+      return true;
+    }
+    if (spellId === "frost_lance") {
+      applyScrollCooldown();
+      p.attackAnimMs = 200;
+      const speed = spec.projectileSpeed ?? 480;
+      const range = spec.maxRange ?? 420;
+      const { hasCrit, dmg } = rollSpellCrit();
+      this.spawnProjectile({
+        ownerType: "player",
+        ownerId: p.id,
+        style: "frost_lance",
+        spellId: "frost_lance",
+        damageCategory: "frost",
+        x: p.x + Math.cos(aimAngle) * 16,
+        y: p.y + Math.sin(aimAngle) * 16,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 8,
+        damage: dmg,
+        pierce: spec.pierce ?? 3,
+        crit: hasCrit,
+        ttlMs: Math.round(range / speed * 1e3)
+      });
+      return true;
+    }
+    if (spellId === "chain_lightning") {
+      const maxRange = spec.maxRange ?? 340;
+      const maxJumpDist = spec.maxJumpDistance ?? 150;
+      const maxTargets = spec.maxTargets ?? 4;
+      const decay = spec.jumpDamageDecay ?? 0.15;
+      const allCandidates = [];
+      for (const e of this.enemies) {
+        if (e.hp > 0) allCandidates.push({ kind: "enemy", id: e.id, x: e.x, y: e.y, enemy: e });
+      }
+      for (const d of this.trainingDummies) {
+        allCandidates.push({ kind: "dummy", id: d.id, x: d.x, y: d.y, dummy: d });
+      }
+      let firstTarget = null;
+      let bestScore = Infinity;
+      for (const cand of allCandidates) {
+        const dPlayer = Math.hypot(cand.x - p.x, cand.y - p.y);
+        if (dPlayer > maxRange) continue;
+        const dCursor = Math.hypot(cand.x - targetX, cand.y - targetY);
+        const score = dCursor * 0.7 + dPlayer * 0.3;
+        if (score < bestScore) {
+          bestScore = score;
+          firstTarget = cand;
+        }
+      }
+      if (!firstTarget) {
+        this.emitEvent("status", p.x, p.y - 24, "No Target in Range", "#94A3B8");
+        return false;
+      }
+      applyScrollCooldown();
+      p.attackAnimMs = 210;
+      const visited = /* @__PURE__ */ new Set();
+      const hitChain = [];
+      let current = firstTarget;
+      while (current && hitChain.length < maxTargets) {
+        hitChain.push(current);
+        visited.add(current.id);
+        let nextCand = null;
+        let nextDist = Infinity;
+        for (const cand of allCandidates) {
+          if (visited.has(cand.id)) continue;
+          const dist = Math.hypot(cand.x - current.x, cand.y - current.y);
+          if (dist <= maxJumpDist && dist < nextDist) {
+            nextDist = dist;
+            nextCand = cand;
+          }
+        }
+        current = nextCand;
+      }
+      const { hasCrit, dmg: baseHitDmg } = rollSpellCrit();
+      const chainPoints = [{ x: p.x, y: p.y }];
+      for (let idx = 0; idx < hitChain.length; idx++) {
+        const tgt = hitChain[idx];
+        const jumpMult = Math.pow(1 - decay, idx);
+        const jumpDmg = Math.max(1, Math.round(baseHitDmg * jumpMult));
+        chainPoints.push({ x: tgt.x, y: tgt.y });
+        if (tgt.kind === "enemy") {
+          this.damageEnemy(tgt.enemy, jumpDmg, p, hasCrit, "lightning");
+        } else {
+          this.damageDummy(tgt.dummy, jumpDmg, p, hasCrit);
+        }
+      }
+      this.zones.push({
+        id: this.nextId("zone"),
+        kind: "chain_lightning_arc",
+        x: hitChain[0].x,
+        y: hitChain[0].y,
+        radius: 10,
+        ttlMs: 320,
+        maxTtlMs: 320,
+        ownerId: p.id,
+        chainPoints
+      });
+      return true;
+    }
+    if (spellId === "arcane_meteor") {
+      applyScrollCooldown();
+      p.attackAnimMs = 260;
+      const delayMs = spec.impactDelayMs ?? 1e3;
+      const radius = spec.explosionRadius ?? 125;
+      const { dmg } = rollSpellCrit();
+      this.zones.push({
+        id: this.nextId("zone"),
+        kind: "arcane_meteor",
+        x: targetX,
+        y: targetY,
+        radius,
+        ttlMs: delayMs,
+        maxTtlMs: delayMs,
+        ownerId: p.id,
+        damage: dmg,
+        chronoSuspendedMs: this.isPositionInChronoWell(targetX, targetY, 0)
+      });
+      this.emitEvent("status", targetX, targetY - 22, "Arcane Meteor!", "#E879F9");
+      return true;
+    }
+    if (spellId === "arcane_orb") {
+      applyScrollCooldown();
+      p.attackAnimMs = 220;
+      const speed = spec.projectileSpeed ?? 115;
+      const durationMs = spec.durationMs ?? 4e3;
+      const dmg = this.getArcanistSpellDamage(p, "arcane_orb");
+      const orb = this.spawnProjectile({
+        ownerType: "player",
+        ownerId: p.id,
+        style: "arcane_orb",
+        spellId: "arcane_orb",
+        damageCategory: "arcane",
+        x: p.x + Math.cos(aimAngle) * 18,
+        y: p.y + Math.sin(aimAngle) * 18,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 22,
+        damage: dmg,
+        pierce: 999,
+        ttlMs: durationMs
+      });
+      this.arcaneOrbHits.set(orb.id, /* @__PURE__ */ new Map());
+      return true;
+    }
+    if (spellId === "arcane_barrage") {
+      applyScrollCooldown();
+      p.attackAnimMs = 240;
+      const count = spec.projectileCount ?? 6;
+      const speed = spec.projectileSpeed ?? 400;
+      const range = spec.maxRange ?? 450;
+      const ttlMs = Math.round(range / speed * 1e3);
+      const ox = p.x + Math.cos(aimAngle) * 16;
+      const oy = p.y + Math.sin(aimAngle) * 16;
+      for (let i = 0; i < count; i++) {
+        const { hasCrit, dmg } = rollSpellCrit();
+        const helixSign = i % 2 === 0 ? 1 : -1;
+        const helixPhase = Math.floor(i / 2) * Math.PI * 2 / 3;
+        this.spawnProjectile({
+          ownerType: "player",
+          ownerId: p.id,
+          style: "arcane_barrage",
+          spellId: "arcane_barrage",
+          damageCategory: "arcane",
+          x: ox,
+          y: oy,
+          originX: ox,
+          originY: oy,
+          elapsedMs: 0,
+          helixSign,
+          helixPhase,
+          vx: Math.cos(aimAngle) * speed,
+          vy: Math.sin(aimAngle) * speed,
+          angle: aimAngle,
+          radius: 7,
+          damage: dmg,
+          pierce: 1,
+          crit: hasCrit,
+          ttlMs
+        });
+      }
+      return true;
+    }
+    return false;
+  }
+  startDisintegrationChannel(playerId, aimAngle) {
+    const pr = this.players.get(playerId);
+    if (!pr || this.status !== "playing") return false;
+    const p = pr.state;
+    if (p.heroClass !== "arcanist" || p.equippedScrollId !== "disintegration") return false;
+    if (this.isPlayerCcInterrupted(p)) return false;
+    if (p.skillCooldownMs > 0 || p.spellCastState) return false;
+    if (p.disintegrationState?.active) return true;
+    const spec = ARCANIST_SPELLS.disintegration;
+    const cleanAngle = Number.isFinite(aimAngle) ? normalizeAngle(aimAngle) : p.aimAngle;
+    p.aimAngle = cleanAngle;
+    p.spellCastState = null;
+    p.vx = 0;
+    p.vy = 0;
+    p.disintegrationState = {
+      active: true,
+      angle: cleanAngle,
+      targetAngle: cleanAngle,
+      activationRemainingMs: spec.activationMs ?? 150,
+      tickAccumMs: 0,
+      startedAtMs: this.simTimeMs
+    };
+    return true;
+  }
+  updateDisintegrationTarget(playerId, aimAngle) {
+    const pr = this.players.get(playerId);
+    if (!pr || !pr.state.disintegrationState?.active) return;
+    if (!Number.isFinite(aimAngle)) return;
+    const clean = normalizeAngle(aimAngle);
+    pr.state.disintegrationState.targetAngle = clean;
+    pr.state.aimAngle = clean;
+  }
+  stopDisintegrationChannel(playerId) {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    if (!p.disintegrationState?.active) return;
+    p.disintegrationState = null;
+    const cdrMult = this.getPlayerCdrMult(p);
+    p.skillCooldownMs = Math.round(ARCANIST_SPELLS.disintegration.cooldownMs * cdrMult);
+    p.maxSkillCooldownMs = p.skillCooldownMs;
+  }
+  getDisintegrationEndpoint(x, y, angle, maxRange) {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const step = 14;
+    let dist = 0;
+    while (dist + step <= maxRange) {
+      const nx = x + cos * (dist + step);
+      const ny = y + sin * (dist + step);
+      if (this.isWallAtWorld(nx, ny)) {
+        break;
+      }
+      dist += step;
+    }
+    const finalDist = Math.min(maxRange, dist);
+    return {
+      endX: x + cos * finalDist,
+      endY: y + sin * finalDist
+    };
+  }
+  stepDisintegrationChannel(p, dtMs, dtSec) {
+    const ch = p.disintegrationState;
+    if (!ch || !ch.active) return;
+    if (this.isPlayerCcInterrupted(p)) {
+      this.stopDisintegrationChannel(p.id);
+      this.emitEvent("status", p.x, p.y - 24, "CHANNEL INTERRUPTED!", "#EF4444");
+      return;
+    }
+    p.vx = 0;
+    p.vy = 0;
+    const spec = ARCANIST_SPELLS.disintegration;
+    const maxRotPerSec = spec.maxRotationRadPerSec ?? Math.PI;
+    ch.angle = rotateAngleToward(ch.angle, ch.targetAngle, maxRotPerSec * dtSec);
+    p.aimAngle = ch.angle;
+    p.attackAnimMs = 120;
+    let remainingDt = dtMs;
+    if (ch.activationRemainingMs > 0) {
+      if (remainingDt < ch.activationRemainingMs) {
+        ch.activationRemainingMs -= remainingDt;
+        return;
+      }
+      remainingDt -= ch.activationRemainingMs;
+      ch.activationRemainingMs = 0;
+    }
+    const tickInterval = spec.tickIntervalMs ?? 200;
+    ch.tickAccumMs += remainingDt;
+    if (ch.tickAccumMs < tickInterval) return;
+    const beamHalfWidth = (spec.beamWidth ?? 42) / 2;
+    const maxRange = spec.maxRange ?? 450;
+    const { endX, endY } = this.getDisintegrationEndpoint(p.x, p.y, ch.angle, maxRange);
+    const tickDmg = this.getArcanistSpellDamage(p, "disintegration");
+    while (ch.tickAccumMs >= tickInterval) {
+      ch.tickAccumMs -= tickInterval;
+      const candidateEnemies = [...this.enemies];
+      for (const enemy of candidateEnemies) {
+        if (!enemy || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+        const d = distancePointToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY);
+        if (d <= beamHalfWidth + enemy.radius) {
+          this.damageEnemy(enemy, tickDmg, p, false, "arcane");
+        }
+      }
+      for (const dummy of this.trainingDummies) {
+        const d = distancePointToSegment(dummy.x, dummy.y, p.x, p.y, endX, endY);
+        if (d <= beamHalfWidth + 18) {
+          this.damageDummy(dummy, tickDmg, p, false);
+        }
+      }
+    }
+  }
+  explodeFireball(proj) {
+    const radius = proj.explosionRadius ?? 90;
+    const ownerPr = this.players.get(proj.ownerId);
+    const attacker = ownerPr ? ownerPr.state : null;
+    const targets = [...this.enemies];
+    for (const enemy of targets) {
+      if (!enemy || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+      if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= radius + enemy.radius * 0.35) {
+        this.damageEnemy(enemy, proj.damage, attacker, Boolean(proj.crit), "fire");
+      }
+    }
+    for (const dummy of this.trainingDummies) {
+      if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= radius + 18) {
+        this.damageDummy(dummy, proj.damage, attacker, Boolean(proj.crit));
+      }
+    }
+    this.emitEvent("status", proj.x, proj.y - 16, "FIREBALL BLAST!", "#F97316");
+  }
+  isPositionInChronoWell(x, y, radius = 0, excludeOwnerId) {
+    let maxRemain = 0;
+    for (let i = 0; i < this.zones.length; i++) {
+      const z = this.zones[i];
+      if (z.kind !== "chrono_well" || z.ttlMs <= 0) continue;
+      if (excludeOwnerId && z.ownerId === excludeOwnerId) continue;
+      if (Math.hypot(x - z.x, y - z.y) <= z.radius + radius) {
+        if (z.ttlMs > maxRemain) maxRemain = z.ttlMs;
+      }
+    }
+    return maxRemain;
+  }
+  refreshChronoSuspensionState() {
+    for (const pr of this.players.values()) {
+      const p = pr.state;
+      if (p.downed) {
+        p.chronoSuspendedMs = 0;
+      } else {
+        p.chronoSuspendedMs = this.isPositionInChronoWell(p.x, p.y, 10, p.id);
+      }
+    }
+    for (const enemy of this.enemies) {
+      enemy.chronoSuspendedMs = this.isPositionInChronoWell(enemy.x, enemy.y, enemy.radius * 0.35);
+    }
+    for (const proj of this.projectiles) {
+      proj.chronoSuspendedMs = this.isPositionInChronoWell(proj.x, proj.y, proj.radius);
+    }
+    for (const z of this.zones) {
+      if (z.kind === "chrono_well" || z.kind === "chain_lightning_arc") {
+        z.chronoSuspendedMs = 0;
+        continue;
+      }
+      const isSupportZone = z.kind === "aegis_dome" || z.kind === "solar_beacon";
+      const isOffensivePlayerZone = z.kind === "star_rift" || z.kind === "arcane_meteor";
+      let susp = this.isPositionInChronoWell(
+        z.x,
+        z.y,
+        0,
+        isSupportZone ? z.ownerId : void 0
+      );
+      if (susp === 0 && !isSupportZone && !isOffensivePlayerZone) {
+        const ownerEnemy = this.enemies.find((e) => e.id === z.ownerId);
+        if (ownerEnemy && (ownerEnemy.chronoSuspendedMs || 0) > 0) {
+          susp = ownerEnemy.chronoSuspendedMs || 0;
+        }
+      }
+      z.chronoSuspendedMs = susp;
+    }
+  }
+  cleanupChronoWellsForOwner(ownerId) {
+    let removedAny = false;
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      if (this.zones[i].kind === "chrono_well" && this.zones[i].ownerId === ownerId) {
+        this.zones.splice(i, 1);
+        removedAny = true;
+      }
+    }
+    if (removedAny) {
+      this.refreshChronoSuspensionState();
+    }
+  }
   performAction(playerId, action, aimAngle = 0, options) {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== "playing") return {};
     const p = pr.state;
-    if (p.downed) return {};
+    if (p.downed || (p.chronoSuspendedMs || 0) > 0) return {};
     p.aimAngle = Number.isFinite(aimAngle) ? aimAngle : p.aimAngle;
     const def = HERO_CLASSES[p.heroClass];
-    const intCdr = Math.min(0.2, (p.intelligence || 0) * 2e-3);
-    const relicCdr = p.relics.includes("hourglass_shard") ? 0.25 : 0;
-    const blessingCdr = this.getBlessingStacks(p, "swiftness") * 0.08;
-    const cdrMult = Math.max(0.5, 1 - (intCdr + relicCdr + blessingCdr));
+    const cdrMult = this.getPlayerCdrMult(p);
     const isSilenced = p.statuses && p.statuses.some((s) => s.type === "silenced");
     if (action === "dash") {
       if (p.dashCooldownMs > 0) return {};
@@ -2861,7 +3883,8 @@ var GameRoom = class _GameRoom {
     if (action === "potion") {
       if (p.potions > 0 && p.hp < p.maxHp) {
         p.potions -= 1;
-        const healAmt = Math.round(p.maxHp * 0.45);
+        const cursedMult = p.statuses && p.statuses.some((s) => s.type === "ashen_curse") ? 0.55 : 1;
+        const healAmt = Math.max(1, Math.round(p.maxHp * 0.3 * cursedMult));
         p.hp = Math.min(p.maxHp, p.hp + healAmt);
         this.emitEvent("heal", p.x, p.y - 20, `+${healAmt}`, "#34D399");
       }
@@ -2969,6 +3992,9 @@ var GameRoom = class _GameRoom {
               p.potions = Math.min(5, p.potions + 1);
               this.emitEvent("heal", prop.x, prop.y - 18, "+1 Potion", "#6EE7B7");
             }
+            if (prop.kind === "chest" && p.heroClass === "arcanist" && !p.equippedScrollId && Math.random() < 0.3) {
+              this.grantScrollChoices(p.id);
+            }
             this.emitEvent("gold", prop.x, prop.y - 8, `+${prop.value} Gold`, "#F4D378");
           } else if (prop.kind === "potion") {
             p.potions = Math.min(5, p.potions + 1);
@@ -2976,6 +4002,9 @@ var GameRoom = class _GameRoom {
           } else if (prop.kind === "relic_chest") {
             for (const ally of this.players.values()) {
               ally.state.pendingRelicChoices = this.rollRelicChoices(ally.state.relics);
+              if (ally.state.heroClass === "arcanist" && (!ally.state.equippedScrollId || Math.random() < 0.45)) {
+                this.grantScrollChoices(ally.state.id);
+              }
             }
             this.emitEvent("status", prop.x, prop.y - 20, "Relic Vault Opened", "#E8CE76");
             this.pushSystemChat(`${p.username} unlocked an Ancient Relic Chest for the party.`);
@@ -3054,13 +4083,33 @@ var GameRoom = class _GameRoom {
         return {};
       }
       if (p.skillCooldownMs > 0) return {};
+      if (p.heroClass === "arcanist" && p.equippedScrollId) {
+        const scrollActivated = this.triggerArcanistScrollTactical(
+          p,
+          p.equippedScrollId,
+          p.aimAngle,
+          options?.aimDistance
+        );
+        if (scrollActivated && p.relics.includes("oathbound_censer")) {
+          for (const ally of this.players.values()) {
+            if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
+              const censerCurseMult = ally.state.statuses && ally.state.statuses.some((s) => s.type === "ashen_curse") ? 0.55 : 1;
+              const censerHeal = Math.max(1, Math.round(8 * censerCurseMult));
+              ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + censerHeal);
+            }
+          }
+        }
+        return {};
+      }
       p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
       if (p.relics.includes("oathbound_censer")) {
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
-            ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + 14);
+            const censerCurseMult = ally.state.statuses && ally.state.statuses.some((s) => s.type === "ashen_curse") ? 0.55 : 1;
+            const censerHeal = Math.max(1, Math.round(8 * censerCurseMult));
+            ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + censerHeal);
           }
         }
       }
@@ -3082,7 +4131,7 @@ var GameRoom = class _GameRoom {
         const bashTargets = [...this.enemies];
         for (const enemy of bashTargets) {
           if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 84) {
-            enemy.stunnedMs = 1700;
+            this.applyHardCc(enemy, "stun", 1700);
             this.damageEnemy(enemy, Math.round(32 * dmgMult), p, false, "physical");
           }
         }
@@ -3134,10 +4183,10 @@ var GameRoom = class _GameRoom {
         }
       } else if (p.heroClass === "cleric") {
         const dmgMult = this.computeDamageMult(p, "divine");
-        const baseHeal = 36;
-        const heal = this.computeHealingAmount(baseHeal, p);
+        const baseHeal = 24;
         for (const ally of this.players.values()) {
           if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 210) {
+            const heal = this.computeHealingAmount(baseHeal, p, ally.state);
             ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + heal);
             this.emitEvent("heal", ally.state.x, ally.state.y - 20, `+${heal}`, "#34D399");
           }
@@ -3201,11 +4250,12 @@ var GameRoom = class _GameRoom {
           kind: "chrono_well",
           x: targetPos.x,
           y: targetPos.y,
-          radius: 100,
-          ttlMs: 5e3,
-          maxTtlMs: 5e3,
+          radius: 115,
+          ttlMs: 3e3,
+          maxTtlMs: 3e3,
           ownerId: p.id
         });
+        this.refreshChronoSuspensionState();
         this.emitEvent("status", targetPos.x, targetPos.y - 20, "Chrono Well", "#7CC6FE");
       } else if (p.heroClass === "cleric") {
         const ultSpec = getAbilityTargetSpec("cleric", "ult");
@@ -3222,8 +4272,8 @@ var GameRoom = class _GameRoom {
           x: targetPos.x,
           y: targetPos.y,
           radius: 115,
-          ttlMs: 6e3,
-          maxTtlMs: 6e3,
+          ttlMs: 5e3,
+          maxTtlMs: 5e3,
           ownerId: p.id
         });
         this.emitEvent("status", targetPos.x, targetPos.y - 26, "Solar Beacon", "#FDE68A");
@@ -3233,29 +4283,40 @@ var GameRoom = class _GameRoom {
     return {};
   }
   computeDamageMult(p, category = "physical") {
-    let mult = 1 + (p.level - 1) * 0.1;
+    const lvl = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
+    let mult = 1 + (lvl - 1) * 0.025;
     if (category === "physical") {
       const physStat = p.heroClass === "ranger" ? p.dexterity || 0 : p.strength || 0;
-      mult *= 1 + physStat * 0.03;
+      mult *= 1 + physStat * 8e-3;
     } else if (category === "arcane") {
-      mult *= 1 + (p.intelligence || 0) * 0.03;
+      mult *= 1 + (p.intelligence || 0) * 8e-3;
     } else if (category === "divine") {
-      mult *= 1 + (p.faith || 0) * 0.03;
+      mult *= 1 + (p.faith || 0) * 8e-3;
     } else {
       const mainStat = p.heroClass === "ranger" ? p.dexterity || 0 : p.heroClass === "arcanist" ? p.intelligence || 0 : p.heroClass === "cleric" ? p.faith || 0 : p.strength || 0;
-      mult *= 1 + mainStat * 0.03;
+      mult *= 1 + mainStat * 8e-3;
     }
-    if (p.relics.includes("sunfire_signet")) mult *= 1.24;
+    if (p.relics.includes("sunfire_signet")) mult *= 1.12;
     const furyStacks = this.getBlessingStacks(p, "fury");
-    if (furyStacks > 0) mult *= 1 + furyStacks * 0.1;
+    if (furyStacks > 0) mult *= 1 + furyStacks * 0.06;
     return mult;
   }
   tick(dtMs) {
     if (this.status !== "playing" || this.players.size === 0) return;
+    this.simTimeMs += dtMs;
     const dtSec = dtMs / 1e3;
     this.zoneTickAccumMs += dtMs;
     const pulseZonesNow = this.zoneTickAccumMs >= 500;
-    if (pulseZonesNow) this.zoneTickAccumMs = 0;
+    if (pulseZonesNow) {
+      this.zoneTickAccumMs = 0;
+      if (this.zoneHitPlayers.size > 0) {
+        for (const zid of this.zoneHitPlayers.keys()) {
+          if (!this.zones.some((z) => z.id === zid)) {
+            this.zoneHitPlayers.delete(zid);
+          }
+        }
+      }
+    }
     this.statusDotAccumMs += dtMs;
     const pulseDotNow = this.statusDotAccumMs >= 650;
     if (pulseDotNow) this.statusDotAccumMs = 0;
@@ -3281,7 +4342,48 @@ var GameRoom = class _GameRoom {
     }
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i];
+      if (z.kind !== "chrono_well") continue;
+      const owner = this.players.get(z.ownerId);
       z.ttlMs -= dtMs;
+      if (z.ttlMs <= 0 || !owner || !owner.state.connected) {
+        this.zones.splice(i, 1);
+      }
+    }
+    this.refreshChronoSuspensionState();
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const z = this.zones[i];
+      if (z.kind === "chrono_well") {
+        continue;
+      }
+      if ((z.chronoSuspendedMs || 0) > 0) {
+        continue;
+      }
+      z.ttlMs -= dtMs;
+      if (z.kind === "chain_lightning_arc") {
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+        }
+        continue;
+      }
+      if (z.kind === "arcane_meteor" && z.ttlMs <= 0) {
+        const ownerPr = this.players.get(z.ownerId);
+        const attacker = ownerPr ? ownerPr.state : null;
+        const meteorDmg = z.damage ?? 75;
+        const targets = [...this.enemies];
+        for (const enemy of targets) {
+          if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius) {
+            this.damageEnemy(enemy, meteorDmg, attacker, false, "arcane");
+          }
+        }
+        for (const dummy of this.trainingDummies) {
+          if (Math.hypot(dummy.x - z.x, dummy.y - z.y) <= z.radius) {
+            this.damageDummy(dummy, meteorDmg, attacker, false);
+          }
+        }
+        this.emitEvent("status", z.x, z.y - 20, "METEOR IMPACT!", "#E879F9");
+        this.zones.splice(i, 1);
+        continue;
+      }
       if (z.kind === "sound_lane" && z.ttlMs <= 0) {
         const w = z.width || 320;
         const h = z.height || 40;
@@ -3432,10 +4534,13 @@ var GameRoom = class _GameRoom {
         continue;
       }
       if (z.kind === "warden_parry") {
-        if (z.ttlMs <= 0) {
+        const owner = this.enemies.find((e) => e.id === z.ownerId && e.hp > 0);
+        if (!owner || owner.stunnedMs > 0 || owner.frozenMs > 0 || z.ttlMs <= 0) {
           this.zones.splice(i, 1);
           continue;
         }
+        z.x = owner.x;
+        z.y = owner.y;
       }
       if (z.kind === "verdict_combo" && z.ttlMs <= 0) {
         const stage = z.stage || 1;
@@ -3497,16 +4602,23 @@ var GameRoom = class _GameRoom {
       if (z.kind === "supernova") {
         const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
         const currentRadius = z.radius * progress;
+        let hitSet = this.zoneHitPlayers.get(z.id);
+        if (!hitSet) {
+          hitSet = /* @__PURE__ */ new Set();
+          this.zoneHitPlayers.set(z.id, hitSet);
+        }
         for (const pr of this.players.values()) {
-          if (!pr.state.downed) {
+          if (!pr.state.downed && !hitSet.has(pr.state.id)) {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (Math.abs(dist - currentRadius) <= 18) {
+              hitSet.add(pr.state.id);
               this.damagePlayer(pr.state, 26 + this.floor * 4, "elemental");
               this.applyPlayerStatus(pr.state, "disoriented", 3e3);
             }
           }
         }
         if (z.ttlMs <= 0) {
+          this.zoneHitPlayers.delete(z.id);
           this.zones.splice(i, 1);
           continue;
         }
@@ -3575,7 +4687,6 @@ var GameRoom = class _GameRoom {
         if (z.kind === "solar_beacon") {
           const ownerPr = this.players.get(z.ownerId);
           const ownerState = ownerPr ? ownerPr.state : null;
-          const beaconHeal = this.computeHealingAmount(9, ownerState);
           for (const pr of this.players.values()) {
             const dist = Math.hypot(pr.state.x - z.x, pr.state.y - z.y);
             if (dist <= z.radius) {
@@ -3585,20 +4696,10 @@ var GameRoom = class _GameRoom {
                   this.completeRevive(pr.state, z.ownerId);
                 }
               } else if (pr.state.hp < pr.state.maxHp) {
+                const beaconHeal = this.computeHealingAmount(4, ownerState, pr.state);
                 pr.state.hp = Math.min(pr.state.maxHp, pr.state.hp + beaconHeal);
                 this.emitEvent("heal", pr.state.x, pr.state.y - 16, `+${Math.round(beaconHeal)}`, "#34D399");
               }
-            }
-          }
-        } else if (z.kind === "chrono_well") {
-          for (const enemy of this.enemies) {
-            if (Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius) {
-              enemy.slowedMs = 900;
-            }
-          }
-          for (const pr of this.players.values()) {
-            if (Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
-              pr.state.skillCooldownMs = Math.max(0, pr.state.skillCooldownMs - 350);
             }
           }
         } else if (z.kind === "star_rift") {
@@ -3621,6 +4722,7 @@ var GameRoom = class _GameRoom {
       }
     }
     for (const pr of this.players.values()) {
+      if ((pr.state.chronoSuspendedMs || 0) > 0) continue;
       this.updatePlayerStatuses(pr.state, dtMs, pulseDotNow);
     }
     this.clericAuraAccumMs += dtMs;
@@ -3644,8 +4746,8 @@ var GameRoom = class _GameRoom {
             this.emitEvent("cleric_pulse", cleric.x, cleric.y, "Radiant Aura", "#22C55E");
             for (const ally of targetsInRange) {
               if (ally.hp < ally.maxHp) {
-                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 6 : 4;
-                const healAmt = this.computeHealingAmount(baseHeal, cleric);
+                const baseHeal = ally.hp < ally.maxHp * 0.5 ? 3 : 2;
+                const healAmt = this.computeHealingAmount(baseHeal, cleric, ally);
                 ally.hp = Math.min(ally.maxHp, ally.hp + healAmt);
                 this.emitEvent("heal", ally.x, ally.y - 18, `+${healAmt}`, "#34D399");
               }
@@ -3658,13 +4760,23 @@ var GameRoom = class _GameRoom {
       for (const pr of this.players.values()) {
         const p = pr.state;
         if (!p.downed && p.connected && (p.vitality || 0) >= 6 && p.hp < p.maxHp) {
-          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.12));
+          const regenAmt = Math.max(1, Math.floor((p.vitality || 0) * 0.1));
           p.hp = Math.min(p.maxHp, p.hp + regenAmt);
         }
       }
     }
     for (const pr of this.players.values()) {
       const p = pr.state;
+      if ((p.chronoSuspendedMs || 0) > 0) {
+        if (p.disintegrationState?.active) {
+          this.stopDisintegrationChannel(p.id);
+          this.emitEvent("status", p.x, p.y - 24, "TIME SUSPENDED!", "#38BDF8");
+        }
+        p.spellCastState = null;
+        p.vx = 0;
+        p.vy = 0;
+        continue;
+      }
       pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
       p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
       p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
@@ -3672,6 +4784,10 @@ var GameRoom = class _GameRoom {
       p.attackAnimMs = Math.max(0, p.attackAnimMs - dtMs);
       p.hasteMs = Math.max(0, p.hasteMs - dtMs);
       if (p.downed) {
+        if (p.disintegrationState?.active) {
+          this.stopDisintegrationChannel(p.id);
+        }
+        p.spellCastState = null;
         p.vx = 0;
         p.vy = 0;
         p.downedTimerMs = Math.max(0, p.downedTimerMs - dtMs);
@@ -3693,6 +4809,21 @@ var GameRoom = class _GameRoom {
         }
         continue;
       }
+      if (p.spellCastState) {
+        if (this.isPlayerCcInterrupted(p)) {
+          p.spellCastState = null;
+        } else {
+          p.spellCastState.remainingMs = Math.max(0, p.spellCastState.remainingMs - dtMs);
+          if (p.spellCastState.remainingMs <= 0) {
+            const cast = p.spellCastState;
+            p.spellCastState = null;
+            this.executeArcanistSpell(p, cast.spellId, cast.aimAngle, cast.targetX, cast.targetY);
+          }
+        }
+      }
+      if (p.disintegrationState?.active) {
+        this.stepDisintegrationChannel(p, dtMs, dtSec);
+      }
       const def = HERO_CLASSES[p.heroClass];
       const moveSpeed = computePlayerMoveSpeed(p);
       const isDisoriented = p.statuses.some((s) => s.type === "disoriented");
@@ -3712,15 +4843,20 @@ var GameRoom = class _GameRoom {
           }
         }
       }
-      if (mx !== 0 || my !== 0) {
-        p.vx = mx * moveSpeed + charmVx;
-        p.vy = my * moveSpeed + charmVy;
+      if (p.disintegrationState?.active) {
+        p.vx = 0;
+        p.vy = 0;
       } else {
-        p.vx = charmVx;
-        p.vy = charmVy;
-      }
-      if (p.vx !== 0 || p.vy !== 0) {
-        this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
+        if (mx !== 0 || my !== 0) {
+          p.vx = mx * moveSpeed + charmVx;
+          p.vy = my * moveSpeed + charmVy;
+        } else {
+          p.vx = charmVx;
+          p.vy = charmVy;
+        }
+        if (p.vx !== 0 || p.vy !== 0) {
+          this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
+        }
       }
       const room = this.findRoomContaining(p.x, p.y);
       if (room) {
@@ -3757,7 +4893,7 @@ var GameRoom = class _GameRoom {
                 st.shield = Math.min(bastionCap, st.shield + 25);
               }
               if (!st.downed) {
-                st.hp = Math.min(st.maxHp, st.hp + 30);
+                st.hp = Math.min(st.maxHp, st.hp + 20);
               }
               this.emitEvent("status", st.x, st.y - 34, `TOTEM: ${blessingMeta.name}!`, blessingMeta.color);
             }
@@ -3775,13 +4911,13 @@ var GameRoom = class _GameRoom {
           }
         }
       }
-      if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
-        const dexSpeedMult = (1 + (p.dexterity || 0) * 6e-3) * (1 + this.getBlessingStacks(p, "swiftness") * 0.08);
+      if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0 && (!p.pendingScrollChoices || p.pendingScrollChoices.length === 0) && !p.disintegrationState?.active && !p.spellCastState) {
+        const dexSpeedMult = (1 + (p.dexterity || 0) * 4e-3) * (1 + this.getBlessingStacks(p, "swiftness") * 0.08);
         let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         if (p.statuses.some((s) => s.type === "frostbite")) {
           hasteFactor *= 1.25;
         }
-        pr.attackCooldownMs = Math.round(def.attackCooldownMs * hasteFactor);
+        pr.attackCooldownMs = Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
       }
@@ -3805,6 +4941,11 @@ var GameRoom = class _GameRoom {
     }
     for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
       const enemy = this.enemies[eIdx];
+      if ((enemy.chronoSuspendedMs || 0) > 0) {
+        enemy.vx = 0;
+        enemy.vy = 0;
+        continue;
+      }
       enemy.markedMs = Math.max(0, enemy.markedMs - dtMs);
       enemy.slowedMs = Math.max(0, enemy.slowedMs - dtMs);
       enemy.stunnedMs = Math.max(0, enemy.stunnedMs - dtMs);
@@ -3814,35 +4955,55 @@ var GameRoom = class _GameRoom {
       enemy.poisonedMs = Math.max(0, enemy.poisonedMs - dtMs);
       enemy.bleedingMs = Math.max(0, enemy.bleedingMs - dtMs);
       enemy.silencedMs = Math.max(0, (enemy.silencedMs || 0) - dtMs);
+      enemy.shieldWallMs = Math.max(0, (enemy.shieldWallMs || 0) - dtMs);
+      const meta = this.getEnemyMeta(enemy);
       if (pulseDotNow && enemy.hp > 0) {
+        let enemyDied = false;
         if (enemy.burnedMs > 0) {
-          const rawBurn = 7 + this.floor;
-          const fireRes = _GameRoom.getEnemyResistance(enemy.resistances, "fire");
-          const burnDmg = Math.max(1, Math.round(rawBurn * (1 - fireRes)));
-          enemy.hp -= burnDmg;
-          this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${burnDmg}`, "#F97316");
+          const ownerId = meta.burnOwnerId ?? enemy.burnInflicterId ?? null;
+          const ownerState = ownerId ? this.players.get(ownerId)?.state ?? null : null;
+          const mult = meta.burnMultiplier ?? _GameRoom.computeDotMultiplier(ownerState);
+          const rawBurn = meta.burnBaseTick ?? (7 + this.floor) * mult;
+          enemyDied = this.applyDotDamageTick(enemy, "burn", rawBurn, ownerId, "#F97316");
         }
-        if (enemy.poisonedMs > 0) {
-          const rawPoison = 5 + this.floor;
-          const poisonRes = _GameRoom.getEnemyResistance(enemy.resistances, "poison");
-          const poisonDmg = Math.max(1, Math.round(rawPoison * (1 - poisonRes)));
-          enemy.hp -= poisonDmg;
-          this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, ` ${poisonDmg}`, "#22C55E");
+        if (!enemyDied && enemy.poisonedMs > 0) {
+          const ownerId = meta.poisonOwnerId ?? null;
+          const ownerState = ownerId ? this.players.get(ownerId)?.state ?? null : null;
+          const mult = meta.poisonMultiplier ?? _GameRoom.computeDotMultiplier(ownerState);
+          const rawPoison = meta.poisonBaseTick ?? (5 + this.floor) * mult;
+          enemyDied = this.applyDotDamageTick(enemy, "poison", rawPoison, ownerId, "#22C55E");
         }
-        if (enemy.bleedingMs > 0) {
+        if (!enemyDied && enemy.bleedingMs > 0) {
+          const ownerId = meta.bleedOwnerId ?? null;
+          const ownerState = ownerId ? this.players.get(ownerId)?.state ?? null : null;
+          const mult = meta.bleedMultiplier ?? _GameRoom.computeDotMultiplier(ownerState);
           const moving = Math.hypot(enemy.vx, enemy.vy) > 8;
-          const rawBleed = (moving ? 14 : 7) + this.floor;
-          const bleedRes = _GameRoom.getEnemyResistance(enemy.resistances, "bleed");
-          const bleedDmg = Math.max(1, Math.round(rawBleed * (1 - bleedRes)));
-          enemy.hp -= bleedDmg;
-          this.emitEvent("damage", enemy.x + (Math.random() * 12 - 6), enemy.y - enemy.radius - 8, `${bleedDmg}`, "#DC2626");
+          const baseBleed = (moving ? 14 : 7) + this.floor;
+          const rawBleed = baseBleed * mult;
+          enemyDied = this.applyDotDamageTick(enemy, "bleed", rawBleed, ownerId, "#DC2626");
         }
-        if (enemy.hp <= 0) {
-          this.processEnemyDeath(enemy, null);
+        if (enemyDied) {
           continue;
         }
       }
+      if (enemy.burnedMs <= 0 && meta.burnOwnerId !== null) {
+        meta.burnOwnerId = null;
+        meta.burnMultiplier = null;
+        meta.burnBaseTick = null;
+      }
+      if (enemy.poisonedMs <= 0 && meta.poisonOwnerId !== null) {
+        meta.poisonOwnerId = null;
+        meta.poisonMultiplier = null;
+        meta.poisonBaseTick = null;
+      }
+      if (enemy.bleedingMs <= 0 && meta.bleedOwnerId !== null) {
+        meta.bleedOwnerId = null;
+        meta.bleedMultiplier = null;
+      }
       if (enemy.stunnedMs > 0 || enemy.frozenMs > 0) {
+        if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== void 0) {
+          this.clearEnemyChargeState(enemy);
+        }
         enemy.vx = 0;
         enemy.vy = 0;
         continue;
@@ -3872,6 +5033,9 @@ var GameRoom = class _GameRoom {
         }
       }
       if (!nearest) {
+        if (enemy.charging || (enemy.chargeWindupMs || 0) > 0 || enemy.chargeAngle !== void 0) {
+          this.clearEnemyChargeState(enemy);
+        }
         enemy.state = "idle";
         enemy.vx = 0;
         enemy.vy = 0;
@@ -3917,6 +5081,8 @@ var GameRoom = class _GameRoom {
         }
       }
       enemy.windupMs -= dtMs;
+      const moveStartX = enemy.x;
+      const moveStartY = enemy.y;
       if (enemy.kind === "slime" || enemy.kind === "goblin" || enemy.kind === "knight") {
         const baseSpd = enemy.kind === "goblin" ? 128 : enemy.kind === "knight" ? 96 : 86;
         const spd = baseSpd * slowFactor;
@@ -3924,6 +5090,9 @@ var GameRoom = class _GameRoom {
           enemy.vx = Math.cos(moveAngle) * spd;
           enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        } else {
+          enemy.vx = 0;
+          enemy.vy = 0;
         }
         if (nearestDist <= enemy.radius + 22 && enemy.windupMs <= 0) {
           const baseHit = enemy.kind === "knight" ? 19 : enemy.kind === "goblin" ? 13 : 11;
@@ -3936,6 +5105,9 @@ var GameRoom = class _GameRoom {
           enemy.vx = Math.cos(moveAngle) * spd;
           enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        } else {
+          enemy.vx = 0;
+          enemy.vy = 0;
         }
         if (nearestDist <= enemy.radius + 24 && enemy.windupMs <= 0) {
           const baseHit = 22;
@@ -3959,6 +5131,11 @@ var GameRoom = class _GameRoom {
             Math.sin(moveAngle) * spd * dtSec,
             enemy.radius - 2
           );
+        }
+        if (dtSec > 0) {
+          const distMoved = Math.hypot(enemy.x - moveStartX, enemy.y - moveStartY);
+          enemy.vx = distMoved > 0.05 ? (enemy.x - moveStartX) / dtSec : 0;
+          enemy.vy = distMoved > 0.05 ? (enemy.y - moveStartY) / dtSec : 0;
         }
         if (enemy.windupMs <= 0) {
           if (enemy.silencedMs > 0) {
@@ -4001,6 +5178,11 @@ var GameRoom = class _GameRoom {
             Math.sin(moveAngle) * spd * dtSec,
             enemy.radius - 2
           );
+        }
+        if (dtSec > 0) {
+          const distMoved = Math.hypot(enemy.x - moveStartX, enemy.y - moveStartY);
+          enemy.vx = distMoved > 0.05 ? (enemy.x - moveStartX) / dtSec : 0;
+          enemy.vy = distMoved > 0.05 ? (enemy.y - moveStartY) / dtSec : 0;
         }
         if (enemy.windupMs <= 0) {
           if (enemy.silencedMs > 0) {
@@ -4060,6 +5242,11 @@ var GameRoom = class _GameRoom {
             enemy.radius - 2
           );
         }
+        if (dtSec > 0) {
+          const distMoved = Math.hypot(enemy.x - moveStartX, enemy.y - moveStartY);
+          enemy.vx = distMoved > 0.05 ? (enemy.x - moveStartX) / dtSec : 0;
+          enemy.vy = distMoved > 0.05 ? (enemy.y - moveStartY) / dtSec : 0;
+        }
         if (enemy.windupMs <= 0) {
           if (enemy.silencedMs > 0) {
             this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
@@ -4092,6 +5279,9 @@ var GameRoom = class _GameRoom {
           enemy.vx = Math.cos(moveAngle) * spd;
           enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        } else {
+          enemy.vx = 0;
+          enemy.vy = 0;
         }
         if (nearestDist <= enemy.radius + 28 && enemy.windupMs <= 0) {
           const baseHit = 26;
@@ -4133,6 +5323,11 @@ var GameRoom = class _GameRoom {
             enemy.radius - 2
           );
         }
+        if (dtSec > 0) {
+          const distMoved = Math.hypot(enemy.x - moveStartX, enemy.y - moveStartY);
+          enemy.vx = distMoved > 0.05 ? (enemy.x - moveStartX) / dtSec : 0;
+          enemy.vy = distMoved > 0.05 ? (enemy.y - moveStartY) / dtSec : 0;
+        }
         if (enemy.windupMs <= 0) {
           if (enemy.silencedMs > 0) {
             this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 12, "[SILENCED]", "#C084FC");
@@ -4165,6 +5360,9 @@ var GameRoom = class _GameRoom {
           enemy.vx = Math.cos(moveAngle) * spd;
           enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        } else {
+          enemy.vx = 0;
+          enemy.vy = 0;
         }
         if (enemy.windupMs <= 0) {
           if (nearestDist <= enemy.radius + 24) {
@@ -4202,6 +5400,9 @@ var GameRoom = class _GameRoom {
           enemy.vx = Math.cos(moveAngle) * spd;
           enemy.vy = Math.sin(moveAngle) * spd;
           this.moveWithCollision(enemy, enemy.vx * dtSec, enemy.vy * dtSec, enemy.radius - 2);
+        } else {
+          enemy.vx = 0;
+          enemy.vy = 0;
         }
         if (nearestDist <= enemy.radius + 26 && enemy.windupMs <= 0) {
           const baseHit = 25;
@@ -4228,805 +5429,28 @@ var GameRoom = class _GameRoom {
           enemy.windupMs = 1500;
         }
       } else if (enemy.kind === "boss") {
-        if (!enemy.enraged && enemy.hp <= enemy.maxHp * 0.5) {
-          enemy.enraged = true;
-          this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 24, "ENRAGED!", "#EF4444");
-          this.pushSystemChat(`${enemy.name} has entered an ENRAGED frenzy! Movement and attack speed surging!`);
-        }
-        const hpRatio = enemy.hp / enemy.maxHp;
-        const curWave = enemy.summonWave || 0;
-        if (hpRatio <= 0.7 && curWave < 1) {
-          enemy.summonWave = 1;
-          this.summonBossAdds(enemy);
-        } else if (hpRatio <= 0.35 && curWave < 2) {
-          enemy.summonWave = 2;
-          this.summonBossAdds(enemy);
-        }
-        const isEnraged = !!enemy.enraged;
-        const isCatacombs = this.map.biome === "catacombs" || this.floor === 2;
-        const isEmber = this.map.biome === "ember" || this.floor === 3;
-        const isVoid = this.map.biome === "void" || this.floor === 4;
-        const isAstral = this.map.biome === "astral" || this.floor === 5;
-        const baseSpd = isEnraged ? 142 : 110;
-        const spd = baseSpd * slowFactor;
-        if (enemy.charging) {
-          enemy.chargeTimerMs = (enemy.chargeTimerMs || 0) - dtMs;
-          const chargeSpd = 310 * slowFactor;
-          const cAngle = enemy.chargeAngle ?? angle;
-          this.moveWithCollision(
-            enemy,
-            Math.cos(cAngle) * chargeSpd * dtSec,
-            Math.sin(cAngle) * chargeSpd * dtSec,
-            24
-          );
-          for (const pr of this.players.values()) {
-            if (!pr.state.downed && Math.hypot(pr.state.x - enemy.x, pr.state.y - enemy.y) <= enemy.radius + 18) {
-              this.damagePlayer(pr.state, 24 + this.floor * 4, "physical");
-              this.applyPlayerStatus(pr.state, "guard_broken", 4500);
-            }
-          }
-          if ((enemy.chargeTimerMs || 0) <= 0) {
-            enemy.charging = false;
-            enemy.windupMs = isEnraged ? 550 : 850;
-          }
-          continue;
-        }
-        if (nearestDist > 68) {
-          this.moveWithCollision(
-            enemy,
-            Math.cos(angle) * spd * dtSec,
-            Math.sin(angle) * spd * dtSec,
-            22
-          );
-        }
-        if (enemy.windupMs <= 0) {
-          if (enemy.silencedMs > 0) {
-            if (nearestDist <= enemy.radius + 24) {
-              const baseHit = 18 + this.floor * 2;
-              this.damagePlayer(nearest, this.computeEnemyDamage(baseHit, enemy), "physical");
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, "[SILENCED]", "#C084FC");
-              enemy.windupMs = isEnraged ? 700 : 1100;
-            } else {
-              enemy.windupMs = 600;
-            }
-            continue;
-          }
-          const patternChoice = Math.random();
-          if (this.floor === 1) {
-            if (patternChoice < 0.25) {
-              enemy.shieldWallMs = 3e3;
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SHIELD WALL!", "#60A5FA");
-              for (let off = -0.3; off <= 0.3; off += 0.3) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "slash",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 230,
-                  vy: Math.sin(a) * 230,
-                  angle: a,
-                  radius: 9,
-                  damage: 18,
-                  pierce: 1,
-                  ttlMs: 1400
-                });
-              }
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.5) {
-              for (let off = -0.28; off <= 0.28; off += 0.28) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "slash",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 260,
-                  vy: Math.sin(a) * 260,
-                  angle: a,
-                  radius: 10,
-                  damage: 22,
-                  pierce: 1,
-                  ttlMs: 1600
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CLEAVE!", "#EF4444");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else if (patternChoice < 0.75) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "boss_slam",
-                x: nearest.x,
-                y: nearest.y,
-                radius: 88,
-                ttlMs: isEnraged ? 600 : 800,
-                maxTtlMs: isEnraged ? 600 : 800,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " GROUND SLAM!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              enemy.charging = true;
-              enemy.chargeAngle = angle;
-              enemy.chargeTimerMs = 580;
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, "WAR CHARGE!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 700 : 950;
-            }
-          } else if (this.floor === 2 || isCatacombs) {
-            if (patternChoice < 0.25) {
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
-                const offsetX = k === 0 ? 0 : k === 1 ? -40 : 40;
-                const offsetY = k === 0 ? 0 : k === 1 ? 30 : -30;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "frost_nova",
-                  x: targetState.x + offsetX,
-                  y: targetState.y + offsetY,
-                  radius: 72,
-                  ttlMs: 750,
-                  maxTtlMs: 750,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " FROST NOVA!", "#38BDF8");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else if (patternChoice < 0.5) {
-              this.damagePlayer(nearest, 22 + this.floor * 2, "elemental");
-              enemy.hp = Math.min(enemy.maxHp, enemy.hp + 45);
-              this.emitEvent("damage", nearest.x, nearest.y - 14, "SOUL SIPHONED!", "#A855F7");
-              this.emitEvent("heal", enemy.x, enemy.y - enemy.radius - 16, "+45", "#34D399");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              for (let k = 0; k < 5; k++) {
-                const a = angle + (k - 2) * 0.24;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 240,
-                  vy: Math.sin(a) * 240,
-                  angle: a,
-                  radius: 8,
-                  damage: 22,
-                  pierce: 1,
-                  ttlMs: 2200,
-                  statusOnHit: "frostbite",
-                  statusDurationMs: 4e3
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SOUL HAIL!", "#A855F7");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else {
-              const count = isEnraged ? 16 : 12;
-              for (let k = 0; k < count; k++) {
-                const a = k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 230,
-                  vy: Math.sin(a) * 230,
-                  angle: a,
-                  radius: 7,
-                  damage: 20,
-                  pierce: 1,
-                  ttlMs: 2e3
-                });
-              }
-              enemy.windupMs = isEnraged ? 800 : 1150;
-            }
-          } else if (this.floor === 3 || isEmber) {
-            if (patternChoice < 0.25) {
-              for (let k = 0; k < 3; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "magma_pillar",
-                  x: targetState.x + (Math.random() * 50 - 25),
-                  y: targetState.y + (Math.random() * 50 - 25),
-                  radius: 84,
-                  ttlMs: 650,
-                  maxTtlMs: 650,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " MAGMA ERUPTION!", "#EF4444");
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.5) {
-              for (let off = -0.36; off <= 0.36; off += 0.18) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "fireball",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 260,
-                  vy: Math.sin(a) * 260,
-                  angle: a,
-                  radius: 9,
-                  damage: 24,
-                  pierce: 1,
-                  ttlMs: 1800,
-                  statusOnHit: "scorched",
-                  statusDurationMs: 4500
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FISSURE WAVE!", "#F97316");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              const count = isEnraged ? 18 : 14;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "fireball",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 270,
-                  vy: Math.sin(a) * 270,
-                  angle: a,
-                  radius: 9,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 2400
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CINDER SPIRAL!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "magma_pillar",
-                x: nearest.x,
-                y: nearest.y,
-                radius: 110,
-                ttlMs: isEnraged ? 700 : 900,
-                maxTtlMs: isEnraged ? 700 : 900,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CORE DETONATION!", "#EF4444");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            }
-          } else if (this.floor === 4 || isVoid) {
-            if (patternChoice < 0.25) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "singularity",
-                x: nearest.x,
-                y: nearest.y,
-                radius: 115,
-                ttlMs: 1800,
-                maxTtlMs: 1800,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SINGULARITY!", "#A855F7");
-              enemy.windupMs = isEnraged ? 800 : 1200;
-            } else if (patternChoice < 0.5) {
-              for (let k = 0; k < 6; k++) {
-                const a = k * Math.PI * 2 / 6 + angle;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 310,
-                  vy: Math.sin(a) * 310,
-                  angle: a,
-                  radius: 8,
-                  damage: 26,
-                  pierce: 1,
-                  ttlMs: 1800
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " TENDRIL FLURRY!", "#C084FC");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              enemy.x = nearest.x + (Math.random() < 0.5 ? -90 : 90);
-              enemy.y = nearest.y + (Math.random() < 0.5 ? -90 : 90);
-              const newAngle = Math.atan2(nearest.y - enemy.y, nearest.x - enemy.x);
-              for (let off = -0.4; off <= 0.4; off += 0.2) {
-                const a = newAngle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 290,
-                  vy: Math.sin(a) * 290,
-                  angle: a,
-                  radius: 8,
-                  damage: 30,
-                  pierce: 1,
-                  ttlMs: 1800
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " VOID STEP!", "#E879F9");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              const count = isEnraged ? 20 : 16;
-              for (let k = 0; k < count; k++) {
-                const a = k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 280,
-                  vy: Math.sin(a) * 280,
-                  angle: a,
-                  radius: 8,
-                  damage: 28,
-                  pierce: 1,
-                  ttlMs: 2200
-                });
-              }
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            }
-          } else if (this.floor === 5 || isAstral) {
-            if (patternChoice < 0.25) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "supernova",
-                x: enemy.x,
-                y: enemy.y,
-                radius: 140,
-                ttlMs: 1200,
-                maxTtlMs: 1200,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SUPERNOVA!", "#F472B6");
-              enemy.windupMs = isEnraged ? 850 : 1250;
-            } else if (patternChoice < 0.5) {
-              for (let k = 0; k < 4; k++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[k % prList.length]?.state || nearest;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "starlight_beam",
-                  x: targetState.x + (Math.random() * 60 - 30),
-                  y: targetState.y + (Math.random() * 60 - 30),
-                  radius: 70,
-                  ttlMs: 800,
-                  maxTtlMs: 800,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " STARBEAM CASCADE!", "#38BDF8");
-              enemy.windupMs = isEnraged ? 750 : 1050;
-            } else if (patternChoice < 0.75) {
-              for (let k = -2; k <= 3; k++) {
-                const a = angle + k * 0.16;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "arcane",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 330,
-                  vy: Math.sin(a) * 330,
-                  angle: a,
-                  radius: 7,
-                  damage: 28,
-                  pierce: 1,
-                  ttlMs: 2e3,
-                  statusOnHit: "disoriented",
-                  statusDurationMs: 3500
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " COSMIC VOLLEY!", "#818CF8");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              const count = isEnraged ? 22 : 18;
-              const rot = Math.random() * Math.PI;
-              for (let k = 0; k < count; k++) {
-                const a = rot + k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "arcane",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 310,
-                  vy: Math.sin(a) * 310,
-                  angle: a,
-                  radius: 8,
-                  damage: 32,
-                  pierce: 1,
-                  ttlMs: 2400
-                });
-              }
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            }
-          } else if (this.floor === 6 || this.map.biome === "hymns") {
-            if (patternChoice < 0.25) {
-              for (let lane = -1; lane <= 1; lane++) {
-                const perpX = Math.cos(angle + Math.PI / 2) * (lane * 50);
-                const perpY = Math.sin(angle + Math.PI / 2) * (lane * 50);
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "sound_lane",
-                  x: enemy.x + perpX,
-                  y: enemy.y + perpY,
-                  width: 340,
-                  height: 38,
-                  angle,
-                  radius: 170,
-                  ttlMs: isEnraged ? 700 : 950,
-                  maxTtlMs: isEnraged ? 700 : 950,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " RESONANT CRESCENDO!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else if (patternChoice < 0.5) {
-              for (const pr of this.players.values()) {
-                if (!pr.state.downed) {
-                  this.zones.push({
-                    id: this.nextId("zone"),
-                    kind: "lament_mark",
-                    x: pr.state.x,
-                    y: pr.state.y,
-                    radius: 65,
-                    ttlMs: isEnraged ? 650 : 850,
-                    maxTtlMs: isEnraged ? 650 : 850,
-                    ownerId: enemy.id
-                  });
-                }
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " LAMENT OF THE FORGOTTEN!", "#FEF08A");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else if (patternChoice < 0.75) {
-              for (let c = -1; c <= 1; c++) {
-                const echoAngle = angle + c * 0.45;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "sound_lane",
-                  x: enemy.x + Math.cos(echoAngle) * 80,
-                  y: enemy.y + Math.sin(echoAngle) * 80,
-                  width: 380,
-                  height: 34,
-                  angle: echoAngle,
-                  radius: 190,
-                  ttlMs: 800,
-                  maxTtlMs: 800,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " DIVINE CHORUS BEAMS!", "#FBBF24");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              this.summonBossAdds(enemy);
-              for (let lane = -2; lane <= 2; lane++) {
-                const crAngle = lane * Math.PI / 5;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "sound_lane",
-                  x: enemy.x,
-                  y: enemy.y,
-                  width: 400,
-                  height: 32,
-                  angle: crAngle,
-                  radius: 200,
-                  ttlMs: 1e3,
-                  maxTtlMs: 1e3,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CHORUS OF REMEMBRANCE!", "#FEF08A");
-              enemy.windupMs = isEnraged ? 800 : 1150;
-            }
-          } else if (this.floor === 7 || this.map.biome === "reliquary") {
-            if (patternChoice < 0.25) {
-              for (let c = 0; c < 2; c++) {
-                const offX = c === 0 ? -60 : 60;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "ashen_cloud",
-                  x: enemy.x + offX,
-                  y: enemy.y + (c === 0 ? -40 : 40),
-                  radius: 85,
-                  ttlMs: 3200,
-                  maxTtlMs: 3200,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " ASHEN PROCESSION!", "#D9AA52");
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.5) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "censer_sweep",
-                x: enemy.x,
-                y: enemy.y,
-                angle,
-                radius: 155,
-                ttlMs: isEnraged ? 750 : 950,
-                maxTtlMs: isEnraged ? 750 : 950,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " CHAIN OF THE DEPARTED!", "#F59E0B");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else if (patternChoice < 0.75) {
-              for (let m = 0; m < 3; m++) {
-                const rAngle = m * Math.PI * 2 / 3 + Date.now() * 1e-3;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "lament_mark",
-                  x: enemy.x + Math.cos(rAngle) * 110,
-                  y: enemy.y + Math.sin(rAngle) * 110,
-                  radius: 70,
-                  ttlMs: 800,
-                  maxTtlMs: 800,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " RELIQUARY AWAKENING!", "#E2E8F0");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else {
-              this.summonBossAdds(enemy);
-              for (let off = -0.3; off <= 0.3; off += 0.3) {
-                const a = angle + off;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: "radiant",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 340,
-                  vy: Math.sin(a) * 340,
-                  angle: a,
-                  radius: 10,
-                  damage: 34,
-                  pierce: 2,
-                  ttlMs: 1800,
-                  statusOnHit: "ashen_curse",
-                  statusDurationMs: 5e3
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " JUDGMENT OF THE DEPARTED!", "#FEF08A");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            }
-          } else if (this.floor === 8 || this.map.biome === "scripture") {
-            if (patternChoice < 0.25) {
-              for (let line = -1; line <= 1; line++) {
-                const gridAngle = line === 0 ? angle : angle + Math.PI / 2;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "scripture_line",
-                  x: enemy.x,
-                  y: enemy.y,
-                  width: 420,
-                  height: 26,
-                  angle: gridAngle,
-                  radius: 210,
-                  ttlMs: isEnraged ? 650 : 850,
-                  maxTtlMs: isEnraged ? 650 : 850,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " SCRIPTURE OF BINDING!", "#E879F9");
-              enemy.windupMs = isEnraged ? 700 : 1050;
-            } else if (patternChoice < 0.5) {
-              for (let v = 1; v <= 4; v++) {
-                const pageAngle = angle + (v - 2.5) * 0.4;
-                const dist = 70 + v * 35;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "lancefall_mark",
-                  x: enemy.x + Math.cos(pageAngle) * dist,
-                  y: enemy.y + Math.sin(pageAngle) * dist,
-                  radius: 60,
-                  seqNumber: v,
-                  ttlMs: 600 + v * 220,
-                  maxTtlMs: 600 + v * 220,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " FORBIDDEN VERSES!", "#A855F7");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              for (const pr of this.players.values()) {
-                if (!pr.state.downed) {
-                  this.zones.push({
-                    id: this.nextId("zone"),
-                    kind: "silence_seal",
-                    x: pr.state.x,
-                    y: pr.state.y,
-                    radius: 75,
-                    ttlMs: isEnraged ? 800 : 1100,
-                    maxTtlMs: isEnraged ? 800 : 1100,
-                    ownerId: enemy.id
-                  });
-                }
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SEAL OF SILENCE!", "#C084FC");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else {
-              const count = isEnraged ? 22 : 18;
-              for (let k = 0; k < count; k++) {
-                const a = k * Math.PI * 2 / count;
-                this.spawnProjectile({
-                  ownerType: "enemy",
-                  ownerId: enemy.id,
-                  style: k % 2 === 0 ? "radiant" : "voidorb",
-                  x: enemy.x,
-                  y: enemy.y,
-                  vx: Math.cos(a) * 290,
-                  vy: Math.sin(a) * 290,
-                  angle: a,
-                  radius: 8,
-                  damage: 32,
-                  pierce: 1,
-                  ttlMs: 2200,
-                  statusOnHit: "silenced",
-                  statusDurationMs: 3500
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " HERETICAL VOLLEY!", "#F43F5E");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            }
-          } else if (this.floor === 9 || this.map.biome === "nave") {
-            if (patternChoice < 0.25) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "lance_thrust",
-                x: enemy.x,
-                y: enemy.y,
-                width: 380,
-                height: 42,
-                angle,
-                radius: 190,
-                ttlMs: isEnraged ? 600 : 800,
-                maxTtlMs: isEnraged ? 600 : 800,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " HEAVEN'S PIERCING LINE!", "#FDE047");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.5) {
-              for (let l = 1; l <= 4; l++) {
-                const prList = Array.from(this.players.values()).filter((p) => !p.state.downed);
-                const targetState = prList[(l - 1) % prList.length]?.state || nearest;
-                const offsetX = l === 1 ? -40 : l === 2 ? 40 : l === 3 ? -20 : 20;
-                const offsetY = l === 1 ? -20 : l === 2 ? 20 : l === 3 ? 40 : -40;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "lancefall_mark",
-                  x: targetState.x + offsetX,
-                  y: targetState.y + offsetY,
-                  radius: 65,
-                  seqNumber: l,
-                  ttlMs: 650 + l * 250,
-                  maxTtlMs: 650 + l * 250,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " LANCEFALL SEQUENCE!", "#FBBF24");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            } else if (patternChoice < 0.75) {
-              for (let d = -1; d <= 1; d++) {
-                const diveAngle = angle + d * 0.35;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "lance_thrust",
-                  x: enemy.x,
-                  y: enemy.y,
-                  width: 320,
-                  height: 36,
-                  angle: diveAngle,
-                  radius: 160,
-                  ttlMs: 700 + Math.abs(d) * 200,
-                  maxTtlMs: 700 + Math.abs(d) * 200,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " AERIAL JUDGMENT!", "#38BDF8");
-              enemy.windupMs = isEnraged ? 650 : 900;
-            } else {
-              for (let l = 1; l <= 6; l++) {
-                const spAngle = l * Math.PI * 2 / 6;
-                const dist = 90;
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "lancefall_mark",
-                  x: enemy.x + Math.cos(spAngle) * dist,
-                  y: enemy.y + Math.sin(spAngle) * dist,
-                  radius: 65,
-                  seqNumber: l,
-                  ttlMs: 650 + l * 180,
-                  maxTtlMs: 650 + l * 180,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " SENTINEL SPEARFALL CASCADE!", "#FBBF24");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            }
-          } else if (this.floor === 10 || this.map.biome === "wardengate") {
-            if (patternChoice < 0.25) {
-              const safeQuad = Math.floor(Math.random() * 4);
-              for (let q = 0; q < 4; q++) {
-                if (q !== safeQuad) {
-                  this.zones.push({
-                    id: this.nextId("zone"),
-                    kind: "warden_edict",
-                    x: enemy.x,
-                    y: enemy.y,
-                    radius: 220,
-                    quadrant: q,
-                    ttlMs: isEnraged ? 900 : 1200,
-                    maxTtlMs: isEnraged ? 900 : 1200,
-                    ownerId: enemy.id
-                  });
-                }
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 20, " WARDEN'S EDICT! FIND SAFE QUADRANT!", "#EF4444");
-              enemy.windupMs = isEnraged ? 800 : 1150;
-            } else if (patternChoice < 0.5) {
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "warden_parry",
-                x: enemy.x,
-                y: enemy.y,
-                radius: 65,
-                ttlMs: 2200,
-                maxTtlMs: 2200,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " UNBROKEN JUDGMENT! (AEGIS PARRY)", "#F59E0B");
-              enemy.windupMs = isEnraged ? 650 : 950;
-            } else if (patternChoice < 0.75) {
-              for (let st = 1; st <= (isEnraged ? 3 : 2); st++) {
-                this.zones.push({
-                  id: this.nextId("zone"),
-                  kind: "verdict_combo",
-                  x: enemy.x + Math.cos(angle) * (st * 40),
-                  y: enemy.y + Math.sin(angle) * (st * 40),
-                  radius: 80 + st * 25,
-                  stage: st,
-                  ttlMs: 500 + st * 350,
-                  maxTtlMs: 500 + st * 350,
-                  ownerId: enemy.id
-                });
-              }
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " THE FINAL VERDICT COMBO!", "#FEF08A");
-              enemy.windupMs = isEnraged ? 750 : 1100;
-            } else {
-              this.summonBossAdds(enemy);
-              this.zones.push({
-                id: this.nextId("zone"),
-                kind: "warden_shatter",
-                x: enemy.x,
-                y: enemy.y,
-                radius: 190,
-                ttlMs: 1400,
-                maxTtlMs: 1400,
-                ownerId: enemy.id
-              });
-              this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 18, " BASTION GROUND SHATTER!", "#FBBF24");
-              enemy.windupMs = isEnraged ? 700 : 1e3;
-            }
-          }
-        }
+        this.updateBossAi(enemy, enemyRoom, nearest, dtMs, dtSec, slowFactor);
       }
     }
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
+      if ((proj.chronoSuspendedMs || 0) > 0) {
+        if (proj.style === "arcane_orb") {
+          const orbMap = this.arcaneOrbHits.get(proj.id);
+          if (orbMap) {
+            for (const entry of orbMap.values()) {
+              entry.lastHitAtMs += dtMs;
+            }
+          }
+        }
+        continue;
+      }
       proj.ttlMs -= dtMs;
       if (proj.ttlMs <= 0) {
+        if (proj.spellId === "fireball") {
+          this.explodeFireball(proj);
+        }
+        this.arcaneOrbHits.delete(proj.id);
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -5054,9 +5478,25 @@ var GameRoom = class _GameRoom {
           }
         }
       }
-      proj.x += proj.vx * dtSec;
-      proj.y += proj.vy * dtSec;
+      if (proj.style === "arcane_barrage") {
+        proj.elapsedMs = (proj.elapsedMs || 0) + dtMs;
+        const tSec = proj.elapsedMs / 1e3;
+        const speed = Math.hypot(proj.vx, proj.vy) || 400;
+        const forwardDist = speed * tSec;
+        const latOffset = (proj.helixSign || 1) * 14 * Math.sin(tSec * 14 + (proj.helixPhase || 0));
+        const ox = proj.originX ?? proj.x;
+        const oy = proj.originY ?? proj.y;
+        proj.x = ox + Math.cos(proj.angle) * forwardDist - Math.sin(proj.angle) * latOffset;
+        proj.y = oy + Math.sin(proj.angle) * forwardDist + Math.cos(proj.angle) * latOffset;
+      } else {
+        proj.x += proj.vx * dtSec;
+        proj.y += proj.vy * dtSec;
+      }
       if (this.isWallAtWorld(proj.x, proj.y)) {
+        if (proj.spellId === "fireball") {
+          this.explodeFireball(proj);
+        }
+        this.arcaneOrbHits.delete(proj.id);
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -5101,6 +5541,38 @@ var GameRoom = class _GameRoom {
           }
         }
         const ownerPr = this.players.get(proj.ownerId);
+        if (proj.style === "arcane_orb") {
+          let orbMap = this.arcaneOrbHits.get(proj.id);
+          if (!orbMap) {
+            orbMap = /* @__PURE__ */ new Map();
+            this.arcaneOrbHits.set(proj.id, orbMap);
+          }
+          const orbSpec = ARCANIST_SPELLS.arcane_orb;
+          const hitInterval = orbSpec.hitIntervalMs ?? 500;
+          const maxHits = orbSpec.maxHitsPerEnemy ?? 2;
+          for (const dummy of this.trainingDummies) {
+            if (!dummy || !dummy.id) continue;
+            if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+              const rec = orbMap.get(dummy.id);
+              if (!rec || rec.hits < maxHits && this.simTimeMs - rec.lastHitAtMs >= hitInterval) {
+                orbMap.set(dummy.id, { hits: (rec?.hits || 0) + 1, lastHitAtMs: this.simTimeMs });
+                this.damageDummy(dummy, proj.damage, ownerPr ? ownerPr.state : null, false);
+              }
+            }
+          }
+          const candidateEnemies2 = [...this.enemies];
+          for (const enemy of candidateEnemies2) {
+            if (!enemy || !enemy.id || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+            if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+              const rec = orbMap.get(enemy.id);
+              if (!rec || rec.hits < maxHits && this.simTimeMs - rec.lastHitAtMs >= hitInterval) {
+                orbMap.set(enemy.id, { hits: (rec?.hits || 0) + 1, lastHitAtMs: this.simTimeMs });
+                this.damageEnemy(enemy, proj.damage, ownerPr ? ownerPr.state : null, false, "arcane");
+              }
+            }
+          }
+          continue;
+        }
         if (!Array.isArray(proj.hitEntityIds)) {
           proj.hitEntityIds = [];
         }
@@ -5109,6 +5581,12 @@ var GameRoom = class _GameRoom {
           if (!dummy || !dummy.id) continue;
           if (proj.hitEntityIds.includes(dummy.id)) continue;
           if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+            if (proj.spellId === "fireball") {
+              this.explodeFireball(proj);
+              this.projectiles.splice(i, 1);
+              hitDummy = true;
+              break;
+            }
             proj.hitEntityIds.push(dummy.id);
             this.damageDummy(
               dummy,
@@ -5130,13 +5608,19 @@ var GameRoom = class _GameRoom {
           if (!enemy || !enemy.id || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
           if (proj.hitEntityIds.includes(enemy.id)) continue;
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+            if (proj.spellId === "fireball") {
+              this.explodeFireball(proj);
+              this.projectiles.splice(i, 1);
+              break;
+            }
             proj.hitEntityIds.push(enemy.id);
-            if (proj.slowOnHit) enemy.slowedMs = 3500;
+            if (proj.slowOnHit) this.applySoftCc(enemy, 3e3);
             this.damageEnemy(
               enemy,
               proj.damage,
               ownerPr ? ownerPr.state : null,
-              Boolean(proj.crit)
+              Boolean(proj.crit),
+              proj.damageCategory
             );
             proj.pierce -= 1;
             if (proj.pierce <= 0) {
@@ -5177,8 +5661,20 @@ var GameRoom = class _GameRoom {
                 value: 1
               });
             }
+            for (const ally of this.players.values()) {
+              if (ally.state.heroClass === "arcanist" && Math.random() < 0.5) {
+                this.grantScrollChoices(ally.state.id);
+              }
+            }
           } else if (room.type === "combat" && this.floor > 0) {
             this.awardCombatRoomClear(room);
+            if (room.guardian) {
+              for (const ally of this.players.values()) {
+                if (ally.state.heroClass === "arcanist" && Math.random() < 0.4) {
+                  this.grantScrollChoices(ally.state.id);
+                }
+              }
+            }
           }
         }
       }
@@ -5239,7 +5735,7 @@ var GameRoom = class _GameRoom {
         st.shield = Math.min(bastionCap, st.shield + 20);
       }
       if (!st.downed) {
-        const healAmt = isGuardian ? 22 : 12;
+        const healAmt = isGuardian ? 18 : 10;
         st.hp = Math.min(st.maxHp, st.hp + healAmt);
       }
       this.grantXp(st, bonusXp);
@@ -5275,6 +5771,7 @@ var GameRoom = class _GameRoom {
     );
   }
   awardFullFloorMastery() {
+    if (this.floorMasteryAwarded) return;
     this.floorMasteryAwarded = true;
     const floorXpBonus = 1 + (this.floor - 1) * 0.35;
     const diffXpBonus = this.difficulty === "Abyssal" ? 1.5 : this.difficulty === "Heroic" ? 1.25 : 1;
@@ -5283,25 +5780,25 @@ var GameRoom = class _GameRoom {
     for (const ally of this.players.values()) {
       const st = ally.state;
       st.gold += masteryGold;
-      st.attributePoints += 1;
       if (!st.downed) {
-        st.hp = Math.min(st.maxHp, st.hp + 35);
+        st.hp = Math.min(st.maxHp, st.hp + 25);
+        st.shield = Math.min(60, Math.max(st.shield, 0) + 25);
       }
       st.potions = Math.min(5, st.potions + 1);
       this.grantXp(st, masteryXp);
-      this.emitEvent("status", st.x, st.y - 42, "FLOOR CLEARED (+1 ATTR PT!)", "#FDE047");
+      this.emitEvent("status", st.x, st.y - 42, "FLOOR CLEARED (+25 SHIELD)", "#FDE047");
     }
     this.pushSystemChat(
-      `Floor Mastery achieved! All chambers on Floor ${this.floor} cleared: +${masteryGold}g, +${masteryXp} XP, +1 Potion, and +1 Attribute Point!`
+      `Floor Mastery achieved! All chambers on Floor ${this.floor} cleared: +${masteryGold}g, +${masteryXp} XP, +25 Shield, and +1 Potion!`
     );
   }
   firePrimaryAttack(p) {
     const def = HERO_CLASSES[p.heroClass];
     const category = p.heroClass === "arcanist" ? "arcane" : p.heroClass === "cleric" ? "divine" : "physical";
     const mult = this.computeDamageMult(p, category);
-    const critChance = Math.min(0.45, 0.1 + (p.dexterity || 0) * 4e-3 + (p.relics.includes("keen_arrowhead") ? 0.2 : 0));
+    const critChance = Math.min(0.45, 0.1 + (p.dexterity || 0) * 3e-3 + (p.relics.includes("keen_arrowhead") ? 0.2 : 0));
     const hasCrit = Math.random() < critChance;
-    const critMult = hasCrit ? 1.75 : 1;
+    const critMult = hasCrit ? CRIT_DAMAGE_MULTIPLIER : 1;
     const dmg = Math.round(def.damage * mult * critMult);
     const extraCount = p.relics.includes("twinstring_charm") ? 1 : 0;
     const bonusPierce = p.relics.includes("piercing_prism") ? 1 : 0;
@@ -5321,7 +5818,7 @@ var GameRoom = class _GameRoom {
     for (let s = 0; s < shotCount; s++) {
       const spread = shotCount === 2 ? s === 0 ? -0.1 : 0.1 : 0;
       const ang = p.aimAngle + spread;
-      const shotDmg = Math.round(dmg * (s === 0 ? 1 : 0.75));
+      const shotDmg = Math.round(dmg * (s === 0 ? 1 : 0.35));
       if (p.heroClass === "vanguard") {
         this.spawnProjectile({
           ownerType: "player",
@@ -5417,37 +5914,1034 @@ var GameRoom = class _GameRoom {
       id: this.nextId("proj"),
       ...spec,
       pierce: spec.pierce ?? 1,
-      hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : []
+      hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : [],
+      chronoSuspendedMs: spec.chronoSuspendedMs ?? this.isPositionInChronoWell(spec.x, spec.y, spec.radius)
     };
     this.projectiles.push(proj);
     return proj;
   }
-  summonBossAdds(boss) {
-    const isCatacombs = this.map.biome === "catacombs" || this.floor === 2;
-    const isEmber = this.map.biome === "ember" || this.floor === 3;
-    const isVoid = this.map.biome === "void" || this.floor === 4;
-    const isAstral = this.map.biome === "astral" || this.floor === 5;
-    const minionKind = isAstral ? "cultist" : isVoid ? "skeleton" : isEmber ? "knight" : isCatacombs ? "cultist" : "skeleton";
-    this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " REINFORCEMENTS!", "#F59E0B");
-    this.pushSystemChat(`${boss.name} calls forth dungeon reinforcements!`);
-    for (let i = 0; i < 2; i++) {
-      let addX = boss.x + (i === 0 ? -50 : 50);
-      let addY = boss.y + (i === 0 ? 35 : -35);
-      if (this.collidesCircle(addX, addY, 14)) {
-        addX = boss.x + (i === 0 ? -24 : 24);
-        addY = boss.y;
+  selectBossTarget(boss, fallbackNearest, bossRoom) {
+    const meta = this.getEnemyMeta(boss);
+    const candidates = [];
+    for (const pr of this.players.values()) {
+      const st = pr.state;
+      if (st.downed || !st.connected) continue;
+      const dist = Math.hypot(st.x - boss.x, st.y - boss.y);
+      const pRoom = this.findRoomContaining(st.x, st.y);
+      if (dist <= 440 || bossRoom && pRoom && pRoom.id === bossRoom.id) {
+        candidates.push(st);
       }
+    }
+    if (candidates.length <= 1) {
+      const single = candidates[0] || fallbackNearest;
+      meta.bossTargetId = single.id;
+      return single;
+    }
+    const currentTarget = candidates.find((c) => c.id === meta.bossTargetId);
+    if (currentTarget && this.simTimeMs - meta.bossTargetSwitchAtMs < 3200) {
+      return currentTarget;
+    }
+    const curIdx = currentTarget ? candidates.findIndex((c) => c.id === currentTarget.id) : -1;
+    const nextTarget = candidates[(curIdx + 1) % candidates.length];
+    meta.bossTargetId = nextTarget.id;
+    meta.bossTargetSwitchAtMs = this.simTimeMs;
+    return nextTarget;
+  }
+  pickBossAbility(available, meta) {
+    const ready = available.filter(
+      (idx) => (meta.bossAbilityCooldowns[idx] ?? 0) <= this.simTimeMs
+    );
+    const pool = ready.length > 0 ? ready : available;
+    const nonRepeat = pool.length > 1 ? pool.filter((idx) => idx !== meta.lastBossAbility) : pool;
+    const choice = nonRepeat[Math.floor(Math.random() * nonRepeat.length)];
+    meta.lastBossAbility = choice;
+    return choice;
+  }
+  updateBossAi(boss, bossRoom, fallbackNearest, dtMs, dtSec, slowFactor) {
+    const meta = this.getEnemyMeta(boss);
+    const hpRatio = boss.hp / Math.max(1, boss.maxHp);
+    if (!boss.enraged && hpRatio <= 0.5) {
+      boss.enraged = true;
+      this.emitEvent("crit", boss.x, boss.y - boss.radius - 24, "ENRAGED!", "#EF4444");
+      this.pushSystemChat(`${boss.name} has entered an ENRAGED frenzy! Pressure intensifying!`);
+    }
+    const floorNum = this.floor;
+    const isCatacombs = this.map.biome === "catacombs" || floorNum === 2;
+    const isEmber = this.map.biome === "ember" || floorNum === 3;
+    const isVoid = this.map.biome === "void" || floorNum === 4;
+    const isAstral = this.map.biome === "astral" || floorNum === 5;
+    const isHymns = this.map.biome === "hymns" || floorNum === 6;
+    const isReliquary = this.map.biome === "reliquary" || floorNum === 7;
+    const isScripture = this.map.biome === "scripture" || floorNum === 8;
+    const isNave = this.map.biome === "nave" || floorNum === 9;
+    const isWardenGate = this.map.biome === "wardengate" || floorNum === 10;
+    let nextPhase = meta.bossPhase || 1;
+    if (floorNum === 1) {
+      nextPhase = hpRatio <= 0.5 ? 2 : 1;
+    } else if (floorNum === 2 || isCatacombs) {
+      nextPhase = hpRatio <= 0.4 ? 3 : hpRatio <= 0.75 ? 2 : 1;
+    } else if (floorNum === 3 || isEmber) {
+      nextPhase = hpRatio <= 0.55 ? 2 : 1;
+    } else if (floorNum === 4 || isVoid) {
+      nextPhase = hpRatio <= 0.35 ? 3 : hpRatio <= 0.65 ? 2 : 1;
+    } else if (floorNum === 5 || isAstral) {
+      nextPhase = hpRatio <= 0.6 ? 2 : 1;
+    } else if (floorNum === 6 || isHymns) {
+      nextPhase = hpRatio <= 0.35 ? 3 : hpRatio <= 0.65 ? 2 : 1;
+    } else if (floorNum === 7 || isReliquary) {
+      nextPhase = hpRatio <= 0.55 ? 2 : 1;
+    } else if (floorNum === 8 || isScripture) {
+      nextPhase = hpRatio <= 0.35 ? 3 : hpRatio <= 0.7 ? 2 : 1;
+    } else if (floorNum === 9 || isNave) {
+      nextPhase = hpRatio <= 0.55 ? 2 : 1;
+    } else if (floorNum === 10 || isWardenGate) {
+      nextPhase = hpRatio <= 0.4 ? 3 : hpRatio <= 0.7 ? 2 : 1;
+    }
+    if (nextPhase > meta.bossPhase) {
+      meta.bossPhase = nextPhase;
+      this.emitEvent("status", boss.x, boss.y - boss.radius - 28, `PHASE ${nextPhase}!`, "#FBBF24");
+      this.pushSystemChat(`${boss.name} shifts to Phase ${nextPhase}!`);
+    }
+    const curWave = boss.summonWave || 0;
+    const canSummonSafely = !boss.charging && !this.zones.some(
+      (z) => z.ownerId === boss.id && z.ttlMs <= 500 && (z.kind === "warden_edict" || z.kind === "supernova" || z.kind === "censer_sweep")
+    );
+    if (canSummonSafely) {
+      if (floorNum === 2 || isCatacombs) {
+        if (hpRatio <= 0.75 && curWave < 1) {
+          boss.summonWave = 1;
+          this.summonBossAdds(boss, bossRoom, ["cultist", "skeleton"], 0.7, 2);
+        } else if (hpRatio <= 0.4 && curWave < 2) {
+          boss.summonWave = 2;
+          this.summonBossAdds(boss, bossRoom, ["cultist", "skeleton"], 0.7, 2);
+        }
+      } else if ((floorNum === 3 || isEmber) && hpRatio <= 0.55 && curWave < 1) {
+        boss.summonWave = 1;
+        this.summonBossAdds(boss, bossRoom, ["knight", "cultist"], 0.65, 2);
+      } else if ((floorNum === 4 || isVoid) && hpRatio <= 0.55 && curWave < 1) {
+        boss.summonWave = 1;
+        this.summonBossAdds(boss, bossRoom, ["shadow_stalker", "shadow_stalker"], 0.6, 2);
+      } else if ((floorNum === 5 || isAstral) && hpRatio <= 0.5 && curWave < 1) {
+        boss.summonWave = 1;
+        this.summonBossAdds(boss, bossRoom, ["astral_sentinel"], 0.7, 1);
+      } else if ((floorNum === 7 || isReliquary) && hpRatio <= 0.45 && curWave < 1) {
+        boss.summonWave = 1;
+        this.summonBossAdds(boss, bossRoom, ["relic_golem"], 0.75, 1);
+      } else if ((floorNum === 8 || isScripture) && hpRatio <= 0.55 && curWave < 1) {
+        boss.summonWave = 1;
+        this.summonBossAdds(boss, bossRoom, ["veiled_heretic", "veiled_heretic"], 0.6, 2);
+      }
+    }
+    const target = this.selectBossTarget(boss, fallbackNearest, bossRoom);
+    const dx = target.x - boss.x;
+    const dy = target.y - boss.y;
+    const targetDist = Math.hypot(dx, dy);
+    const angle = Math.atan2(dy, dx);
+    const isEnraged = Boolean(boss.enraged);
+    const baseSpd = isEnraged ? 142 : 110;
+    const spd = baseSpd * slowFactor;
+    if (boss.charging) {
+      if ((boss.chargeWindupMs || 0) > 0) {
+        boss.state = "windup";
+        boss.chargeWindupMs = Math.max(0, (boss.chargeWindupMs || 0) - dtMs);
+        boss.vx = 0;
+        boss.vy = 0;
+        return;
+      }
+      boss.state = "charge";
+      boss.chargeTimerMs = (boss.chargeTimerMs || 0) - dtMs;
+      const chargeSpd = 295 * slowFactor;
+      const cAngle = boss.chargeAngle ?? angle;
+      boss.vx = Math.cos(cAngle) * chargeSpd;
+      boss.vy = Math.sin(cAngle) * chargeSpd;
+      this.moveWithCollision(
+        boss,
+        boss.vx * dtSec,
+        boss.vy * dtSec,
+        24
+      );
+      for (const pr of this.players.values()) {
+        if (!pr.state.downed && !meta.chargeHitPlayerIds.has(pr.state.id) && Math.hypot(pr.state.x - boss.x, pr.state.y - boss.y) <= boss.radius + 16) {
+          meta.chargeHitPlayerIds.add(pr.state.id);
+          this.damagePlayer(pr.state, 20 + floorNum * 4, "physical");
+          this.applyPlayerStatus(pr.state, "guard_broken", 4e3);
+        }
+      }
+      if ((boss.chargeTimerMs || 0) <= 0) {
+        this.clearEnemyChargeState(boss);
+        boss.state = "recover";
+        boss.vx = 0;
+        boss.vy = 0;
+        boss.windupMs = isEnraged ? 800 : 1e3;
+      }
+      return;
+    }
+    if (targetDist > 68) {
+      boss.vx = Math.cos(angle) * spd;
+      boss.vy = Math.sin(angle) * spd;
+      this.moveWithCollision(boss, boss.vx * dtSec, boss.vy * dtSec, 22);
+    } else {
+      boss.vx = 0;
+      boss.vy = 0;
+    }
+    if (boss.windupMs > 0) return;
+    if (boss.silencedMs > 0) {
+      if (targetDist <= boss.radius + 26) {
+        const baseHit = 18 + floorNum * 2;
+        this.damagePlayer(target, this.computeEnemyDamage(baseHit, boss), "physical");
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 16, "[SILENCED]", "#C084FC");
+        boss.windupMs = isEnraged ? 800 : 1150;
+      } else {
+        boss.windupMs = 600;
+      }
+      return;
+    }
+    const activePlayers = Array.from(this.players.values()).filter((p) => !p.state.downed && p.state.connected);
+    if (floorNum === 1) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [0, 1, 2];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        boss.shieldWallMs = 2400;
+        meta.bossAbilityCooldowns[0] = this.simTimeMs + 6e3;
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " SHIELD WALL!", "#60A5FA");
+        for (let off = -0.3; off <= 0.3; off += 0.3) {
+          const a = angle + off;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "slash",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 230,
+            vy: Math.sin(a) * 230,
+            angle: a,
+            radius: 9,
+            damage: 18,
+            pierce: 1,
+            ttlMs: 1400
+          });
+        }
+        boss.windupMs = isEnraged ? 900 : 1250;
+      } else if (ability === 1) {
+        for (let off = -0.28; off <= 0.28; off += 0.28) {
+          const a = angle + off;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "slash",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 255,
+            vy: Math.sin(a) * 255,
+            angle: a,
+            radius: 10,
+            damage: 22,
+            pierce: 1,
+            ttlMs: 1600
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " CLEAVE!", "#EF4444");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 2) {
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "boss_slam",
+          x: target.x,
+          y: target.y,
+          radius: 84,
+          ttlMs: isEnraged ? 800 : 950,
+          maxTtlMs: isEnraged ? 800 : 950,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " GROUND SLAM!", "#F59E0B");
+        boss.windupMs = isEnraged ? 850 : 1150;
+      } else {
+        boss.charging = true;
+        boss.chargeAngle = angle;
+        boss.chargeWindupMs = 550;
+        boss.chargeTimerMs = 560;
+        boss.state = "windup";
+        boss.vx = 0;
+        boss.vy = 0;
+        meta.chargeHitPlayerIds.clear();
+        meta.bossAbilityCooldowns[3] = this.simTimeMs + 3400;
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, "WAR CHARGE!", "#F59E0B");
+        boss.windupMs = 0;
+      }
+    } else if (floorNum === 2 || isCatacombs) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [0, 2, 3];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        for (let k = 0; k < 3; k++) {
+          const targetState = activePlayers[k % Math.max(1, activePlayers.length)]?.state || target;
+          const offsetX = k === 0 ? 0 : k === 1 ? -75 : 75;
+          const offsetY = k === 0 ? 0 : k === 1 ? 55 : -55;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "frost_nova",
+            x: targetState.x + offsetX,
+            y: targetState.y + offsetY,
+            radius: 70,
+            ttlMs: isEnraged ? 800 : 950,
+            maxTtlMs: isEnraged ? 800 : 950,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " FROST NOVA!", "#38BDF8");
+        boss.windupMs = isEnraged ? 850 : 1150;
+      } else if (ability === 1) {
+        meta.bossAbilityCooldowns[1] = this.simTimeMs + 4200;
+        if (targetDist <= 165) {
+          this.damagePlayer(target, 20 + floorNum * 2, "elemental");
+          boss.hp = Math.min(boss.maxHp, boss.hp + 40);
+          this.emitEvent("damage", target.x, target.y - 14, "SOUL SIPHONED!", "#A855F7");
+          this.emitEvent("heal", boss.x, boss.y - boss.radius - 16, "+40", "#34D399");
+        } else {
+          for (let k = -1; k <= 1; k++) {
+            const a = angle + k * 0.22;
+            this.spawnProjectile({
+              ownerType: "enemy",
+              ownerId: boss.id,
+              style: "voidorb",
+              x: boss.x,
+              y: boss.y,
+              vx: Math.cos(a) * 225,
+              vy: Math.sin(a) * 225,
+              angle: a,
+              radius: 8,
+              damage: 18 + floorNum * 2,
+              pierce: 1,
+              ttlMs: 1900
+            });
+          }
+          this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " SIPHON VOLLEY!", "#A855F7");
+        }
+        boss.windupMs = isEnraged ? 800 : 1050;
+      } else if (ability === 2) {
+        for (let k = 0; k < 5; k++) {
+          const a = angle + (k - 2) * 0.24;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 235,
+            vy: Math.sin(a) * 235,
+            angle: a,
+            radius: 8,
+            damage: 22,
+            pierce: 1,
+            ttlMs: 2200,
+            statusOnHit: "frostbite",
+            statusDurationMs: 4e3
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " SOUL HAIL!", "#A855F7");
+        boss.windupMs = isEnraged ? 800 : 1050;
+      } else {
+        const count = meta.bossPhase >= 3 || isEnraged ? 14 : 11;
+        for (let k = 0; k < count; k++) {
+          const a = k * Math.PI * 2 / count;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 225,
+            vy: Math.sin(a) * 225,
+            angle: a,
+            radius: 7,
+            damage: 20,
+            pierce: 1,
+            ttlMs: 2e3
+          });
+        }
+        boss.windupMs = isEnraged ? 850 : 1200;
+      }
+    } else if (floorNum === 3 || isEmber) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [0, 1, 2];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        for (let k = 0; k < 3; k++) {
+          const targetState = activePlayers[k % Math.max(1, activePlayers.length)]?.state || target;
+          const sepAngle = k * Math.PI * 2 / 3;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "magma_pillar",
+            x: targetState.x + (k === 0 ? 0 : Math.cos(sepAngle) * 78),
+            y: targetState.y + (k === 0 ? 0 : Math.sin(sepAngle) * 78),
+            radius: 80,
+            ttlMs: isEnraged ? 800 : 950,
+            maxTtlMs: isEnraged ? 800 : 950,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " MAGMA ERUPTION!", "#EF4444");
+        boss.windupMs = isEnraged ? 850 : 1150;
+      } else if (ability === 1) {
+        for (let off = -0.36; off <= 0.36; off += 0.18) {
+          const a = angle + off;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "fireball",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 255,
+            vy: Math.sin(a) * 255,
+            angle: a,
+            radius: 9,
+            damage: 24,
+            pierce: 1,
+            ttlMs: 1800,
+            statusOnHit: "scorched",
+            statusDurationMs: 4e3
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " FISSURE WAVE!", "#F97316");
+        boss.windupMs = isEnraged ? 750 : 1e3;
+      } else if (ability === 2) {
+        const count = isEnraged ? 16 : 12;
+        const rot = Math.random() * Math.PI;
+        for (let k = 0; k < count; k++) {
+          const a = rot + k * Math.PI * 2 / count;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "fireball",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 265,
+            vy: Math.sin(a) * 265,
+            angle: a,
+            radius: 9,
+            damage: 25,
+            pierce: 1,
+            ttlMs: 2400
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " CINDER SPIRAL!", "#F59E0B");
+        boss.windupMs = isEnraged ? 800 : 1150;
+      } else {
+        meta.bossAbilityCooldowns[3] = this.simTimeMs + 3500;
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "magma_pillar",
+          x: target.x,
+          y: target.y,
+          radius: 105,
+          ttlMs: isEnraged ? 850 : 1050,
+          maxTtlMs: isEnraged ? 850 : 1050,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " CORE DETONATION!", "#EF4444");
+        boss.windupMs = isEnraged ? 850 : 1100;
+      }
+    } else if (floorNum === 4 || isVoid) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [1, 3];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        meta.bossAbilityCooldowns[0] = this.simTimeMs + 3500;
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "singularity",
+          x: target.x,
+          y: target.y,
+          radius: 112,
+          ttlMs: 1800,
+          maxTtlMs: 1800,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " SINGULARITY!", "#A855F7");
+        boss.windupMs = isEnraged ? 900 : 1250;
+      } else if (ability === 1) {
+        for (let k = 0; k < 6; k++) {
+          const a = k * Math.PI * 2 / 6 + angle;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 305,
+            vy: Math.sin(a) * 305,
+            angle: a,
+            radius: 8,
+            damage: 26,
+            pierce: 1,
+            ttlMs: 1800
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " TENDRIL FLURRY!", "#C084FC");
+        boss.windupMs = isEnraged ? 750 : 1e3;
+      } else if (ability === 2) {
+        meta.bossAbilityCooldowns[2] = this.simTimeMs + 3500;
+        let stepped = false;
+        const baseTheta = Math.random() * Math.PI * 2;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const theta = baseTheta + attempt * Math.PI * 2 / 12;
+          const dist = 95;
+          const cx = target.x + Math.cos(theta) * dist;
+          const cy = target.y + Math.sin(theta) * dist;
+          const tx = Math.floor(cx / TILE_SIZE);
+          const ty = Math.floor(cy / TILE_SIZE);
+          const inRoom = bossRoom ? tx >= bossRoom.x + 1 && tx < bossRoom.x + bossRoom.w - 1 && ty >= bossRoom.y + 1 && ty < bossRoom.y + bossRoom.h - 1 : true;
+          if (!inRoom || this.collidesCircle(cx, cy, boss.radius)) continue;
+          const farFromPlayers = activePlayers.every((p) => Math.hypot(cx - p.state.x, cy - p.state.y) >= 60);
+          if (farFromPlayers) {
+            boss.x = cx;
+            boss.y = cy;
+            stepped = true;
+            break;
+          }
+        }
+        const newAngle = Math.atan2(target.y - boss.y, target.x - boss.x);
+        for (let off = -0.4; off <= 0.4; off += 0.2) {
+          const a = newAngle + off;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 285,
+            vy: Math.sin(a) * 285,
+            angle: a,
+            radius: 8,
+            damage: 29,
+            pierce: 1,
+            ttlMs: 1800
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, stepped ? " VOID STEP!" : " VOID SCYTHE!", "#E879F9");
+        boss.windupMs = isEnraged ? 750 : 1e3;
+      } else {
+        const count = meta.bossPhase >= 3 || isEnraged ? 18 : 14;
+        for (let k = 0; k < count; k++) {
+          const a = k * Math.PI * 2 / count;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 275,
+            vy: Math.sin(a) * 275,
+            angle: a,
+            radius: 8,
+            damage: 28,
+            pierce: 1,
+            ttlMs: 2200
+          });
+        }
+        boss.windupMs = isEnraged ? 800 : 1150;
+      }
+    } else if (floorNum === 5 || isAstral) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [1, 2];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        meta.bossAbilityCooldowns[0] = this.simTimeMs + 4500;
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "supernova",
+          x: boss.x,
+          y: boss.y,
+          radius: 145,
+          ttlMs: 1350,
+          maxTtlMs: 1350,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " SUPERNOVA!", "#F472B6");
+        boss.windupMs = isEnraged ? 900 : 1300;
+      } else if (ability === 1) {
+        for (let k = 0; k < 4; k++) {
+          const targetState = activePlayers[k % Math.max(1, activePlayers.length)]?.state || target;
+          const beamAngle = k * Math.PI / 2;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "starlight_beam",
+            x: targetState.x + Math.cos(beamAngle) * 52,
+            y: targetState.y + Math.sin(beamAngle) * 52,
+            radius: 68,
+            ttlMs: 900,
+            maxTtlMs: 900,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " STARBEAM CASCADE!", "#38BDF8");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 2) {
+        for (let k = -2; k <= 3; k++) {
+          const a = angle + k * 0.16;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "arcane",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 320,
+            vy: Math.sin(a) * 320,
+            angle: a,
+            radius: 7,
+            damage: 28,
+            pierce: 1,
+            ttlMs: 2e3,
+            statusOnHit: "disoriented",
+            statusDurationMs: 3e3
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " COSMIC VOLLEY!", "#818CF8");
+        boss.windupMs = isEnraged ? 750 : 1e3;
+      } else {
+        const count = isEnraged ? 20 : 16;
+        const rot = Math.random() * Math.PI;
+        for (let k = 0; k < count; k++) {
+          const a = rot + k * Math.PI * 2 / count;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "arcane",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 305,
+            vy: Math.sin(a) * 305,
+            angle: a,
+            radius: 8,
+            damage: 31,
+            pierce: 1,
+            ttlMs: 2400
+          });
+        }
+        boss.windupMs = isEnraged ? 800 : 1150;
+      }
+    } else if (floorNum === 6 || isHymns) {
+      const avail = meta.bossPhase >= 3 ? [0, 1, 2, 3] : meta.bossPhase === 2 ? [0, 1, 2] : [0, 1];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        for (let lane = -1; lane <= 1; lane++) {
+          const perpX = Math.cos(angle + Math.PI / 2) * (lane * 54);
+          const perpY = Math.sin(angle + Math.PI / 2) * (lane * 54);
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "sound_lane",
+            x: boss.x + perpX,
+            y: boss.y + perpY,
+            width: 340,
+            height: 36,
+            angle,
+            radius: 170,
+            ttlMs: isEnraged ? 800 : 1e3,
+            maxTtlMs: isEnraged ? 800 : 1e3,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " RESONANT CRESCENDO!", "#F59E0B");
+        boss.windupMs = isEnraged ? 800 : 1150;
+      } else if (ability === 1) {
+        for (const pr of activePlayers) {
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lament_mark",
+            x: pr.state.x,
+            y: pr.state.y,
+            radius: 64,
+            ttlMs: isEnraged ? 800 : 950,
+            maxTtlMs: isEnraged ? 800 : 950,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " LAMENT OF THE FORGOTTEN!", "#FEF08A");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else if (ability === 2) {
+        for (let c = -1; c <= 1; c++) {
+          const echoAngle = angle + c * 0.45;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "sound_lane",
+            x: boss.x + Math.cos(echoAngle) * 80,
+            y: boss.y + Math.sin(echoAngle) * 80,
+            width: 380,
+            height: 34,
+            angle: echoAngle,
+            radius: 190,
+            ttlMs: isEnraged ? 800 : 950,
+            maxTtlMs: isEnraged ? 800 : 950,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " DIVINE CHORUS BEAMS!", "#FBBF24");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else {
+        for (let lane = -2; lane <= 2; lane++) {
+          const crAngle = lane * Math.PI / 5;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "sound_lane",
+            x: boss.x,
+            y: boss.y,
+            width: 400,
+            height: 32,
+            angle: crAngle,
+            radius: 200,
+            ttlMs: isEnraged ? 950 : 1100,
+            maxTtlMs: isEnraged ? 950 : 1100,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " CHORUS OF REMEMBRANCE!", "#FEF08A");
+        boss.windupMs = isEnraged ? 850 : 1200;
+      }
+    } else if (floorNum === 7 || isReliquary) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [0, 1, 2];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        meta.bossAbilityCooldowns[0] = this.simTimeMs + 4200;
+        for (let c = 0; c < 2; c++) {
+          const offX = c === 0 ? -65 : 65;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "ashen_cloud",
+            x: boss.x + offX,
+            y: boss.y + (c === 0 ? -45 : 45),
+            radius: 82,
+            ttlMs: 3200,
+            maxTtlMs: 3200,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " ASHEN PROCESSION!", "#D9AA52");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 1) {
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "censer_sweep",
+          x: boss.x,
+          y: boss.y,
+          angle,
+          radius: 155,
+          ttlMs: isEnraged ? 850 : 1050,
+          maxTtlMs: isEnraged ? 850 : 1050,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " CHAIN OF THE DEPARTED!", "#F59E0B");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 2) {
+        for (let m = 0; m < 3; m++) {
+          const rAngle = m * Math.PI * 2 / 3 + this.simTimeMs * 1e-3;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lament_mark",
+            x: boss.x + Math.cos(rAngle) * 110,
+            y: boss.y + Math.sin(rAngle) * 110,
+            radius: 68,
+            ttlMs: 900,
+            maxTtlMs: 900,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " RELIQUARY AWAKENING!", "#E2E8F0");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else {
+        if ((meta.bossAbilityCooldowns[99] ?? 0) <= this.simTimeMs) {
+          boss.shieldWallMs = 1500;
+          meta.bossAbilityCooldowns[99] = this.simTimeMs + 8e3;
+          this.emitEvent("status", boss.x, boss.y - boss.radius - 30, " RELIQUARY AEGIS!", "#CBD5E1");
+        }
+        for (let off = -0.3; off <= 0.3; off += 0.3) {
+          const a = angle + off;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: "radiant",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 330,
+            vy: Math.sin(a) * 330,
+            angle: a,
+            radius: 10,
+            damage: 34,
+            pierce: 2,
+            ttlMs: 1800,
+            statusOnHit: "ashen_curse",
+            statusDurationMs: 4500
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " JUDGMENT OF THE DEPARTED!", "#FEF08A");
+        boss.windupMs = isEnraged ? 800 : 1150;
+      }
+    } else if (floorNum === 8 || isScripture) {
+      const avail = meta.bossPhase >= 3 ? [0, 1, 2, 3] : meta.bossPhase === 2 ? [0, 1, 2] : [0, 1];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        for (let line = -1; line <= 1; line++) {
+          const gridAngle = line === 0 ? angle : angle + Math.PI / 2;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "scripture_line",
+            x: boss.x,
+            y: boss.y,
+            width: 420,
+            height: 26,
+            angle: gridAngle,
+            radius: 210,
+            ttlMs: isEnraged ? 800 : 950,
+            maxTtlMs: isEnraged ? 800 : 950,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " SCRIPTURE OF BINDING!", "#E879F9");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 1) {
+        for (let v = 1; v <= 4; v++) {
+          const pageAngle = angle + (v - 2.5) * 0.4;
+          const dist = 70 + v * 35;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lancefall_mark",
+            x: boss.x + Math.cos(pageAngle) * dist,
+            y: boss.y + Math.sin(pageAngle) * dist,
+            radius: 60,
+            seqNumber: v,
+            ttlMs: 700 + v * 220,
+            maxTtlMs: 700 + v * 220,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " FORBIDDEN VERSES!", "#A855F7");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else if (ability === 2) {
+        meta.bossAbilityCooldowns[2] = this.simTimeMs + 5e3;
+        for (const pr of activePlayers) {
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "silence_seal",
+            x: pr.state.x,
+            y: pr.state.y,
+            radius: 72,
+            ttlMs: isEnraged ? 950 : 1150,
+            maxTtlMs: isEnraged ? 950 : 1150,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " SEAL OF SILENCE!", "#C084FC");
+        boss.windupMs = isEnraged ? 850 : 1150;
+      } else {
+        const count = isEnraged ? 20 : 16;
+        for (let k = 0; k < count; k++) {
+          const a = k * Math.PI * 2 / count;
+          this.spawnProjectile({
+            ownerType: "enemy",
+            ownerId: boss.id,
+            style: k % 2 === 0 ? "radiant" : "voidorb",
+            x: boss.x,
+            y: boss.y,
+            vx: Math.cos(a) * 280,
+            vy: Math.sin(a) * 280,
+            angle: a,
+            radius: 8,
+            damage: 30,
+            pierce: 1,
+            ttlMs: 2200,
+            statusOnHit: "silenced",
+            statusDurationMs: 2600
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " HERETICAL VOLLEY!", "#F43F5E");
+        boss.windupMs = isEnraged ? 800 : 1150;
+      }
+    } else if (floorNum === 9 || isNave) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [0, 1];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "lance_thrust",
+          x: boss.x,
+          y: boss.y,
+          width: 380,
+          height: 42,
+          angle,
+          radius: 190,
+          ttlMs: isEnraged ? 750 : 900,
+          maxTtlMs: isEnraged ? 750 : 900,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " HEAVEN'S PIERCING LINE!", "#FDE047");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else if (ability === 1) {
+        for (let l = 1; l <= 4; l++) {
+          const targetState = activePlayers[(l - 1) % Math.max(1, activePlayers.length)]?.state || target;
+          const offsetX = l === 1 ? -45 : l === 2 ? 45 : l === 3 ? -25 : 25;
+          const offsetY = l === 1 ? -25 : l === 2 ? 25 : l === 3 ? 45 : -45;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lancefall_mark",
+            x: targetState.x + offsetX,
+            y: targetState.y + offsetY,
+            radius: 64,
+            seqNumber: l,
+            ttlMs: 700 + l * 250,
+            maxTtlMs: 700 + l * 250,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " LANCEFALL SEQUENCE!", "#FBBF24");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      } else if (ability === 2) {
+        for (let d = -1; d <= 1; d++) {
+          const diveAngle = angle + d * 0.35;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lance_thrust",
+            x: boss.x,
+            y: boss.y,
+            width: 320,
+            height: 36,
+            angle: diveAngle,
+            radius: 160,
+            ttlMs: 750 + Math.abs(d) * 200,
+            maxTtlMs: 750 + Math.abs(d) * 200,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " AERIAL JUDGMENT!", "#38BDF8");
+        boss.windupMs = isEnraged ? 750 : 1e3;
+      } else {
+        for (let l = 1; l <= 6; l++) {
+          const spAngle = l * Math.PI * 2 / 6;
+          const dist = 95;
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "lancefall_mark",
+            x: boss.x + Math.cos(spAngle) * dist,
+            y: boss.y + Math.sin(spAngle) * dist,
+            radius: 64,
+            seqNumber: l,
+            ttlMs: 700 + l * 180,
+            maxTtlMs: 700 + l * 180,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " SENTINEL SPEARFALL CASCADE!", "#FBBF24");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      }
+    } else if (floorNum === 10 || isWardenGate) {
+      const avail = meta.bossPhase >= 2 ? [0, 1, 2, 3] : [2, 3];
+      const ability = this.pickBossAbility(avail, meta);
+      if (ability === 0) {
+        meta.bossAbilityCooldowns[0] = this.simTimeMs + 4200;
+        const safeQuad = Math.floor(Math.random() * 4);
+        for (let q = 0; q < 4; q++) {
+          if (q !== safeQuad) {
+            this.zones.push({
+              id: this.nextId("zone"),
+              kind: "warden_edict",
+              x: boss.x,
+              y: boss.y,
+              radius: 220,
+              quadrant: q,
+              ttlMs: isEnraged ? 1150 : 1400,
+              maxTtlMs: isEnraged ? 1150 : 1400,
+              ownerId: boss.id
+            });
+          }
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " WARDEN'S EDICT! FIND SAFE QUADRANT!", "#EF4444");
+        boss.windupMs = isEnraged ? 900 : 1250;
+      } else if (ability === 1) {
+        meta.bossAbilityCooldowns[1] = this.simTimeMs + 7500;
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "warden_parry",
+          x: boss.x,
+          y: boss.y,
+          radius: 65,
+          ttlMs: 2100,
+          maxTtlMs: 2100,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " UNBROKEN JUDGMENT! (AEGIS PARRY)", "#F59E0B");
+        boss.windupMs = isEnraged ? 750 : 1050;
+      } else if (ability === 2) {
+        const stages = meta.bossPhase >= 3 || isEnraged ? 3 : 2;
+        for (let st = 1; st <= stages; st++) {
+          this.zones.push({
+            id: this.nextId("zone"),
+            kind: "verdict_combo",
+            x: boss.x + Math.cos(angle) * (st * 40),
+            y: boss.y + Math.sin(angle) * (st * 40),
+            radius: 80 + st * 25,
+            stage: st,
+            ttlMs: 650 + st * 350,
+            maxTtlMs: 650 + st * 350,
+            ownerId: boss.id
+          });
+        }
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " THE FINAL VERDICT COMBO!", "#FEF08A");
+        boss.windupMs = isEnraged ? 850 : 1150;
+      } else {
+        this.zones.push({
+          id: this.nextId("zone"),
+          kind: "warden_shatter",
+          x: boss.x,
+          y: boss.y,
+          radius: 190,
+          ttlMs: 1400,
+          maxTtlMs: 1400,
+          ownerId: boss.id
+        });
+        this.emitEvent("status", boss.x, boss.y - boss.radius - 18, " BASTION GROUND SHATTER!", "#FBBF24");
+        boss.windupMs = isEnraged ? 800 : 1100;
+      }
+    }
+  }
+  summonBossAdds(boss, bossRoom, kinds, hpRatioScale = 0.7, maxLiveAdds = 2) {
+    const existingAdds = this.enemies.filter((e) => e.id.startsWith("add_") && e.hp > 0).length;
+    const roomSlots = Math.max(0, maxLiveAdds - existingAdds);
+    if (roomSlots <= 0 || kinds.length === 0) return;
+    const toSpawn = Math.min(kinds.length, roomSlots);
+    const activePlayers = Array.from(this.players.values()).filter((p) => p.state.connected && !p.state.downed);
+    this.emitEvent("status", boss.x, boss.y - boss.radius - 20, " REINFORCEMENTS!", "#F59E0B");
+    this.pushSystemChat(`${boss.name} calls forth reinforcements!`);
+    for (let i = 0; i < toSpawn; i++) {
+      const minionKind = kinds[i % kinds.length];
+      let spawnX = boss.x;
+      let spawnY = boss.y;
+      let foundSafe = false;
+      for (let dist = 85; dist <= 135 && !foundSafe; dist += 25) {
+        for (let step = 0; step < 8; step++) {
+          const ang = step * Math.PI * 2 / 8 + i * 0.9;
+          const cx = boss.x + Math.cos(ang) * dist;
+          const cy = boss.y + Math.sin(ang) * dist;
+          const tx = Math.floor(cx / TILE_SIZE);
+          const ty = Math.floor(cy / TILE_SIZE);
+          const inRoom = bossRoom ? tx >= bossRoom.x + 1 && tx < bossRoom.x + bossRoom.w - 1 && ty >= bossRoom.y + 1 && ty < bossRoom.y + bossRoom.h - 1 : true;
+          if (!inRoom || this.collidesCircle(cx, cy, 16)) continue;
+          const clearOfPlayers = activePlayers.every((p) => Math.hypot(cx - p.state.x, cy - p.state.y) >= 65);
+          if (clearOfPlayers) {
+            spawnX = cx;
+            spawnY = cy;
+            foundSafe = true;
+            break;
+          }
+        }
+      }
+      if (!foundSafe) continue;
       const add = makeEnemy(
-        `add_${this.floor}_${Date.now()}_${i}`,
+        `add_${this.floor}_${this.entitySeq++}`,
         minionKind,
         boss.roomId,
-        addX,
-        addY,
-        1,
-        true,
+        spawnX,
+        spawnY,
+        hpRatioScale * (1 + (this.floor - 1) * 0.28),
+        false,
+        // Non-elite tuned role adds so the boss stays the primary threat
         this.floor,
         this.map.biome
       );
+      add.name = `Summoned ${add.name}`;
       this.enemies.push(add);
     }
   }
@@ -5473,9 +6967,7 @@ var GameRoom = class _GameRoom {
       finalDmg = Math.max(1, Math.round(finalDmg * 0.4));
       this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, " BLOCKED! (-60%)", "#60A5FA");
     }
-    const isParrying = this.zones.some(
-      (z) => z.kind === "warden_parry" && z.ownerId === enemy.id
-    );
+    const isParrying = enemy.stunnedMs <= 0 && enemy.frozenMs <= 0 && this.zones.some((z) => z.kind === "warden_parry" && z.ownerId === enemy.id);
     if (isParrying && attacker) {
       const reflectDmg = Math.round(rawAmount * 0.85);
       this.damagePlayer(attacker, reflectDmg, "divine");
@@ -5495,7 +6987,7 @@ var GameRoom = class _GameRoom {
     let shattered = false;
     if (enemy.frozenMs > 0) {
       enemy.frozenMs = 0;
-      finalDmg = Math.round(finalDmg * 1.6);
+      finalDmg = Math.round(finalDmg * 1.4);
       shattered = true;
       this.emitEvent("crit", enemy.x, enemy.y - enemy.radius - 20, " SHATTER!", "#38BDF8");
       const shatterTargets = [...this.enemies];
@@ -5503,10 +6995,10 @@ var GameRoom = class _GameRoom {
         if (other !== enemy && other.hp > 0 && this.enemies.includes(other) && Math.hypot(other.x - enemy.x, other.y - enemy.y) <= 85) {
           const otherRes = _GameRoom.getEnemyResistance(other.resistances, "frost");
           const otherMark = other.markedMs > 0 ? 1.35 : 1;
-          const aoeDmg = Math.max(1, Math.round(finalDmg * 0.4 * (1 - otherRes) * otherMark));
+          const aoeDmg = Math.max(1, Math.round(finalDmg * 0.35 * (1 - otherRes) * otherMark));
           other.hp -= aoeDmg;
           if (attacker) attacker.damageDealt += aoeDmg;
-          other.slowedMs = Math.max(other.slowedMs, 2500);
+          this.applySoftCc(other, 2500);
           this.emitEvent("damage", other.x, other.y - 10, `${aoeDmg}`, "#7DD3FC");
           if (other.hp <= 0) {
             this.processEnemyDeath(other, attacker);
@@ -5532,24 +7024,16 @@ var GameRoom = class _GameRoom {
         }
         const fireRes = _GameRoom.getEnemyResistance(res, "fire");
         const burnDuration = Math.round(4500 * (1 - fireRes * 0.4));
-        enemy.burnedMs = burnDuration;
+        this.applyDotStatus(enemy, "burn", attacker, burnDuration);
       }
       if (attacker.relics.includes("rimefrost_shard")) {
-        const frostRes = _GameRoom.getEnemyResistance(res, "frost");
-        const tenacity = res ? res.tenacity || 0 : 0;
-        const frostTenacity = Math.max(frostRes, tenacity);
         if (enemy.slowedMs > 0 && enemy.frozenMs <= 0 && !shattered) {
-          const freezeDuration = Math.round(2400 * (1 - frostTenacity));
-          if (freezeDuration >= 600) {
-            enemy.frozenMs = freezeDuration;
+          const appliedFreeze = this.applyHardCc(enemy, "freeze", 1800);
+          if (appliedFreeze > 0) {
             this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 16, "FROZEN!", "#38BDF8");
-          } else {
-            enemy.slowedMs = Math.max(enemy.slowedMs, 3500);
-            this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "TENACIOUS!", "#94A3B8");
           }
         } else if (Math.random() < 0.35) {
-          const slowDuration = Math.round(3500 * (1 - frostTenacity * 0.5));
-          enemy.slowedMs = Math.max(enemy.slowedMs, slowDuration);
+          this.applySoftCc(enemy, 3e3);
           this.emitEvent("status", enemy.x, enemy.y - enemy.radius - 14, "CHILLED", "#7DD3FC");
         }
       }
@@ -5571,7 +7055,7 @@ var GameRoom = class _GameRoom {
         }
         const poisonRes = _GameRoom.getEnemyResistance(res, "poison");
         const poisonDuration = Math.round(6e3 * (1 - poisonRes * 0.4));
-        enemy.poisonedMs = poisonDuration;
+        this.applyDotStatus(enemy, "poison", attacker, poisonDuration);
       }
       if (attacker.relics.includes("bloodletter_talisman")) {
         if (enemy.bleedingMs <= 0) {
@@ -5579,7 +7063,7 @@ var GameRoom = class _GameRoom {
         }
         const bleedRes = _GameRoom.getEnemyResistance(res, "bleed");
         const bleedDuration = Math.round(5e3 * (1 - bleedRes * 0.4));
-        enemy.bleedingMs = bleedDuration;
+        this.applyDotStatus(enemy, "bleed", attacker, bleedDuration);
       }
     }
     if (enemy.shockedMs > 0 && finalDmg > 6) {
@@ -5649,7 +7133,7 @@ var GameRoom = class _GameRoom {
       if (attacker.relics.includes("cinder_heart") && (isCrit || rawAmount >= 24)) {
         this.emitEvent("status", dummy.x, dummy.y - 42, " IGNITED!", "#F97316");
       }
-      if (attacker.relics.includes("rimefrost_shard") && Math.random() < 0.25) {
+      if (attacker.relics.includes("rimefrost_shard") && Math.random() < 0.35) {
         this.emitEvent("status", dummy.x, dummy.y - 42, " CHILLED!", "#38BDF8");
       }
       if (attacker.relics.includes("stormcaller_lodestone")) {
@@ -5679,6 +7163,8 @@ var GameRoom = class _GameRoom {
     const idx = this.enemies.indexOf(enemy);
     if (idx === -1) return;
     this.enemies.splice(idx, 1);
+    this.removeEntityZones(enemy.id);
+    this.enemyMeta.delete(enemy.id);
     if (attacker) {
       attacker.kills += 1;
       if (this.onKillCallback) this.onKillCallback(attacker.id);
@@ -5721,6 +7207,7 @@ var GameRoom = class _GameRoom {
     if (p.level >= MAX_LEVEL) {
       p.level = MAX_LEVEL;
       p.xp = 0;
+      p.nextXp = 999999;
       return;
     }
     p.xp += amount;
@@ -5730,7 +7217,7 @@ var GameRoom = class _GameRoom {
       p.level += 1;
       leveledUp = true;
       if (p.level <= MAX_LEVEL) {
-        p.attributePoints += 2;
+        p.attributePoints += 3;
       }
       p.nextXp = _GameRoom.computeNextXp(p.level);
       if (p.level >= MAX_LEVEL) {
@@ -5742,7 +7229,7 @@ var GameRoom = class _GameRoom {
       p.maxHp = _GameRoom.computePlayerMaxHp(p.heroClass, p.level, p.vitality, p.relics);
       p.hp += p.maxHp - oldMax;
       p.hp = Math.min(p.maxHp, p.hp + 24);
-      this.emitEvent("status", p.x, p.y - 26, `Level ${p.level} (+2 Pts)`, "#F4D378");
+      this.emitEvent("status", p.x, p.y - 26, `Level ${p.level} (+3 Pts)`, "#F4D378");
       if (p.level >= MAX_LEVEL) break;
     }
     if (p.level >= MAX_LEVEL) {
@@ -5765,7 +7252,26 @@ var GameRoom = class _GameRoom {
       poison: 0,
       bleed: 0
     };
-    let resist = damageType === "elemental" ? (res.fire + res.frost + res.lightning) / 3 : res.physical;
+    const avgElemRes = (res.fire + res.frost + res.lightning) / 3;
+    let resist = 0;
+    if (damageType === "elemental") {
+      resist = avgElemRes;
+    } else if (damageType === "fire") {
+      resist = res.fire;
+    } else if (damageType === "frost") {
+      resist = res.frost;
+    } else if (damageType === "lightning") {
+      resist = res.lightning;
+    } else if (damageType === "poison") {
+      resist = res.poison;
+    } else if (damageType === "bleed") {
+      resist = res.bleed;
+    } else if (damageType === "arcane" || damageType === "divine") {
+      resist = avgElemRes;
+    } else {
+      resist = res.physical;
+    }
+    const isMagicalOrElemental = damageType === "elemental" || damageType === "fire" || damageType === "frost" || damageType === "lightning" || damageType === "arcane" || damageType === "divine";
     if (p.relics.includes("runic_carapace")) {
       resist += damageType === "physical" ? 0.15 : 0.2;
     }
@@ -5775,7 +7281,7 @@ var GameRoom = class _GameRoom {
     if (damageType === "physical" && (p.strength || 0) > 0) {
       resist += Math.min(0.15, (p.strength || 0) * 15e-4);
     }
-    if (damageType === "elemental" && (p.intelligence || 0) > 0) {
+    if (isMagicalOrElemental && (p.intelligence || 0) > 0) {
       resist += Math.min(0.15, (p.intelligence || 0) * 15e-4);
     }
     const bastionStacks = this.getBlessingStacks(p, "bastion");
@@ -5809,10 +7315,10 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", p.x, p.y - 24, "THORNED RETALIATION", "#A855F7");
         for (const enemy of this.enemies) {
           if (enemy.hp > 0 && Math.hypot(enemy.x - p.x, enemy.y - p.y) <= 125) {
-            const tenacity = enemy.resistances ? enemy.resistances.tenacity : 0;
-            const stunDur = Math.max(400, Math.round(1800 * (1 - tenacity)));
-            enemy.stunnedMs = stunDur;
-            this.emitEvent("status", enemy.x, enemy.y - 16, "STUNNED!", "#A855F7");
+            const appliedStun = this.applyHardCc(enemy, "stun", 1800);
+            if (appliedStun > 0) {
+              this.emitEvent("status", enemy.x, enemy.y - 16, "STUNNED!", "#A855F7");
+            }
           }
         }
       }
@@ -6034,9 +7540,11 @@ var GameRoom = class _GameRoom {
       if (e.charging) projected.charging = true;
       if (e.chargeAngle !== void 0) projected.chargeAngle = r2(e.chargeAngle);
       if (e.chargeTimerMs) projected.chargeTimerMs = e.chargeTimerMs;
+      if (e.chargeWindupMs) projected.chargeWindupMs = e.chargeWindupMs;
       if (e.summonWave) projected.summonWave = e.summonWave;
       if (e.shieldWallMs) projected.shieldWallMs = e.shieldWallMs;
       if (e.abilityCdMs) projected.abilityCdMs = e.abilityCdMs;
+      if (e.chronoSuspendedMs) projected.chronoSuspendedMs = e.chronoSuspendedMs;
       return projected;
     });
     const netProjectiles = base.projectiles.map((pr) => {
@@ -6059,6 +7567,8 @@ var GameRoom = class _GameRoom {
       if (pr.statusOnHit) projected.statusOnHit = pr.statusOnHit;
       if (pr.statusDurationMs) projected.statusDurationMs = pr.statusDurationMs;
       if (pr.crit) projected.crit = true;
+      if (pr.chronoSuspendedMs) projected.chronoSuspendedMs = pr.chronoSuspendedMs;
+      if (pr.spellId) projected.spellId = pr.spellId;
       return projected;
     });
     const netProps = [];
@@ -6620,6 +8130,7 @@ function diffEntity(prev, next) {
   const prevRec = prev;
   const nextRec = next;
   let changes = null;
+  let removedKeys;
   for (const key of Object.keys(nextRec)) {
     if (key === "id") continue;
     if (!shallowEqualValues(prevRec[key], nextRec[key])) {
@@ -6629,12 +8140,16 @@ function diffEntity(prev, next) {
   }
   for (const key of Object.keys(prevRec)) {
     if (key === "id") continue;
-    if (!(key in nextRec) && prevRec[key] !== void 0) {
-      if (!changes) changes = {};
-      changes[key] = void 0;
+    if ((!(key in nextRec) || nextRec[key] === void 0) && prevRec[key] !== void 0) {
+      if (!removedKeys) removedKeys = [];
+      removedKeys.push(key);
     }
   }
-  return changes;
+  if (!changes && !removedKeys) return null;
+  return {
+    changes: changes ?? {},
+    ...removedKeys ? { removedKeys } : {}
+  };
 }
 function diffEntityArray(prevList, nextList) {
   const prevById = /* @__PURE__ */ new Map();
@@ -6652,10 +8167,14 @@ function diffEntityArray(prevList, nextList) {
       if (!added) added = [];
       added.push(nextItem);
     } else {
-      const changes = diffEntity(prevItem, nextItem);
-      if (changes) {
+      const patch = diffEntity(prevItem, nextItem);
+      if (patch) {
         if (!updated) updated = [];
-        updated.push({ id: nextItem.id, changes });
+        updated.push({
+          id: nextItem.id,
+          changes: patch.changes,
+          ...patch.removedKeys ? { removedKeys: patch.removedKeys } : {}
+        });
       }
     }
   }
@@ -6702,6 +8221,13 @@ function cloneSnapshotBaseline(snap) {
         statuses: p.statuses.map((s) => ({ ...s }))
       };
       if (p.floorBlessings) copy.floorBlessings = [...p.floorBlessings];
+      if (p.spellCastState !== void 0) {
+        copy.spellCastState = p.spellCastState ? { ...p.spellCastState } : null;
+      }
+      if (p.disintegrationState !== void 0) {
+        copy.disintegrationState = p.disintegrationState ? { ...p.disintegrationState } : null;
+      }
+      if (p.pendingScrollChoices) copy.pendingScrollChoices = [...p.pendingScrollChoices];
       return copy;
     }),
     enemies: snap.enemies.map((e) => {
@@ -6711,7 +8237,11 @@ function cloneSnapshotBaseline(snap) {
     }),
     projectiles: snap.projectiles.map((pr) => ({ ...pr })),
     props: snap.props.map((pr) => ({ ...pr })),
-    zones: snap.zones.map((z) => ({ ...z })),
+    zones: snap.zones.map((z) => {
+      const copy = { ...z };
+      if (z.chainPoints) copy.chainPoints = z.chainPoints.map((pt) => ({ ...pt }));
+      return copy;
+    }),
     npcs: snap.npcs.map((n) => {
       const copy = { ...n };
       if (n.options) copy.options = n.options.map((o) => ({ ...o }));
@@ -6831,7 +8361,18 @@ function verifyPassword(pw, storedHash) {
   const legacyHash = crypto.createHash("sha256").update(`beyond_salt_${pw}`).digest("hex");
   return legacyHash === storedHash;
 }
+function normalizeAccountLevel(acc) {
+  const rawLevel = Number(acc.level) || 1;
+  if (rawLevel >= MAX_LEVEL) {
+    acc.level = MAX_LEVEL;
+    acc.xp = 0;
+  } else {
+    acc.level = Math.max(1, Math.floor(rawLevel));
+    acc.xp = Math.max(0, Number(acc.xp) || 0);
+  }
+}
 function toPublicProfile(acc) {
+  normalizeAccountLevel(acc);
   return {
     id: acc.id,
     username: acc.username,
@@ -7043,7 +8584,7 @@ async function initStorage() {
         await dbPool.query(`
           UPDATE accounts 
           SET strength = 0, vitality = 0, dexterity = 0, intelligence = 0, faith = 0, 
-              attribute_points = (GREATEST(1, level) - 1) * 2;
+              attribute_points = (GREATEST(1, level) - 1) * 3;
         `);
         await dbPool.query(
           "INSERT INTO schema_migrations (version) VALUES ($1)",
@@ -7078,6 +8619,7 @@ async function initStorage() {
           faith: Number(row.faith) || 0,
           attributePoints: Number(row.attribute_points) || 0
         };
+        normalizeAccountLevel(rec);
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
@@ -7113,7 +8655,7 @@ async function initStorage() {
           rec.dexterity = 0;
           rec.intelligence = 0;
           rec.faith = 0;
-          rec.attributePoints = (Math.max(1, rec.level) - 1) * 2;
+          rec.attributePoints = (Math.max(1, rec.level) - 1) * 3;
         } else {
           rec.strength = Number(rec.strength) || 0;
           rec.vitality = Number(rec.vitality) || 0;
@@ -7122,6 +8664,7 @@ async function initStorage() {
           rec.faith = Number(rec.faith) || 0;
           rec.attributePoints = Number(rec.attributePoints) || 0;
         }
+        normalizeAccountLevel(rec);
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
@@ -7265,8 +8808,8 @@ function attachRoomPersistenceCallbacks(room) {
   room.onProgressionUpdateCallback = async (pid, state) => {
     const acc = accountsById.get(pid);
     if (acc) {
-      acc.level = state.level;
-      acc.xp = state.xp;
+      acc.level = Math.max(1, Math.min(MAX_LEVEL, state.level));
+      acc.xp = acc.level >= MAX_LEVEL ? 0 : Math.max(0, state.xp);
       acc.strength = state.strength;
       acc.vitality = state.vitality;
       acc.dexterity = state.dexterity;
@@ -7280,6 +8823,7 @@ function attachRoomPersistenceCallbacks(room) {
   };
 }
 function toPartyAccount(acc) {
+  normalizeAccountLevel(acc);
   return {
     id: acc.id,
     username: acc.username,
@@ -7857,6 +9401,14 @@ async function startServer() {
           });
           broadcastRoomList();
         }
+      } else if (msg.type === "player:channel_start") {
+        room.startDisintegrationChannel(acc.id, msg.aimAngle);
+      } else if (msg.type === "player:channel_update") {
+        room.updateDisintegrationTarget(acc.id, msg.aimAngle);
+      } else if (msg.type === "player:channel_stop") {
+        room.stopDisintegrationChannel(acc.id);
+      } else if (msg.type === "player:select_scroll") {
+        room.selectArcanistScroll(acc.id, msg.scrollId);
       } else if (msg.type === "player:select_relic") {
         room.selectRelic(acc.id, msg.relicId);
         acc.storedRelics = [...room.getPlayerState(acc.id)?.storage || []];
@@ -8018,31 +9570,37 @@ async function startServer() {
         if (acc.attributePoints && acc.attributePoints > 0) {
           const attr = msg.attribute;
           if (attr === "strength" || attr === "dexterity" || attr === "vitality" || attr === "intelligence" || attr === "faith") {
-            if ((acc[attr] || 0) < MAX_ATTRIBUTE) {
-              const oldAttr = acc[attr] || 0;
+            const currentAttr = acc[attr] || 0;
+            if (currentAttr < MAX_ATTRIBUTE) {
+              const oldAttr = currentAttr;
               const oldPoints = acc.attributePoints;
-              acc[attr] = oldAttr + 1;
-              acc.attributePoints = oldPoints - 1;
-              void (async () => {
-                try {
-                  await persistAccount(acc);
-                  room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
-                  room.updatePlayerAttributes(
-                    acc.id,
-                    acc.strength || 0,
-                    acc.vitality || 0,
-                    acc.dexterity || 0,
-                    acc.intelligence || 0,
-                    acc.faith || 0,
-                    acc.attributePoints || 0
-                  );
-                  partyCoordinator.markRoomDirty(room.roomId);
-                } catch {
-                  acc[attr] = oldAttr;
-                  acc.attributePoints = oldPoints;
-                  sendJson(ws, { type: "error", message: "Failed to save attribute allocation. Please try again." });
-                }
-              })();
+              const requested = msg.amount !== void 0 ? Math.floor(Number(msg.amount)) : 1;
+              const availableRoom = Math.max(0, MAX_ATTRIBUTE - oldAttr);
+              const spend = Math.min(requested > 0 ? requested : 1, oldPoints, availableRoom);
+              if (spend > 0) {
+                acc[attr] = oldAttr + spend;
+                acc.attributePoints = oldPoints - spend;
+                void (async () => {
+                  try {
+                    await persistAccount(acc);
+                    room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} by +${spend} to ${acc[attr]}.`);
+                    room.updatePlayerAttributes(
+                      acc.id,
+                      acc.strength || 0,
+                      acc.vitality || 0,
+                      acc.dexterity || 0,
+                      acc.intelligence || 0,
+                      acc.faith || 0,
+                      acc.attributePoints || 0
+                    );
+                    partyCoordinator.markRoomDirty(room.roomId);
+                  } catch {
+                    acc[attr] = oldAttr;
+                    acc.attributePoints = oldPoints;
+                    sendJson(ws, { type: "error", message: "Failed to save attribute allocation. Please try again." });
+                  }
+                })();
+              }
             } else {
               sendJson(ws, { type: "error", message: `${attr.toUpperCase()} is already at maximum level.` });
             }

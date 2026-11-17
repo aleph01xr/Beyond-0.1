@@ -50,6 +50,10 @@ import {
 } from '../shared/types.ts';
 import { getStatusEffectMeta } from '../shared/statusEffects.ts';
 import {
+  computeArcanistSpellDamage,
+  getArcanistScrollDef,
+} from '../shared/arcanist.ts';
+import {
   getAbilityTargetSpec,
   type AbilityAimState,
   type AimableAction,
@@ -419,6 +423,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   };
 
   const myDef = me ? HERO_CLASSES[me.heroClass] : HERO_CLASSES.vanguard;
+  const equippedScroll =
+    me?.heroClass === 'arcanist' ? getArcanistScrollDef(me.equippedScrollId) : null;
+  const isChronoSuspended = Boolean(me && (me.chronoSuspendedMs || 0) > 0);
+  const isChannelingDisintegration = Boolean(me?.disintegrationState?.active);
   const tacSec = me ? Math.ceil(me.skillCooldownMs / 1000) : 0;
   const ultSec = me ? Math.ceil(me.ultCooldownMs / 1000) : 0;
   const dashSec = me ? Math.ceil((me.dashCooldownMs || 0) / 1000) : 0;
@@ -493,7 +501,9 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       adminPanelOpen ||
       touchSettingsOpen ||
       cinematicIntro ||
-      (me && me.pendingRelicChoices.length > 0) ||
+      (me &&
+        (me.pendingRelicChoices.length > 0 ||
+          (me.pendingScrollChoices?.length ?? 0) > 0)) ||
       snapshot.status !== 'playing'
   );
 
@@ -507,11 +517,11 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       sfx.playUiClick();
       return;
     }
-    if (action === 'tactical' && me.skillCooldownMs > 0) return;
+    if (action === 'tactical' && (me.skillCooldownMs > 0 || me.spellCastState || me.disintegrationState?.active || isChronoSuspended)) return;
     if (action === 'ult' && me.ultCooldownMs > 0) return;
     if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return;
 
-    const spec = getAbilityTargetSpec(me.heroClass, action);
+    const spec = getAbilityTargetSpec(me.heroClass, action, me.equippedScrollId);
     const angle = unifiedInputRef.current.aimAngle ?? me.aimAngle ?? 0;
     abilityAimRef.current = {
       action,
@@ -543,6 +553,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         onSendKeyboardInput={handleKeyboardInput}
         onTriggerAction={handleTriggerActionWithPortal}
         onSendPing={onSendPing}
+        onSendCommand={onSendAdminCommand}
         chatFocused={chatFocused}
         controlsBlocked={controlsBlocked}
       />
@@ -1132,6 +1143,34 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               })}
             </div>
           )}
+          {/* Arcanist Channel / Chrono Well Status Indicators */}
+          {(isChronoSuspended || isChannelingDisintegration || me.equippedScrollId) && (
+            <div className="pt-1 border-t border-[#2E2B3D] flex flex-wrap gap-1">
+              {isChronoSuspended && (
+                <div className="px-1.5 py-0.5 rounded-sm border border-[#38BDF8]/80 bg-[#0C4A6E]/60 text-[#BAE6FD] text-[9px] font-bold tracking-wider uppercase">
+                  TIME SUSPENDED {((me.chronoSuspendedMs || 0) / 1000).toFixed(1)}s
+                </div>
+              )}
+              {isChannelingDisintegration && (
+                <div className="px-1.5 py-0.5 rounded-sm border border-[#A855F7]/80 bg-[#4C1D95]/60 text-[#E9D5FF] text-[9px] font-bold tracking-wider uppercase">
+                  CHANNELING DISINTEGRATION
+                </div>
+              )}
+              {equippedScroll && (
+                <div
+                  title={`${equippedScroll.name}: ${equippedScroll.summary}`}
+                  className="px-1.5 py-0.5 rounded-sm border text-[9px] font-bold tracking-wide"
+                  style={{
+                    borderColor: `${equippedScroll.accentColor}88`,
+                    backgroundColor: `${equippedScroll.accentColor}22`,
+                    color: equippedScroll.accentColor,
+                  }}
+                >
+                  Scroll: {equippedScroll.tacticalTitle}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1149,6 +1188,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           onAttackPress={handleAttackPress}
           onTriggerAction={handleTriggerActionWithPortal}
           onSendPing={onSendPing}
+          onSendCommand={onSendAdminCommand}
           settings={touchSettings}
           onOpenSettings={() => setTouchSettingsOpen(true)}
         />
@@ -1168,7 +1208,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <span className="font-display text-xs tracking-wide whitespace-nowrap">
             {activeAimUi.cancelled
               ? 'Release to Cancel Cast'
-              : `Aiming ${getAbilityTargetSpec(me.heroClass, activeAimUi.action).label} · Drag Here or [ESC] to Cancel`}
+              : `Aiming ${getAbilityTargetSpec(me.heroClass, activeAimUi.action, me.equippedScrollId).label} · Drag Here or [ESC] to Cancel`}
           </span>
         </div>
       )}
@@ -1186,14 +1226,47 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <button
             type="button"
             onMouseDown={(e) => {
-              if (e.button === 0) {
-                e.preventDefault();
-                startDesktopButtonAim('tactical', e.clientX, e.clientY);
+              if (e.button !== 0 || controlsBlocked || !me || me.downed) return;
+              e.preventDefault();
+              if (me.heroClass === 'arcanist' && me.equippedScrollId === 'disintegration') {
+                if (isSilenced || isChronoSuspended || tacSec > 0 || me.spellCastState) return;
+                const aim = unifiedInputRef.current.aimAngle ?? me.aimAngle ?? 0;
+                sfx.playArcanistSpell('disintegration');
+                onSendAdminCommand?.({
+                  type: 'player:channel_start',
+                  spellId: 'disintegration',
+                  aimAngle: aim,
+                });
+                return;
+              }
+              startDesktopButtonAim('tactical', e.clientX, e.clientY);
+            }}
+            onMouseUp={() => {
+              if (isChannelingDisintegration) {
+                onSendAdminCommand?.({ type: 'player:channel_stop' });
               }
             }}
-            title={isSilenced ? 'Silenced: Tactical ability sealed' : `${myDef.tacticalName} (Hold & drag to aim, release to cast)`}
-            className={`stone-button stone-button-dark flex-col items-start min-w-[120px] h-auto py-1.5 ${
-              activeAimUi?.action === 'tactical'
+            onMouseLeave={() => {
+              if (isChannelingDisintegration) {
+                onSendAdminCommand?.({ type: 'player:channel_stop' });
+              }
+            }}
+            title={
+              isSilenced
+                ? 'Silenced: Tactical ability sealed'
+                : equippedScroll
+                ? `${equippedScroll.scrollName} (${equippedScroll.role}): ${equippedScroll.summary}`
+                : `${myDef.tacticalName}: ${myDef.tacticalDesc} (Hold & drag to aim, release to cast)`
+            }
+            style={
+              equippedScroll && !isSilenced && tacSec === 0
+                ? { borderColor: `${equippedScroll.accentColor}99` }
+                : undefined
+            }
+            className={`stone-button stone-button-dark flex-col items-start min-w-[130px] h-auto py-1.5 ${
+              isChannelingDisintegration
+                ? 'ring-2 ring-[#A855F7] border-[#A855F7] bg-[#2D1A47]'
+                : activeAimUi?.action === 'tactical'
                 ? 'ring-2 ring-[#38BDF8] border-[#38BDF8]'
                 : isSilenced
                 ? 'border-[#C084FC] opacity-60 bg-[#241a33]'
@@ -1203,13 +1276,16 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             }`}
           >
             <div className="flex justify-between w-full text-[10px] font-mono tabular-nums opacity-80">
-              <span>[Q / RMB]</span>
-              <span className={isSilenced ? 'text-[#C084FC] font-bold' : ''}>
-                {isSilenced ? '[SILENCED]' : tacSec > 0 ? `${tacSec}s` : activeAimUi?.action === 'tactical' ? 'AIM' : 'READY'}
+              <span>{equippedScroll?.isChannel ? '[HOLD Q/RMB]' : '[Q / RMB]'}</span>
+              <span className={isSilenced ? 'text-[#C084FC] font-bold' : isChannelingDisintegration ? 'text-[#E9D5FF] font-bold' : ''}>
+                {isSilenced ? '[SILENCED]' : isChannelingDisintegration ? 'CHAN' : tacSec > 0 ? `${tacSec}s` : activeAimUi?.action === 'tactical' ? 'AIM' : 'READY'}
               </span>
             </div>
-            <div className="font-display text-sm whitespace-nowrap">
-              {myDef.tacticalName}
+            <div
+              className="font-display text-sm whitespace-nowrap"
+              style={equippedScroll ? { color: equippedScroll.accentColor } : undefined}
+            >
+              {equippedScroll ? equippedScroll.tacticalTitle : myDef.tacticalName}
             </div>
           </button>
 
@@ -1470,6 +1546,88 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Ancient Scroll Draft Modal (Arcanist Tactical Skill Replacement — Separate from Relics) */}
+      {me &&
+        me.pendingRelicChoices.length === 0 &&
+        (me.pendingScrollChoices?.length ?? 0) > 0 &&
+        snapshot.status === 'playing' && (
+          <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="stone-panel max-w-2xl w-full p-5 sm:p-7 space-y-5 my-auto border-[#6366F1]/70">
+              <div className="text-center space-y-1">
+                <div className="text-[11px] font-mono uppercase tracking-widest text-[#A5B4FC]">
+                  Arcanist Inscription · Tactical Override
+                </div>
+                <h2 className="font-display text-xl sm:text-2xl text-white">
+                  Choose an Ancient Scroll
+                </h2>
+                <p className="text-xs sm:text-sm text-[#D0CEDB]">
+                  Inscribe one Scroll to reshape your [Q] Tactical Skill for this expedition. Scrolls remain separate from Ancient Relics.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {me.pendingScrollChoices!.map((sid) => {
+                  const scroll = getArcanistScrollDef(sid);
+                  if (!scroll) return null;
+                  const furyStacks = me.floorBlessings?.filter((b) => b === 'fury').length ?? 0;
+                  const estDmg = computeArcanistSpellDamage(
+                    scroll.baseDamage,
+                    {
+                      level: me.level,
+                      intelligence: me.intelligence,
+                      relics: me.relics,
+                      furyStacks,
+                    },
+                    scroll.intCoeff
+                  );
+                  return (
+                    <button
+                      key={sid}
+                      type="button"
+                      onClick={() => {
+                        sfx.playRelicChime();
+                        onSendAdminCommand?.({
+                          type: 'player:select_scroll',
+                          scrollId: scroll.id,
+                        });
+                      }}
+                      className="stone-button stone-button-dark h-auto flex-col items-start p-4 text-left gap-2.5 border-2 border-transparent hover:border-[#818CF8] ring-1 ring-[#38364C]"
+                    >
+                      <div className="space-y-1 w-full">
+                        <div className="flex items-center justify-between text-[10px] font-mono text-[#BDBBC9]">
+                          <span>Replaces Astral Nova [Q]</span>
+                          <span>CD {(scroll.cooldownMs / 1000).toFixed(1)}s</span>
+                        </div>
+                        <div
+                          style={{ color: scroll.accentColor }}
+                          className="font-display text-base font-semibold"
+                        >
+                          {scroll.scrollName}
+                        </div>
+                        <div className="flex items-center justify-between text-xs font-mono text-[#E2E8F0]">
+                          <span>{scroll.role}</span>
+                          <span className="text-emerald-300">
+                            Est. {estDmg}{scroll.isChannel ? '/tick' : ''} (+{(scroll.intCoeff * 100).toFixed(2).replace(/\.?0+$/, '')}%/INT)
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#E8E6F2] leading-relaxed">
+                          {scroll.summary}
+                        </p>
+                        <p className="text-[11px] text-[#93C5FD] leading-snug pt-1">
+                          Chrono Well: {scroll.chronoInteraction}
+                        </p>
+                      </div>
+                      <span className="font-display text-xs text-white underline mt-auto">
+                        Inscribe Scroll
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
       {/* Unified Master Game Menu Modal */}
       {pauseOpen && snapshot.status === 'playing' && me && (

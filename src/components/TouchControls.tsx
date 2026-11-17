@@ -8,12 +8,14 @@ import {
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
 import type {
+  ClientMessage,
   DungeonMap,
   EnemyState,
   GameSnapshot,
   PlayerState,
 } from '../shared/types.ts';
 import { HERO_CLASSES, MAX_LEVEL } from '../shared/types.ts';
+import { getArcanistScrollDef } from '../shared/arcanist.ts';
 
 export type JoystickSizeOption = 'small' | 'medium' | 'large' | 'huge';
 export type JoystickModeOption = 'fixed' | 'floating';
@@ -76,6 +78,7 @@ interface TouchControlsProps {
     opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
   onSendPing: (label: string, x: number, y: number) => void;
+  onSendCommand?: (msg: ClientMessage) => void;
   settings: TouchSettings;
   onOpenSettings: () => void;
 }
@@ -113,6 +116,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   onAttackPress,
   onTriggerAction,
   onSendPing,
+  onSendCommand,
   settings,
   onOpenSettings,
 }) => {
@@ -159,6 +163,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   } | null>(null);
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
+  const equippedScroll =
+    player.heroClass === 'arcanist' ? getArcanistScrollDef(player.equippedScrollId) : null;
+  const isChronoSuspended = (player.chronoSuspendedMs || 0) > 0;
+  const isChanneling = Boolean(player.disintegrationState?.active);
   const tacSec = Math.ceil(player.skillCooldownMs / 1000);
   const ultSec = Math.ceil(player.ultCooldownMs / 1000);
   const dashSec = Math.ceil((player.dashCooldownMs || 0) / 1000);
@@ -382,7 +390,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       sfx.playUiClick();
       return false;
     }
-    if (action === 'tactical' && livePlayer.skillCooldownMs > 0) return false;
+    if (action === 'tactical' && (livePlayer.skillCooldownMs > 0 || livePlayer.spellCastState || livePlayer.disintegrationState?.active || (livePlayer.chronoSuspendedMs || 0) > 0)) return false;
     if (action === 'ult' && livePlayer.ultCooldownMs > 0) return false;
     if (action === 'dash' && (livePlayer.dashCooldownMs || 0) > 0) return false;
     return true;
@@ -396,11 +404,17 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     if (abilityTouchRef.current !== null) return;
     if (!canAimAbility(action)) return;
 
+    const livePlayer =
+      latestSnapshotRef?.current?.players.find((p) => p.id === player.id) ?? player;
     const touch = e.changedTouches[0];
     const rect = e.currentTarget.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
     const originY = rect.top + rect.height / 2;
-    const spec = getAbilityTargetSpec(player.heroClass, action);
+    const spec = getAbilityTargetSpec(
+      livePlayer.heroClass,
+      action,
+      livePlayer.equippedScrollId
+    );
     const defaultAngle =
       action === 'dash' ? lastStickAngleRef.current : getAutoTargetAngle();
 
@@ -421,6 +435,20 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         aimDistance: spec.defaultDist,
         cancelled: false,
       };
+    }
+
+    if (
+      action === 'tactical' &&
+      livePlayer.heroClass === 'arcanist' &&
+      livePlayer.equippedScrollId === 'disintegration' &&
+      onSendCommand
+    ) {
+      sfx.playArcanistSpell('disintegration');
+      onSendCommand({
+        type: 'player:channel_start',
+        spellId: 'disintegration',
+        aimAngle: defaultAngle,
+      });
     }
 
     onAbilityAimUiChange?.({ action, cancelled: false, source: 'touch' });
@@ -478,7 +506,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       }
     }
 
-    const spec = getAbilityTargetSpec(player.heroClass, active.action);
+    const livePlayer =
+      latestSnapshotRef?.current?.players.find((p) => p.id === player.id) ?? player;
+    const spec = getAbilityTargetSpec(
+      livePlayer.heroClass,
+      active.action,
+      livePlayer.equippedScrollId
+    );
     const prevCancelled = abilityAimRef?.current?.cancelled ?? false;
 
     if (dist > deadzone) {
@@ -494,6 +528,14 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         abilityAimRef.current.magnitude = mag;
         abilityAimRef.current.aimDistance = aimDistance;
         abilityAimRef.current.cancelled = isCancelled;
+      }
+      if (
+        active.action === 'tactical' &&
+        livePlayer.heroClass === 'arcanist' &&
+        livePlayer.equippedScrollId === 'disintegration' &&
+        onSendCommand
+      ) {
+        onSendCommand({ type: 'player:channel_update', aimAngle: angle });
       }
     } else {
       const defaultAngle =
@@ -550,16 +592,33 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     setSkillWheelUi(null);
     onAbilityAimUiChange?.(null);
 
+    const livePlayer =
+      latestSnapshotRef?.current?.players.find((p) => p.id === player.id) ?? player;
+    if (
+      active.action === 'tactical' &&
+      livePlayer.heroClass === 'arcanist' &&
+      livePlayer.equippedScrollId === 'disintegration' &&
+      onSendCommand
+    ) {
+      onSendCommand({ type: 'player:channel_stop' });
+      triggerHaptic(8);
+      return;
+    }
+
     if (forceCancel || currentAim?.cancelled) {
       sfx.playUiClick();
       triggerHaptic(8);
       return;
     }
 
-    const spec = getAbilityTargetSpec(player.heroClass, active.action);
+    const spec = getAbilityTargetSpec(
+      livePlayer.heroClass,
+      active.action,
+      livePlayer.equippedScrollId
+    );
     const dragged = active.dragDist > 10;
     const quickSearchRange =
-      spec.kind === 'cone_volley' || spec.kind === 'ground_aoe'
+      spec.kind === 'cone_volley' || spec.kind === 'ground_aoe' || spec.kind === 'line'
         ? spec.range
         : spec.kind === 'dash' && spec.action === 'tactical'
         ? 160
@@ -575,7 +634,9 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       : quickTarget?.angle ?? lastStickAngleRef.current;
     const castDist = dragged
       ? currentAim?.aimDistance ?? spec.defaultDist
-      : spec.kind === 'ground_aoe' && player.heroClass === 'arcanist' && quickTarget
+      : (spec.kind === 'ground_aoe' || spec.kind === 'line') &&
+        livePlayer.heroClass === 'arcanist' &&
+        quickTarget
       ? Math.round(Math.min(spec.range, quickTarget.distance))
       : spec.defaultDist;
 
@@ -583,10 +644,18 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       sfx.playDash();
       triggerHaptic(14);
     } else if (active.action === 'tactical') {
-      sfx.playSkill('tactical');
+      if (livePlayer.heroClass === 'arcanist' && livePlayer.equippedScrollId) {
+        sfx.playArcanistSpell(livePlayer.equippedScrollId);
+      } else {
+        sfx.playSkill('tactical');
+      }
       triggerHaptic(16);
     } else {
-      sfx.playSkill('ult');
+      if (livePlayer.heroClass === 'arcanist') {
+        sfx.playChronoWell();
+      } else {
+        sfx.playSkill('ult');
+      }
       triggerHaptic(25);
     }
 
@@ -839,13 +908,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
                 : 'bg-[#282738]/95 border-[#818CF8] text-[#C7D2FE] active:scale-95'
             }`}
-            aria-label={heroDef.tacticalName}
+            aria-label={equippedScroll ? equippedScroll.tacticalTitle : heroDef.tacticalName}
           >
             <span className="text-xs font-mono font-bold leading-none">
-              {isSilenced ? 'SIL' : tacSec > 0 ? `${tacSec}s` : 'Q'}
+              {isSilenced ? 'SIL' : isChanneling ? 'CHAN' : tacSec > 0 ? `${tacSec}s` : 'Q'}
             </span>
             <span className="text-[7.5px] font-display truncate max-w-[42px] mt-0.5">
-              {isSilenced ? 'Sealed' : tacSec > 0 ? 'Wait' : heroDef.tacticalName.split(' ')[0]}
+              {isSilenced
+                ? 'Sealed'
+                : isChanneling
+                ? 'Beam'
+                : tacSec > 0
+                ? 'Wait'
+                : (equippedScroll ? equippedScroll.tacticalTitle : heroDef.tacticalName).split(' ')[0]}
             </span>
           </button>
 

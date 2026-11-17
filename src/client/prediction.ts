@@ -126,6 +126,25 @@ export class LocalPredictionController {
     const isCharmed = Boolean(
       me.statuses && me.statuses.some((s) => s.type === 'charmed')
     );
+    const isMovementLocked = Boolean(
+      me.disintegrationState?.active || (me.chronoSuspendedMs || 0) > 0
+    );
+
+    if (isMovementLocked) {
+      this.predX = me.x;
+      this.predY = me.y;
+      this.predVx = 0;
+      this.predVy = 0;
+      this.errorOffsetX = 0;
+      this.errorOffsetY = 0;
+      this.pendingSteps.length = 0;
+      return {
+        x: this.predX,
+        y: this.predY,
+        reconciledErrorPx: 0,
+        snapped: true,
+      };
+    }
 
     let reconciledErrorPx = 0;
     let snapped = false;

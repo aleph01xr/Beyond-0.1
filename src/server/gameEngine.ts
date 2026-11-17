@@ -46,6 +46,17 @@ import {
   getPrimaryAttackRange,
 } from '../shared/abilityTargeting.ts';
 import { generateDungeonFloor, generateTavernFloor, makeEnemy } from './dungeonGenerator.ts';
+import {
+  ARCANIST_SCROLLS,
+  ARCANIST_SPELLS,
+  computeArcanistSpellDamage,
+  distancePointToSegment,
+  getArcanistScrollDef,
+  normalizeAngle,
+  rotateAngleToward,
+  type ArcanistScrollId,
+  type ArcanistSpellId,
+} from '../shared/arcanist.ts';
 
 interface PlayerRuntime {
   state: PlayerState;
@@ -102,6 +113,7 @@ export class GameRoom {
   private players = new Map<string, PlayerRuntime>();
   private enemyMeta = new Map<string, EnemyRuntimeMeta>();
   private zoneHitPlayers = new Map<string, Set<string>>();
+  private arcaneOrbHits = new Map<string, Map<string, { hits: number; lastHitAtMs: number }>>();
   private entitySeq = 1;
   private simTimeMs = 0;
   private startedAt = Date.now();
@@ -309,6 +321,7 @@ export class GameRoom {
     this.floor = floorNum;
     this.enemyMeta.clear();
     this.zoneHitPlayers.clear();
+    this.arcaneOrbHits.clear();
     if (floorNum === 0) {
       const tav = generateTavernFloor();
       this.map = tav.map;
@@ -346,6 +359,9 @@ export class GameRoom {
       pr.state.readyNextFloor = false;
       pr.state.statuses = [];
       pr.state.floorBlessings = [];
+      pr.state.spellCastState = null;
+      pr.state.disintegrationState = null;
+      pr.state.chronoSuspendedMs = 0;
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -846,7 +862,14 @@ export class GameRoom {
         meta.lastBossAbility = -1;
         meta.bossAbilityCooldowns = {};
       }
+      en.chronoSuspendedMs = 0;
     }
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      if (this.zones[i].kind === 'chrono_well') {
+        this.zones.splice(i, 1);
+      }
+    }
+    this.refreshChronoSuspensionState();
     this.pushSystemChat(`[ADMIN] Reset active boss encounter (HP restored, phase/enrage/CC cleared).`);
   }
 
@@ -894,6 +917,11 @@ export class GameRoom {
       pr.state.poisonedMs = 0;
       pr.state.bleedingMs = 0;
       pr.state.silencedMs = 0;
+      pr.state.spellCastState = null;
+      pr.state.disintegrationState = null;
+      pr.state.equippedScrollId = null;
+      pr.state.pendingScrollChoices = [];
+      pr.state.chronoSuspendedMs = 0;
       pr.input = {
         up: false,
         down: false,
@@ -1128,6 +1156,9 @@ export class GameRoom {
       existing.state.username = username;
       existing.state.isAdmin = isAdmin || Boolean(existing.state.isAdmin);
       if (!existing.state.storage) existing.state.storage = [];
+      if (existing.state.heroClass === 'arcanist') {
+        if (!existing.state.pendingScrollChoices) existing.state.pendingScrollChoices = [];
+      }
       if (wasDisconnected && this.roomId !== 'TAVERN-HUB') {
         this.pushSystemChat(`${username} reconnected.`);
       }
@@ -1197,6 +1228,7 @@ export class GameRoom {
       isAdmin: isAdmin,
       godMode: false,
       speedBoost: false,
+      noCooldownMode: false,
       dexterity: savedStats?.dexterity || 0,
       vitality: savedStats?.vitality || 0,
       strength: savedStats?.strength || 0,
@@ -1205,6 +1237,15 @@ export class GameRoom {
       attributePoints: savedStats?.attributePoints || 0,
       statuses: [],
       floorBlessings: [],
+      ...(heroClass === 'arcanist'
+        ? {
+            spellCastState: null,
+            disintegrationState: null,
+            equippedScrollId: null,
+            pendingScrollChoices: [],
+          }
+        : {}),
+      chronoSuspendedMs: 0,
     };
 
     if (state.level >= MAX_LEVEL) {
@@ -1256,6 +1297,11 @@ export class GameRoom {
     };
     pr.state.vx = 0;
     pr.state.vy = 0;
+    if (pr.state.disintegrationState?.active) {
+      this.stopDisintegrationChannel(playerId);
+    }
+    pr.state.spellCastState = null;
+    this.cleanupChronoWellsForOwner(playerId);
     if (pr.state.connected) {
       pr.state.connected = false;
       if (this.roomId !== 'TAVERN-HUB') {
@@ -1291,6 +1337,10 @@ export class GameRoom {
   public removePlayer(playerId: string): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
+    if (pr.state.disintegrationState?.active) {
+      this.stopDisintegrationChannel(playerId);
+    }
+    this.cleanupChronoWellsForOwner(playerId);
     const wasHost = playerId === this.hostId || pr.state.username === this.hostName;
     this.players.delete(playerId);
     this.pushSystemChat(`${pr.state.username} departed the party.`);
@@ -1379,6 +1429,10 @@ export class GameRoom {
     pr.state.hp = Math.max(1, Math.round(pr.state.maxHp * hpRatio));
     pr.state.maxSkillCooldownMs = def.tacticalCooldownMs;
     pr.state.maxUltCooldownMs = def.ultCooldownMs;
+    pr.state.disintegrationState = null;
+    pr.state.spellCastState = null;
+    pr.state.equippedScrollId = null;
+    pr.state.pendingScrollChoices = [];
     this.emitEvent('status', pr.state.x, pr.state.y - 22, def.name, def.accentColor);
   }
 
@@ -1599,6 +1653,27 @@ export class GameRoom {
     return nextState;
   }
 
+  public togglePlayerNoCooldown(playerId: string, enabled?: boolean): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    const nextState = enabled !== undefined ? enabled : !pr.state.noCooldownMode;
+    pr.state.noCooldownMode = nextState;
+    if (nextState) {
+      pr.state.skillCooldownMs = 0;
+      pr.state.ultCooldownMs = 0;
+      pr.state.dashCooldownMs = 0;
+      pr.attackCooldownMs = 0;
+    }
+    this.emitEvent(
+      'status',
+      pr.state.x,
+      pr.state.y - 28,
+      nextState ? 'NO COOLDOWN ON' : 'NO COOLDOWN OFF',
+      nextState ? '#38BDF8' : '#64748B'
+    );
+    return nextState;
+  }
+
   public addPlayerGold(playerId: string, amount: number): void {
     const pr = this.players.get(playerId);
     if (!pr) return;
@@ -1728,6 +1803,588 @@ export class GameRoom {
     return picked;
   }
 
+  public rollScrollChoices(equippedId?: string | null): ArcanistScrollId[] {
+    const pool = ARCANIST_SCROLLS.filter((s) => s.id !== equippedId);
+    const copy = [...pool];
+    const picked: ArcanistScrollId[] = [];
+    while (picked.length < 3 && copy.length > 0) {
+      const idx = Math.floor(Math.random() * copy.length);
+      picked.push(copy[idx].id);
+      copy.splice(idx, 1);
+    }
+    return picked;
+  }
+
+  public grantScrollChoices(playerId: string): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr || pr.state.heroClass !== 'arcanist') return false;
+    if (pr.state.pendingScrollChoices && pr.state.pendingScrollChoices.length > 0) return false;
+    const choices = this.rollScrollChoices(pr.state.equippedScrollId);
+    if (choices.length === 0) return false;
+    pr.state.pendingScrollChoices = choices;
+    return true;
+  }
+
+  public selectArcanistScroll(playerId: string, scrollId: ArcanistScrollId): void {
+    const pr = this.players.get(playerId);
+    if (!pr || pr.state.heroClass !== 'arcanist') return;
+    const p = pr.state;
+    if (!p.pendingScrollChoices || !p.pendingScrollChoices.includes(scrollId)) return;
+    const scrollDef = getArcanistScrollDef(scrollId);
+    if (!scrollDef) return;
+    p.pendingScrollChoices = [];
+    if (p.disintegrationState?.active) {
+      p.disintegrationState = null;
+    }
+    p.spellCastState = null;
+    p.equippedScrollId = scrollId;
+    const cdrMult = this.getPlayerCdrMult(p);
+    p.maxSkillCooldownMs = Math.round(scrollDef.cooldownMs * cdrMult);
+    p.skillCooldownMs = Math.min(p.skillCooldownMs, p.maxSkillCooldownMs);
+    this.emitEvent('status', p.x, p.y - 26, `Scroll: ${scrollDef.tacticalTitle}`, scrollDef.accentColor);
+    this.pushSystemChat(`${p.username} inscribed ${scrollDef.scrollName}, replacing Astral Nova.`);
+  }
+
+  private getPlayerCdrMult(p: PlayerState): number {
+    const intCdr = Math.min(0.20, (p.intelligence || 0) * 0.002);
+    const relicCdr = p.relics.includes('hourglass_shard') ? 0.25 : 0;
+    const blessingCdr = this.getBlessingStacks(p, 'swiftness') * 0.08;
+    return Math.max(0.50, 1 - (intCdr + relicCdr + blessingCdr));
+  }
+
+  private getArcanistSpellDamage(p: PlayerState, spellId: ArcanistSpellId): number {
+    const spec = ARCANIST_SPELLS[spellId];
+    return computeArcanistSpellDamage(
+      spec.baseDamage,
+      {
+        level: p.level,
+        intelligence: p.intelligence,
+        relics: p.relics,
+        furyStacks: this.getBlessingStacks(p, 'fury'),
+      },
+      spec.intCoeff
+    );
+  }
+
+  private isPlayerCcInterrupted(p: PlayerState): boolean {
+    if (p.downed || !p.connected) return true;
+    if ((p.stunnedMs || 0) > 0 || (p.frozenMs || 0) > 0 || (p.chronoSuspendedMs || 0) > 0) return true;
+    return Boolean(
+      p.statuses &&
+        p.statuses.some((s) => s.type === 'silenced' || s.type === 'charmed' || s.type === 'impaled')
+    );
+  }
+
+  private triggerArcanistScrollTactical(
+    p: PlayerState,
+    scrollId: ArcanistScrollId,
+    aimAngle: number,
+    aimDistance?: number
+  ): boolean {
+    if (p.heroClass !== 'arcanist' || this.isPlayerCcInterrupted(p)) return false;
+    const spec = ARCANIST_SPELLS[scrollId];
+    if (!spec) return false;
+    if (p.spellCastState || p.disintegrationState?.active) return false;
+    if (p.skillCooldownMs > 0 && !p.noCooldownMode) return false;
+
+    const cleanAngle = Number.isFinite(aimAngle) ? normalizeAngle(aimAngle) : p.aimAngle;
+    p.aimAngle = cleanAngle;
+
+    if (scrollId === 'disintegration') {
+      return this.startDisintegrationChannel(p.id, cleanAngle);
+    }
+
+    const maxRange = spec.maxRange ?? 280;
+    const dist =
+      typeof aimDistance === 'number' && Number.isFinite(aimDistance)
+        ? Math.max(0, Math.min(maxRange, aimDistance))
+        : Math.min(maxRange, 180);
+    const targetX = p.x + Math.cos(cleanAngle) * dist;
+    const targetY = p.y + Math.sin(cleanAngle) * dist;
+
+    if (spec.castTimeMs > 0) {
+      p.spellCastState = {
+        spellId: scrollId,
+        remainingMs: spec.castTimeMs,
+        totalMs: spec.castTimeMs,
+        aimAngle: cleanAngle,
+        targetX,
+        targetY,
+      };
+      p.attackAnimMs = Math.max(p.attackAnimMs, spec.castTimeMs);
+      return true;
+    }
+
+    return this.executeArcanistSpell(p, scrollId, cleanAngle, targetX, targetY);
+  }
+
+  private executeArcanistSpell(
+    p: PlayerState,
+    spellId: ArcanistSpellId,
+    aimAngle: number,
+    targetX: number,
+    targetY: number
+  ): boolean {
+    const spec = ARCANIST_SPELLS[spellId];
+    const cdrMult = this.getPlayerCdrMult(p);
+    const applyScrollCooldown = () => {
+      p.skillCooldownMs = p.noCooldownMode ? 0 : Math.round(spec.cooldownMs * cdrMult);
+      p.maxSkillCooldownMs = p.skillCooldownMs;
+    };
+
+    const critChance = Math.min(
+      0.45,
+      0.10 + (p.dexterity || 0) * 0.003 + (p.relics.includes('keen_arrowhead') ? 0.20 : 0)
+    );
+    const rollSpellCrit = (): { hasCrit: boolean; dmg: number } => {
+      const baseScaled = this.getArcanistSpellDamage(p, spellId);
+      const hasCrit = Math.random() < critChance;
+      return {
+        hasCrit,
+        dmg: hasCrit ? Math.round(baseScaled * CRIT_DAMAGE_MULTIPLIER) : baseScaled,
+      };
+    };
+
+    if (spellId === 'fireball') {
+      applyScrollCooldown();
+      p.attackAnimMs = 220;
+      const speed = spec.projectileSpeed ?? 380;
+      const range = spec.maxRange ?? 360;
+      const { hasCrit, dmg } = rollSpellCrit();
+      this.spawnProjectile({
+        ownerType: 'player',
+        ownerId: p.id,
+        style: 'fireball',
+        spellId: 'fireball',
+        damageCategory: 'fire',
+        explosionRadius: spec.explosionRadius ?? 90,
+        x: p.x + Math.cos(aimAngle) * 16,
+        y: p.y + Math.sin(aimAngle) * 16,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 10,
+        damage: dmg,
+        pierce: 1,
+        crit: hasCrit,
+        ttlMs: Math.round((range / speed) * 1000),
+      });
+      return true;
+    }
+
+    if (spellId === 'frost_lance') {
+      applyScrollCooldown();
+      p.attackAnimMs = 200;
+      const speed = spec.projectileSpeed ?? 480;
+      const range = spec.maxRange ?? 420;
+      const { hasCrit, dmg } = rollSpellCrit();
+      this.spawnProjectile({
+        ownerType: 'player',
+        ownerId: p.id,
+        style: 'frost_lance',
+        spellId: 'frost_lance',
+        damageCategory: 'frost',
+        x: p.x + Math.cos(aimAngle) * 16,
+        y: p.y + Math.sin(aimAngle) * 16,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 8,
+        damage: dmg,
+        pierce: spec.pierce ?? 3,
+        crit: hasCrit,
+        ttlMs: Math.round((range / speed) * 1000),
+      });
+      return true;
+    }
+
+    if (spellId === 'chain_lightning') {
+      const maxRange = spec.maxRange ?? 340;
+      const maxJumpDist = spec.maxJumpDistance ?? 150;
+      const maxTargets = spec.maxTargets ?? 4;
+      const decay = spec.jumpDamageDecay ?? 0.15;
+
+      type LightningTarget =
+        | { kind: 'enemy'; id: string; x: number; y: number; enemy: EnemyState }
+        | { kind: 'dummy'; id: string; x: number; y: number; dummy: TrainingDummyState };
+
+      const allCandidates: LightningTarget[] = [];
+      for (const e of this.enemies) {
+        if (e.hp > 0) allCandidates.push({ kind: 'enemy', id: e.id, x: e.x, y: e.y, enemy: e });
+      }
+      for (const d of this.trainingDummies) {
+        allCandidates.push({ kind: 'dummy', id: d.id, x: d.x, y: d.y, dummy: d });
+      }
+
+      // Pick initial target in range closest to aim point / forward cone
+      let firstTarget: LightningTarget | null = null;
+      let bestScore = Infinity;
+      for (const cand of allCandidates) {
+        const dPlayer = Math.hypot(cand.x - p.x, cand.y - p.y);
+        if (dPlayer > maxRange) continue;
+        const dCursor = Math.hypot(cand.x - targetX, cand.y - targetY);
+        const score = dCursor * 0.7 + dPlayer * 0.3;
+        if (score < bestScore) {
+          bestScore = score;
+          firstTarget = cand;
+        }
+      }
+
+      if (!firstTarget) {
+        this.emitEvent('status', p.x, p.y - 24, 'No Target in Range', '#94A3B8');
+        return false;
+      }
+
+      applyScrollCooldown();
+      p.attackAnimMs = 210;
+
+      const visited = new Set<string>();
+      const hitChain: LightningTarget[] = [];
+      let current: LightningTarget | null = firstTarget;
+
+      while (current && hitChain.length < maxTargets) {
+        hitChain.push(current);
+        visited.add(current.id);
+        let nextCand: LightningTarget | null = null;
+        let nextDist = Infinity;
+        for (const cand of allCandidates) {
+          if (visited.has(cand.id)) continue;
+          const dist = Math.hypot(cand.x - current.x, cand.y - current.y);
+          if (dist <= maxJumpDist && dist < nextDist) {
+            nextDist = dist;
+            nextCand = cand;
+          }
+        }
+        current = nextCand;
+      }
+
+      const { hasCrit, dmg: baseHitDmg } = rollSpellCrit();
+      const chainPoints: { x: number; y: number }[] = [{ x: p.x, y: p.y }];
+      for (let idx = 0; idx < hitChain.length; idx++) {
+        const tgt = hitChain[idx];
+        const jumpMult = Math.pow(1 - decay, idx);
+        const jumpDmg = Math.max(1, Math.round(baseHitDmg * jumpMult));
+        chainPoints.push({ x: tgt.x, y: tgt.y });
+        if (tgt.kind === 'enemy') {
+          this.damageEnemy(tgt.enemy, jumpDmg, p, hasCrit, 'lightning');
+        } else {
+          this.damageDummy(tgt.dummy, jumpDmg, p, hasCrit);
+        }
+      }
+
+      this.zones.push({
+        id: this.nextId('zone'),
+        kind: 'chain_lightning_arc',
+        x: hitChain[0].x,
+        y: hitChain[0].y,
+        radius: 10,
+        ttlMs: 320,
+        maxTtlMs: 320,
+        ownerId: p.id,
+        chainPoints,
+      });
+      return true;
+    }
+
+    if (spellId === 'arcane_meteor') {
+      applyScrollCooldown();
+      p.attackAnimMs = 260;
+      const delayMs = spec.impactDelayMs ?? 1000;
+      const radius = spec.explosionRadius ?? 125;
+      const { dmg } = rollSpellCrit();
+      this.zones.push({
+        id: this.nextId('zone'),
+        kind: 'arcane_meteor',
+        x: targetX,
+        y: targetY,
+        radius,
+        ttlMs: delayMs,
+        maxTtlMs: delayMs,
+        ownerId: p.id,
+        damage: dmg,
+        chronoSuspendedMs: this.isPositionInChronoWell(targetX, targetY, 0),
+      });
+      this.emitEvent('status', targetX, targetY - 22, 'Arcane Meteor!', '#E879F9');
+      return true;
+    }
+
+    if (spellId === 'arcane_orb') {
+      applyScrollCooldown();
+      p.attackAnimMs = 220;
+      const speed = spec.projectileSpeed ?? 115;
+      const durationMs = spec.durationMs ?? 4000;
+      const dmg = this.getArcanistSpellDamage(p, 'arcane_orb');
+      const orb = this.spawnProjectile({
+        ownerType: 'player',
+        ownerId: p.id,
+        style: 'arcane_orb',
+        spellId: 'arcane_orb',
+        damageCategory: 'arcane',
+        x: p.x + Math.cos(aimAngle) * 18,
+        y: p.y + Math.sin(aimAngle) * 18,
+        vx: Math.cos(aimAngle) * speed,
+        vy: Math.sin(aimAngle) * speed,
+        angle: aimAngle,
+        radius: 22,
+        damage: dmg,
+        pierce: 999,
+        ttlMs: durationMs,
+      });
+      this.arcaneOrbHits.set(orb.id, new Map());
+      return true;
+    }
+
+    if (spellId === 'arcane_barrage') {
+      applyScrollCooldown();
+      p.attackAnimMs = 240;
+      const count = spec.projectileCount ?? 6;
+      const speed = spec.projectileSpeed ?? 400;
+      const range = spec.maxRange ?? 450;
+      const ttlMs = Math.round((range / speed) * 1000);
+      const ox = p.x + Math.cos(aimAngle) * 16;
+      const oy = p.y + Math.sin(aimAngle) * 16;
+      for (let i = 0; i < count; i++) {
+        const { hasCrit, dmg } = rollSpellCrit();
+        const helixSign = i % 2 === 0 ? 1 : -1;
+        const helixPhase = (Math.floor(i / 2) * Math.PI * 2) / 3;
+        this.spawnProjectile({
+          ownerType: 'player',
+          ownerId: p.id,
+          style: 'arcane_barrage',
+          spellId: 'arcane_barrage',
+          damageCategory: 'arcane',
+          x: ox,
+          y: oy,
+          originX: ox,
+          originY: oy,
+          elapsedMs: 0,
+          helixSign,
+          helixPhase,
+          vx: Math.cos(aimAngle) * speed,
+          vy: Math.sin(aimAngle) * speed,
+          angle: aimAngle,
+          radius: 7,
+          damage: dmg,
+          pierce: 1,
+          crit: hasCrit,
+          ttlMs,
+        });
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  public startDisintegrationChannel(playerId: string, aimAngle: number): boolean {
+    const pr = this.players.get(playerId);
+    if (!pr || this.status !== 'playing') return false;
+    const p = pr.state;
+    if (p.heroClass !== 'arcanist' || p.equippedScrollId !== 'disintegration') return false;
+    if (this.isPlayerCcInterrupted(p)) return false;
+    if (p.skillCooldownMs > 0 || p.spellCastState) return false;
+    if (p.disintegrationState?.active) return true;
+
+    const spec = ARCANIST_SPELLS.disintegration;
+    const cleanAngle = Number.isFinite(aimAngle) ? normalizeAngle(aimAngle) : p.aimAngle;
+    p.aimAngle = cleanAngle;
+    p.spellCastState = null;
+    p.vx = 0;
+    p.vy = 0;
+    p.disintegrationState = {
+      active: true,
+      angle: cleanAngle,
+      targetAngle: cleanAngle,
+      activationRemainingMs: spec.activationMs ?? 150,
+      tickAccumMs: 0,
+      startedAtMs: this.simTimeMs,
+    };
+    return true;
+  }
+
+  public updateDisintegrationTarget(playerId: string, aimAngle: number): void {
+    const pr = this.players.get(playerId);
+    if (!pr || !pr.state.disintegrationState?.active) return;
+    if (!Number.isFinite(aimAngle)) return;
+    const clean = normalizeAngle(aimAngle);
+    pr.state.disintegrationState.targetAngle = clean;
+    pr.state.aimAngle = clean;
+  }
+
+  public stopDisintegrationChannel(playerId: string): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    if (!p.disintegrationState?.active) return;
+    p.disintegrationState = null;
+    const cdrMult = this.getPlayerCdrMult(p);
+    p.skillCooldownMs = Math.round(ARCANIST_SPELLS.disintegration.cooldownMs * cdrMult);
+    p.maxSkillCooldownMs = p.skillCooldownMs;
+  }
+
+  private getDisintegrationEndpoint(x: number, y: number, angle: number, maxRange: number): { endX: number; endY: number } {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const step = 14;
+    let dist = 0;
+    while (dist + step <= maxRange) {
+      const nx = x + cos * (dist + step);
+      const ny = y + sin * (dist + step);
+      if (this.isWallAtWorld(nx, ny)) {
+        break;
+      }
+      dist += step;
+    }
+    const finalDist = Math.min(maxRange, dist);
+    return {
+      endX: x + cos * finalDist,
+      endY: y + sin * finalDist,
+    };
+  }
+
+  private stepDisintegrationChannel(p: PlayerState, dtMs: number, dtSec: number): void {
+    const ch = p.disintegrationState;
+    if (!ch || !ch.active) return;
+    if (this.isPlayerCcInterrupted(p)) {
+      this.stopDisintegrationChannel(p.id);
+      this.emitEvent('status', p.x, p.y - 24, 'CHANNEL INTERRUPTED!', '#EF4444');
+      return;
+    }
+
+    p.vx = 0;
+    p.vy = 0;
+    const spec = ARCANIST_SPELLS.disintegration;
+    const maxRotPerSec = spec.maxRotationRadPerSec ?? Math.PI;
+    ch.angle = rotateAngleToward(ch.angle, ch.targetAngle, maxRotPerSec * dtSec);
+    p.aimAngle = ch.angle;
+    p.attackAnimMs = 120;
+
+    let remainingDt = dtMs;
+    if (ch.activationRemainingMs > 0) {
+      if (remainingDt < ch.activationRemainingMs) {
+        ch.activationRemainingMs -= remainingDt;
+        return;
+      }
+      remainingDt -= ch.activationRemainingMs;
+      ch.activationRemainingMs = 0;
+    }
+
+    const tickInterval = spec.tickIntervalMs ?? 200;
+    ch.tickAccumMs += remainingDt;
+    if (ch.tickAccumMs < tickInterval) return;
+
+    const beamHalfWidth = (spec.beamWidth ?? 42) / 2;
+    const maxRange = spec.maxRange ?? 450;
+    const { endX, endY } = this.getDisintegrationEndpoint(p.x, p.y, ch.angle, maxRange);
+    const tickDmg = this.getArcanistSpellDamage(p, 'disintegration');
+
+    while (ch.tickAccumMs >= tickInterval) {
+      ch.tickAccumMs -= tickInterval;
+      const candidateEnemies = [...this.enemies];
+      for (const enemy of candidateEnemies) {
+        if (!enemy || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+        const d = distancePointToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY);
+        if (d <= beamHalfWidth + enemy.radius) {
+          this.damageEnemy(enemy, tickDmg, p, false, 'arcane');
+        }
+      }
+      for (const dummy of this.trainingDummies) {
+        const d = distancePointToSegment(dummy.x, dummy.y, p.x, p.y, endX, endY);
+        if (d <= beamHalfWidth + 18) {
+          this.damageDummy(dummy, tickDmg, p, false);
+        }
+      }
+    }
+  }
+
+  private explodeFireball(proj: ProjectileState): void {
+    const radius = proj.explosionRadius ?? 90;
+    const ownerPr = this.players.get(proj.ownerId);
+    const attacker = ownerPr ? ownerPr.state : null;
+    const targets = [...this.enemies];
+    for (const enemy of targets) {
+      if (!enemy || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+      if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= radius + enemy.radius * 0.35) {
+        this.damageEnemy(enemy, proj.damage, attacker, Boolean(proj.crit), 'fire');
+      }
+    }
+    for (const dummy of this.trainingDummies) {
+      if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= radius + 18) {
+        this.damageDummy(dummy, proj.damage, attacker, Boolean(proj.crit));
+      }
+    }
+    this.emitEvent('status', proj.x, proj.y - 16, 'FIREBALL BLAST!', '#F97316');
+  }
+
+  private isPositionInChronoWell(
+    x: number,
+    y: number,
+    radius = 0,
+    excludeOwnerId?: string
+  ): number {
+    let maxRemain = 0;
+    for (let i = 0; i < this.zones.length; i++) {
+      const z = this.zones[i];
+      if (z.kind !== 'chrono_well' || z.ttlMs <= 0) continue;
+      if (excludeOwnerId && z.ownerId === excludeOwnerId) continue;
+      if (Math.hypot(x - z.x, y - z.y) <= z.radius + radius) {
+        if (z.ttlMs > maxRemain) maxRemain = z.ttlMs;
+      }
+    }
+    return maxRemain;
+  }
+
+  private refreshChronoSuspensionState(): void {
+    for (const pr of this.players.values()) {
+      const p = pr.state;
+      if (p.downed) {
+        p.chronoSuspendedMs = 0;
+      } else {
+        p.chronoSuspendedMs = this.isPositionInChronoWell(p.x, p.y, 10, p.id);
+      }
+    }
+    for (const enemy of this.enemies) {
+      enemy.chronoSuspendedMs = this.isPositionInChronoWell(enemy.x, enemy.y, enemy.radius * 0.35);
+    }
+    for (const proj of this.projectiles) {
+      proj.chronoSuspendedMs = this.isPositionInChronoWell(proj.x, proj.y, proj.radius);
+    }
+    for (const z of this.zones) {
+      if (z.kind === 'chrono_well' || z.kind === 'chain_lightning_arc') {
+        z.chronoSuspendedMs = 0;
+        continue;
+      }
+      const isSupportZone = z.kind === 'aegis_dome' || z.kind === 'solar_beacon';
+      const isOffensivePlayerZone = z.kind === 'star_rift' || z.kind === 'arcane_meteor';
+      let susp = this.isPositionInChronoWell(
+        z.x,
+        z.y,
+        0,
+        isSupportZone ? z.ownerId : undefined
+      );
+      if (susp === 0 && !isSupportZone && !isOffensivePlayerZone) {
+        const ownerEnemy = this.enemies.find((e) => e.id === z.ownerId);
+        if (ownerEnemy && (ownerEnemy.chronoSuspendedMs || 0) > 0) {
+          susp = ownerEnemy.chronoSuspendedMs || 0;
+        }
+      }
+      z.chronoSuspendedMs = susp;
+    }
+  }
+
+  private cleanupChronoWellsForOwner(ownerId: string): void {
+    let removedAny = false;
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      if (this.zones[i].kind === 'chrono_well' && this.zones[i].ownerId === ownerId) {
+        this.zones.splice(i, 1);
+        removedAny = true;
+      }
+    }
+    if (removedAny) {
+      this.refreshChronoSuspensionState();
+    }
+  }
+
   public performAction(
     playerId: string,
     action: 'tactical' | 'ult' | 'potion' | 'interact' | 'dash',
@@ -1737,20 +2394,17 @@ export class GameRoom {
     const pr = this.players.get(playerId);
     if (!pr || this.status !== 'playing') return {};
     const p = pr.state;
-    if (p.downed) return {};
+    if (p.downed || (p.chronoSuspendedMs || 0) > 0) return {};
     p.aimAngle = Number.isFinite(aimAngle) ? aimAngle : p.aimAngle;
 
     const def = HERO_CLASSES[p.heroClass];
-    const intCdr = Math.min(0.20, (p.intelligence || 0) * 0.002);
-    const relicCdr = p.relics.includes('hourglass_shard') ? 0.25 : 0;
-    const blessingCdr = this.getBlessingStacks(p, 'swiftness') * 0.08;
-    const cdrMult = Math.max(0.50, 1 - (intCdr + relicCdr + blessingCdr));
+    const cdrMult = this.getPlayerCdrMult(p);
 
     const isSilenced = p.statuses && p.statuses.some(s => s.type === 'silenced');
 
     if (action === 'dash') {
-      if (p.dashCooldownMs > 0) return {};
-      p.dashCooldownMs = Math.round(2600 * cdrMult);
+      if (p.dashCooldownMs > 0 && !p.noCooldownMode) return {};
+      p.dashCooldownMs = p.noCooldownMode ? 0 : Math.round(2600 * cdrMult);
       p.maxDashCooldownMs = p.dashCooldownMs;
 
       let dashAngle = p.aimAngle;
@@ -1914,6 +2568,14 @@ export class GameRoom {
               p.potions = Math.min(5, p.potions + 1);
               this.emitEvent('heal', prop.x, prop.y - 18, '+1 Potion', '#6EE7B7');
             }
+            if (
+              prop.kind === 'chest' &&
+              p.heroClass === 'arcanist' &&
+              !p.equippedScrollId &&
+              Math.random() < 0.30
+            ) {
+              this.grantScrollChoices(p.id);
+            }
             this.emitEvent('gold', prop.x, prop.y - 8, `+${prop.value} Gold`, '#F4D378');
           } else if (prop.kind === 'potion') {
             p.potions = Math.min(5, p.potions + 1);
@@ -1921,6 +2583,12 @@ export class GameRoom {
           } else if (prop.kind === 'relic_chest') {
             for (const ally of this.players.values()) {
               ally.state.pendingRelicChoices = this.rollRelicChoices(ally.state.relics);
+              if (
+                ally.state.heroClass === 'arcanist' &&
+                (!ally.state.equippedScrollId || Math.random() < 0.45)
+              ) {
+                this.grantScrollChoices(ally.state.id);
+              }
             }
             this.emitEvent('status', prop.x, prop.y - 20, 'Relic Vault Opened', '#E8CE76');
             this.pushSystemChat(`${p.username} unlocked an Ancient Relic Chest for the party.`);
@@ -2000,8 +2668,28 @@ export class GameRoom {
         this.emitEvent('status', p.x, p.y - 24, '[SILENCED]', '#C084FC');
         return {};
       }
-      if (p.skillCooldownMs > 0) return {};
-      p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
+      if (p.skillCooldownMs > 0 && !p.noCooldownMode) return {};
+
+      if (p.heroClass === 'arcanist' && p.equippedScrollId) {
+        const scrollActivated = this.triggerArcanistScrollTactical(
+          p,
+          p.equippedScrollId,
+          p.aimAngle,
+          options?.aimDistance
+        );
+        if (scrollActivated && p.relics.includes('oathbound_censer')) {
+          for (const ally of this.players.values()) {
+            if (!ally.state.downed && Math.hypot(ally.state.x - p.x, ally.state.y - p.y) <= 180) {
+              const censerCurseMult = ally.state.statuses && ally.state.statuses.some(s => s.type === 'ashen_curse') ? 0.55 : 1.0;
+              const censerHeal = Math.max(1, Math.round(8 * censerCurseMult));
+              ally.state.hp = Math.min(ally.state.maxHp, ally.state.hp + censerHeal);
+            }
+          }
+        }
+        return {};
+      }
+
+      p.skillCooldownMs = p.noCooldownMode ? 0 : Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
 
@@ -2113,8 +2801,8 @@ export class GameRoom {
         this.emitEvent('status', p.x, p.y - 24, '[SILENCED]', '#C084FC');
         return {};
       }
-      if (p.ultCooldownMs > 0) return {};
-      p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
+      if (p.ultCooldownMs > 0 && !p.noCooldownMode) return {};
+      p.ultCooldownMs = p.noCooldownMode ? 0 : Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
       p.attackAnimMs = 280;
 
@@ -2154,11 +2842,12 @@ export class GameRoom {
           kind: 'chrono_well',
           x: targetPos.x,
           y: targetPos.y,
-          radius: 100,
-          ttlMs: 5000,
-          maxTtlMs: 5000,
+          radius: 115,
+          ttlMs: 3000,
+          maxTtlMs: 3000,
           ownerId: p.id,
         });
+        this.refreshChronoSuspensionState();
         this.emitEvent('status', targetPos.x, targetPos.y - 20, 'Chrono Well', '#7CC6FE');
       } else if (p.heroClass === 'cleric') {
         const ultSpec = getAbilityTargetSpec('cleric', 'ult');
@@ -2254,9 +2943,54 @@ export class GameRoom {
       }
     }
 
+    // Advance Chrono Well zones first & recompute authoritative time suspension state
     for (let i = this.zones.length - 1; i >= 0; i--) {
       const z = this.zones[i];
+      if (z.kind !== 'chrono_well') continue;
+      const owner = this.players.get(z.ownerId);
       z.ttlMs -= dtMs;
+      if (z.ttlMs <= 0 || !owner || !owner.state.connected) {
+        this.zones.splice(i, 1);
+      }
+    }
+    this.refreshChronoSuspensionState();
+
+    for (let i = this.zones.length - 1; i >= 0; i--) {
+      const z = this.zones[i];
+      if (z.kind === 'chrono_well') {
+        continue;
+      }
+      if ((z.chronoSuspendedMs || 0) > 0) {
+        continue;
+      }
+      z.ttlMs -= dtMs;
+
+      if (z.kind === 'chain_lightning_arc') {
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+        }
+        continue;
+      }
+
+      if (z.kind === 'arcane_meteor' && z.ttlMs <= 0) {
+        const ownerPr = this.players.get(z.ownerId);
+        const attacker = ownerPr ? ownerPr.state : null;
+        const meteorDmg = z.damage ?? 75;
+        const targets = [...this.enemies];
+        for (const enemy of targets) {
+          if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius) {
+            this.damageEnemy(enemy, meteorDmg, attacker, false, 'arcane');
+          }
+        }
+        for (const dummy of this.trainingDummies) {
+          if (Math.hypot(dummy.x - z.x, dummy.y - z.y) <= z.radius) {
+            this.damageDummy(dummy, meteorDmg, attacker, false);
+          }
+        }
+        this.emitEvent('status', z.x, z.y - 20, 'METEOR IMPACT!', '#E879F9');
+        this.zones.splice(i, 1);
+        continue;
+      }
 
       if (z.kind === 'sound_lane' && z.ttlMs <= 0) {
         const w = z.width || 320;
@@ -2623,17 +3357,6 @@ export class GameRoom {
               }
             }
           }
-        } else if (z.kind === 'chrono_well') {
-          for (const enemy of this.enemies) {
-            if (Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius) {
-              this.applySoftCc(enemy, 900);
-            }
-          }
-          for (const pr of this.players.values()) {
-            if (Math.hypot(pr.state.x - z.x, pr.state.y - z.y) <= z.radius) {
-              pr.state.skillCooldownMs = Math.max(0, pr.state.skillCooldownMs - 350);
-            }
-          }
         } else if (z.kind === 'star_rift') {
           const riftDmg = 14 + this.floor * 2;
           const ownerPr = this.players.get(z.ownerId);
@@ -2654,8 +3377,9 @@ export class GameRoom {
       }
     }
 
-    // Process Player Status Effects
+    // Process Player Status Effects (paused while suspended inside an ally Chrono Well)
     for (const pr of this.players.values()) {
+      if ((pr.state.chronoSuspendedMs || 0) > 0) continue;
       this.updatePlayerStatuses(pr.state, dtMs, pulseDotNow);
     }
 
@@ -2706,14 +3430,36 @@ export class GameRoom {
 
     for (const pr of this.players.values()) {
       const p = pr.state;
-      pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
-      p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
-      p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
-      p.dashCooldownMs = Math.max(0, p.dashCooldownMs - dtMs);
+      if ((p.chronoSuspendedMs || 0) > 0) {
+        if (p.disintegrationState?.active) {
+          this.stopDisintegrationChannel(p.id);
+          this.emitEvent('status', p.x, p.y - 24, 'TIME SUSPENDED!', '#38BDF8');
+        }
+        p.spellCastState = null;
+        p.vx = 0;
+        p.vy = 0;
+        continue;
+      }
+
+      if (p.noCooldownMode) {
+        pr.attackCooldownMs = 0;
+        p.skillCooldownMs = 0;
+        p.ultCooldownMs = 0;
+        p.dashCooldownMs = 0;
+      } else {
+        pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
+        p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
+        p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
+        p.dashCooldownMs = Math.max(0, p.dashCooldownMs - dtMs);
+      }
       p.attackAnimMs = Math.max(0, p.attackAnimMs - dtMs);
       p.hasteMs = Math.max(0, p.hasteMs - dtMs);
 
       if (p.downed) {
+        if (p.disintegrationState?.active) {
+          this.stopDisintegrationChannel(p.id);
+        }
+        p.spellCastState = null;
         p.vx = 0;
         p.vy = 0;
         p.downedTimerMs = Math.max(0, p.downedTimerMs - dtMs);
@@ -2742,6 +3488,23 @@ export class GameRoom {
         continue;
       }
 
+      if (p.spellCastState) {
+        if (this.isPlayerCcInterrupted(p)) {
+          p.spellCastState = null;
+        } else {
+          p.spellCastState.remainingMs = Math.max(0, p.spellCastState.remainingMs - dtMs);
+          if (p.spellCastState.remainingMs <= 0) {
+            const cast = p.spellCastState;
+            p.spellCastState = null;
+            this.executeArcanistSpell(p, cast.spellId, cast.aimAngle, cast.targetX, cast.targetY);
+          }
+        }
+      }
+
+      if (p.disintegrationState?.active) {
+        this.stepDisintegrationChannel(p, dtMs, dtSec);
+      }
+
       const def = HERO_CLASSES[p.heroClass];
       const moveSpeed = computePlayerMoveSpeed(p);
       const isDisoriented = p.statuses.some((s) => s.type === 'disoriented');
@@ -2764,16 +3527,22 @@ export class GameRoom {
         }
       }
 
-      if (mx !== 0 || my !== 0) {
-        p.vx = mx * moveSpeed + charmVx;
-        p.vy = my * moveSpeed + charmVy;
+      if (p.disintegrationState?.active) {
+        // Movement is disabled while channeling Disintegration
+        p.vx = 0;
+        p.vy = 0;
       } else {
-        p.vx = charmVx;
-        p.vy = charmVy;
-      }
+        if (mx !== 0 || my !== 0) {
+          p.vx = mx * moveSpeed + charmVx;
+          p.vy = my * moveSpeed + charmVy;
+        } else {
+          p.vx = charmVx;
+          p.vy = charmVy;
+        }
 
-      if (p.vx !== 0 || p.vy !== 0) {
-        this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
+        if (p.vx !== 0 || p.vy !== 0) {
+          this.moveWithCollision(p, p.vx * dtSec, p.vy * dtSec, 9);
+        }
       }
 
       const room = this.findRoomContaining(p.x, p.y);
@@ -2833,13 +3602,20 @@ export class GameRoom {
         }
       }
 
-      if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0) {
+      if (
+        pr.input.attack &&
+        (pr.attackCooldownMs <= 0 || p.noCooldownMode) &&
+        p.pendingRelicChoices.length === 0 &&
+        (!p.pendingScrollChoices || p.pendingScrollChoices.length === 0) &&
+        !p.disintegrationState?.active &&
+        !p.spellCastState
+      ) {
         const dexSpeedMult = (1 + (p.dexterity || 0) * 0.004) * (1 + this.getBlessingStacks(p, 'swiftness') * 0.08);
         let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         if (p.statuses.some(s => s.type === 'frostbite')) {
           hasteFactor *= 1.25; // 25% attack delay penalty
         }
-        pr.attackCooldownMs = Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
+        pr.attackCooldownMs = p.noCooldownMode ? 0 : Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
       }
@@ -2866,6 +3642,12 @@ export class GameRoom {
 
     for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
       const enemy = this.enemies[eIdx];
+      if ((enemy.chronoSuspendedMs || 0) > 0) {
+        // Authoritative Chrono Well suspension preserves enemy execution state & timers verbatim
+        enemy.vx = 0;
+        enemy.vy = 0;
+        continue;
+      }
       enemy.markedMs = Math.max(0, enemy.markedMs - dtMs);
       enemy.slowedMs = Math.max(0, enemy.slowedMs - dtMs);
       enemy.stunnedMs = Math.max(0, enemy.stunnedMs - dtMs);
@@ -3410,8 +4192,24 @@ export class GameRoom {
 
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
+      if ((proj.chronoSuspendedMs || 0) > 0) {
+        if (proj.style === 'arcane_orb') {
+          const orbMap = this.arcaneOrbHits.get(proj.id);
+          if (orbMap) {
+            for (const entry of orbMap.values()) {
+              entry.lastHitAtMs += dtMs;
+            }
+          }
+        }
+        continue;
+      }
+
       proj.ttlMs -= dtMs;
       if (proj.ttlMs <= 0) {
+        if (proj.spellId === 'fireball') {
+          this.explodeFireball(proj);
+        }
+        this.arcaneOrbHits.delete(proj.id);
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -3442,10 +4240,26 @@ export class GameRoom {
         }
       }
 
-      proj.x += proj.vx * dtSec;
-      proj.y += proj.vy * dtSec;
+      if (proj.style === 'arcane_barrage') {
+        proj.elapsedMs = (proj.elapsedMs || 0) + dtMs;
+        const tSec = proj.elapsedMs / 1000;
+        const speed = Math.hypot(proj.vx, proj.vy) || 400;
+        const forwardDist = speed * tSec;
+        const latOffset = (proj.helixSign || 1) * 14 * Math.sin(tSec * 14 + (proj.helixPhase || 0));
+        const ox = proj.originX ?? proj.x;
+        const oy = proj.originY ?? proj.y;
+        proj.x = ox + Math.cos(proj.angle) * forwardDist - Math.sin(proj.angle) * latOffset;
+        proj.y = oy + Math.sin(proj.angle) * forwardDist + Math.cos(proj.angle) * latOffset;
+      } else {
+        proj.x += proj.vx * dtSec;
+        proj.y += proj.vy * dtSec;
+      }
 
       if (this.isWallAtWorld(proj.x, proj.y)) {
+        if (proj.spellId === 'fireball') {
+          this.explodeFireball(proj);
+        }
+        this.arcaneOrbHits.delete(proj.id);
         this.projectiles.splice(i, 1);
         continue;
       }
@@ -3496,6 +4310,40 @@ export class GameRoom {
 
         const ownerPr = this.players.get(proj.ownerId);
 
+        if (proj.style === 'arcane_orb') {
+          let orbMap = this.arcaneOrbHits.get(proj.id);
+          if (!orbMap) {
+            orbMap = new Map();
+            this.arcaneOrbHits.set(proj.id, orbMap);
+          }
+          const orbSpec = ARCANIST_SPELLS.arcane_orb;
+          const hitInterval = orbSpec.hitIntervalMs ?? 500;
+          const maxHits = orbSpec.maxHitsPerEnemy ?? 2;
+
+          for (const dummy of this.trainingDummies) {
+            if (!dummy || !dummy.id) continue;
+            if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+              const rec = orbMap.get(dummy.id);
+              if (!rec || (rec.hits < maxHits && this.simTimeMs - rec.lastHitAtMs >= hitInterval)) {
+                orbMap.set(dummy.id, { hits: (rec?.hits || 0) + 1, lastHitAtMs: this.simTimeMs });
+                this.damageDummy(dummy, proj.damage, ownerPr ? ownerPr.state : null, false);
+              }
+            }
+          }
+          const candidateEnemies = [...this.enemies];
+          for (const enemy of candidateEnemies) {
+            if (!enemy || !enemy.id || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
+            if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+              const rec = orbMap.get(enemy.id);
+              if (!rec || (rec.hits < maxHits && this.simTimeMs - rec.lastHitAtMs >= hitInterval)) {
+                orbMap.set(enemy.id, { hits: (rec?.hits || 0) + 1, lastHitAtMs: this.simTimeMs });
+                this.damageEnemy(enemy, proj.damage, ownerPr ? ownerPr.state : null, false, 'arcane');
+              }
+            }
+          }
+          continue;
+        }
+
         if (!Array.isArray(proj.hitEntityIds)) {
           proj.hitEntityIds = [];
         }
@@ -3506,6 +4354,12 @@ export class GameRoom {
           if (!dummy || !dummy.id) continue;
           if (proj.hitEntityIds.includes(dummy.id)) continue;
           if (Math.hypot(dummy.x - proj.x, dummy.y - proj.y) <= 18 + proj.radius) {
+            if (proj.spellId === 'fireball') {
+              this.explodeFireball(proj);
+              this.projectiles.splice(i, 1);
+              hitDummy = true;
+              break;
+            }
             proj.hitEntityIds.push(dummy.id);
             this.damageDummy(
               dummy,
@@ -3528,13 +4382,19 @@ export class GameRoom {
           if (!enemy || !enemy.id || enemy.hp <= 0 || !this.enemies.includes(enemy)) continue;
           if (proj.hitEntityIds.includes(enemy.id)) continue;
           if (Math.hypot(enemy.x - proj.x, enemy.y - proj.y) <= enemy.radius + proj.radius) {
+            if (proj.spellId === 'fireball') {
+              this.explodeFireball(proj);
+              this.projectiles.splice(i, 1);
+              break;
+            }
             proj.hitEntityIds.push(enemy.id);
             if (proj.slowOnHit) this.applySoftCc(enemy, 3000);
             this.damageEnemy(
               enemy,
               proj.damage,
               ownerPr ? ownerPr.state : null,
-              Boolean(proj.crit)
+              Boolean(proj.crit),
+              proj.damageCategory
             );
             proj.pierce -= 1;
             if (proj.pierce <= 0) {
@@ -3578,8 +4438,20 @@ export class GameRoom {
                 value: 1,
               });
             }
+            for (const ally of this.players.values()) {
+              if (ally.state.heroClass === 'arcanist' && Math.random() < 0.5) {
+                this.grantScrollChoices(ally.state.id);
+              }
+            }
           } else if (room.type === 'combat' && this.floor > 0) {
             this.awardCombatRoomClear(room);
+            if (room.guardian) {
+              for (const ally of this.players.values()) {
+                if (ally.state.heroClass === 'arcanist' && Math.random() < 0.4) {
+                  this.grantScrollChoices(ally.state.id);
+                }
+              }
+            }
           }
         }
       }
@@ -3853,6 +4725,9 @@ export class GameRoom {
       ...spec,
       pierce: spec.pierce ?? 1,
       hitEntityIds: spec.hitEntityIds ? [...spec.hitEntityIds] : [],
+      chronoSuspendedMs:
+        spec.chronoSuspendedMs ??
+        this.isPositionInChronoWell(spec.x, spec.y, spec.radius),
     };
     this.projectiles.push(proj);
     return proj;
@@ -5694,6 +6569,7 @@ export class GameRoom {
       if (e.summonWave) projected.summonWave = e.summonWave;
       if (e.shieldWallMs) projected.shieldWallMs = e.shieldWallMs;
       if (e.abilityCdMs) projected.abilityCdMs = e.abilityCdMs;
+      if (e.chronoSuspendedMs) projected.chronoSuspendedMs = e.chronoSuspendedMs;
       return projected;
     });
 
@@ -5717,6 +6593,8 @@ export class GameRoom {
       if (pr.statusOnHit) projected.statusOnHit = pr.statusOnHit;
       if (pr.statusDurationMs) projected.statusDurationMs = pr.statusDurationMs;
       if (pr.crit) projected.crit = true;
+      if (pr.chronoSuspendedMs) projected.chronoSuspendedMs = pr.chronoSuspendedMs;
+      if (pr.spellId) projected.spellId = pr.spellId;
       return projected;
     });
 

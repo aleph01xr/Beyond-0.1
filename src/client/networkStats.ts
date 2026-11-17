@@ -201,7 +201,13 @@ export function buildSnapshotHudKey(
       dashSec,
       me.godMode ? 1 : 0,
       me.speedBoost ? 1 : 0,
+      me.noCooldownMode ? 1 : 0,
       statusKey,
+      me.equippedScrollId ?? '',
+      me.pendingScrollChoices?.join(',') ?? '',
+      me.disintegrationState?.active ? 1 : 0,
+      me.spellCastState ? `${me.spellCastState.spellId}:${Math.ceil(me.spellCastState.remainingMs / 100)}` : '',
+      (me.chronoSuspendedMs || 0) > 0 ? 1 : 0,
     ].join(':');
   }
 
