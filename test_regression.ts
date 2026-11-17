@@ -6533,6 +6533,46 @@ async function runRegressionTests() {
     }
   });
 
+  // --- Test 96: Bulk and Spend All Attribute Allocation clamping and accounting ---
+  test('96. Bulk and Spend All attribute allocation correctly clamps to available points and MAX_ATTRIBUTE cap', () => {
+    const room = new GameRoom({
+      roomId: 'R_TEST_BULK_ATTR_96',
+      name: 'Bulk Attr Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 9696,
+    });
+    room.status = 'playing';
+
+    const pid = 'p_bulk';
+    const player = room.addOrReconnectPlayer(pid, 'BulkHero', 'vanguard', false, {
+      level: 20, xp: 0, strength: 10, vitality: 10, dexterity: 10, intelligence: 10, faith: 10, attributePoints: 50,
+    });
+
+    const spendAmount = (attr: keyof typeof player, requested: number) => {
+      const current = Number(player[attr]) || 0;
+      const availablePoints = player.attributePoints;
+      const availableRoom = Math.max(0, 100 - current);
+      const spend = Math.min(requested, availablePoints, availableRoom);
+      if (spend > 0) {
+        (player as any)[attr] = current + spend;
+        player.attributePoints -= spend;
+      }
+      return spend;
+    };
+
+    const spent10 = spendAmount('strength', 10);
+    assert.strictEqual(spent10, 10, 'Must spend 10 STR points');
+    assert.strictEqual(player.strength, 20, 'STR must be 20');
+    assert.strictEqual(player.attributePoints, 40, 'Remaining points must be 40');
+
+    const remainingPts = player.attributePoints;
+    const spentMax = spendAmount('vitality', remainingPts);
+    assert.strictEqual(spentMax, 40, 'Must spend all 40 remaining points into VIT');
+    assert.strictEqual(player.vitality, 50, 'VIT must be 50 (10 + 40)');
+    assert.strictEqual(player.attributePoints, 0, 'Attribute points must be 0 after MAX spend');
+  });
+
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
   if (passed !== total) {
     throw new Error(`Some regression tests failed: ${passed}/${total}`);

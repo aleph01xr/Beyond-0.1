@@ -1485,36 +1485,42 @@ async function startServer() {
         if (acc.attributePoints && acc.attributePoints > 0) {
           const attr = msg.attribute;
           if (attr === 'strength' || attr === 'dexterity' || attr === 'vitality' || attr === 'intelligence' || attr === 'faith') {
-            if ((acc[attr] || 0) < MAX_ATTRIBUTE) {
-              const oldAttr = acc[attr] || 0;
+            const currentAttr = acc[attr] || 0;
+            if (currentAttr < MAX_ATTRIBUTE) {
+              const oldAttr = currentAttr;
               const oldPoints = acc.attributePoints;
-              
-              acc[attr] = oldAttr + 1;
-              acc.attributePoints = oldPoints - 1;
-              
-              void (async () => {
-                try {
-                  await persistAccount(acc);
-                  room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} to ${acc[attr]}.`);
-                  
-                  // Force immediate update in game engine runtime state
-                  room.updatePlayerAttributes(
-                    acc.id,
-                    acc.strength || 0,
-                    acc.vitality || 0,
-                    acc.dexterity || 0,
-                    acc.intelligence || 0,
-                    acc.faith || 0,
-                    acc.attributePoints || 0
-                  );
-                  partyCoordinator.markRoomDirty(room.roomId);
-                } catch {
-                  // Rollback on failure
-                  acc[attr] = oldAttr;
-                  acc.attributePoints = oldPoints;
-                  sendJson(ws, { type: 'error', message: 'Failed to save attribute allocation. Please try again.' });
-                }
-              })();
+              const requested = msg.amount !== undefined ? Math.floor(Number(msg.amount)) : 1;
+              const availableRoom = Math.max(0, MAX_ATTRIBUTE - oldAttr);
+              const spend = Math.min(requested > 0 ? requested : 1, oldPoints, availableRoom);
+
+              if (spend > 0) {
+                acc[attr] = oldAttr + spend;
+                acc.attributePoints = oldPoints - spend;
+                
+                void (async () => {
+                  try {
+                    await persistAccount(acc);
+                    room.pushSystemChat(`${acc.username} increased ${attr.toUpperCase()} by +${spend} to ${acc[attr]}.`);
+                    
+                    // Force immediate update in game engine runtime state
+                    room.updatePlayerAttributes(
+                      acc.id,
+                      acc.strength || 0,
+                      acc.vitality || 0,
+                      acc.dexterity || 0,
+                      acc.intelligence || 0,
+                      acc.faith || 0,
+                      acc.attributePoints || 0
+                    );
+                    partyCoordinator.markRoomDirty(room.roomId);
+                  } catch {
+                    // Rollback on failure
+                    acc[attr] = oldAttr;
+                    acc.attributePoints = oldPoints;
+                    sendJson(ws, { type: 'error', message: 'Failed to save attribute allocation. Please try again.' });
+                  }
+                })();
+              }
             } else {
               sendJson(ws, { type: 'error', message: `${attr.toUpperCase()} is already at maximum level.` });
             }

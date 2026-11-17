@@ -821,7 +821,7 @@ export type ClientMessage =
   | { type: 'admin:reset_room' }
   | { type: 'admin:toggle_ai'; enabled?: boolean }
   | { type: 'admin:add_attribute_points'; amount?: number }
-  | { type: 'player:spend_attribute'; attribute: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith' }
+  | { type: 'player:spend_attribute'; attribute: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith'; amount?: number }
   | { type: 'player:reset_attributes' }
   | { type: 'player:dialogue_close' }
   | { type: 'player:dialogue_pick'; optionId: string }

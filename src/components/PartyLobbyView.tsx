@@ -551,22 +551,62 @@ export const PartyLobbyView: React.FC<PartyLobbyViewProps> = ({
               ).map(([key, label, val]) => (
                 <div
                   key={key}
-                  className="p-2.5 bg-[#1B1A26] border border-[#323044] flex items-center justify-between"
+                  className="p-2.5 bg-[#1B1A26] border border-[#323044] flex items-center justify-between gap-3"
                 >
-                  <span>
+                  <span className="shrink-0">
                     {label}: <strong className="text-white">{val}</strong> / {MAX_ATTRIBUTE}
                   </span>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || val >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendCommand?.({ type: 'player:spend_attribute', attribute: key });
-                    }}
-                    className="stone-button stone-button-dark py-1 px-3 text-xs disabled:opacity-30"
-                  >
-                    +1
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={me.attributePoints <= 0 || val >= MAX_ATTRIBUTE}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        onSendCommand?.({ type: 'player:spend_attribute', attribute: key, amount: 1 });
+                      }}
+                      className="stone-button stone-button-dark py-1 px-2 text-[11px] disabled:opacity-30"
+                      title="Allocate +1"
+                    >
+                      +1
+                    </button>
+                    <button
+                      type="button"
+                      disabled={me.attributePoints < 5 || val >= MAX_ATTRIBUTE}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        onSendCommand?.({ type: 'player:spend_attribute', attribute: key, amount: 5 });
+                      }}
+                      className="stone-button stone-button-dark py-1 px-2 text-[11px] disabled:opacity-30"
+                      title="Allocate +5"
+                    >
+                      +5
+                    </button>
+                    <button
+                      type="button"
+                      disabled={me.attributePoints < 10 || val >= MAX_ATTRIBUTE}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        onSendCommand?.({ type: 'player:spend_attribute', attribute: key, amount: 10 });
+                      }}
+                      className="stone-button stone-button-dark py-1 px-2 text-[11px] disabled:opacity-30"
+                      title="Allocate +10"
+                    >
+                      +10
+                    </button>
+                    <button
+                      type="button"
+                      disabled={me.attributePoints <= 0 || val >= MAX_ATTRIBUTE}
+                      onClick={() => {
+                        sfx.playUiClick('confirm');
+                        const maxSpend = Math.max(1, MAX_ATTRIBUTE - val);
+                        onSendCommand?.({ type: 'player:spend_attribute', attribute: key, amount: maxSpend });
+                      }}
+                      className="stone-button stone-button-dark py-1 px-2.5 text-[11px] text-[#FCD34D] disabled:opacity-30"
+                      title="Spend all remaining available points into this stat"
+                    >
+                      MAX
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

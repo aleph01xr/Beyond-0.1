@@ -1841,135 +1841,150 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               </div>
 
               <div className="space-y-3">
-                {/* Strength */}
-                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
-                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                        {me.strength || 0} / {MAX_ATTRIBUTE}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#A6A4B6]">
-                      Increases physical damage (+0.8% per point) &amp; DoT scaling (+0.1% per point) for Vanguard, and grants physical armor (+0.15% per point).
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || (me.strength || 0) >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'strength' });
-                    }}
-                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                  >
-                    {(me.strength || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                  </button>
-                </div>
+                {/* Helper for rendering attribute quick-allocation buttons */}
+                {(() => {
+                  const renderQuickButtons = (attrKey: 'strength' | 'dexterity' | 'vitality' | 'intelligence' | 'faith', currentVal: number) => {
+                    const atMax = currentVal >= MAX_ATTRIBUTE;
+                    const noPts = me.attributePoints <= 0;
+                    return (
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          disabled={noPts || atMax}
+                          onClick={() => {
+                            sfx.playUiClick('confirm');
+                            onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: attrKey, amount: 1 });
+                          }}
+                          className="stone-button stone-button-dark py-1.5 px-2 text-[11px] font-bold disabled:opacity-30"
+                          title="Allocate +1 point"
+                        >
+                          +1
+                        </button>
+                        <button
+                          type="button"
+                          disabled={me.attributePoints < 5 || atMax}
+                          onClick={() => {
+                            sfx.playUiClick('confirm');
+                            onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: attrKey, amount: 5 });
+                          }}
+                          className="stone-button stone-button-dark py-1.5 px-2 text-[11px] font-bold disabled:opacity-30"
+                          title="Allocate +5 points"
+                        >
+                          +5
+                        </button>
+                        <button
+                          type="button"
+                          disabled={me.attributePoints < 10 || atMax}
+                          onClick={() => {
+                            sfx.playUiClick('confirm');
+                            onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: attrKey, amount: 10 });
+                          }}
+                          className="stone-button stone-button-dark py-1.5 px-2 text-[11px] font-bold disabled:opacity-30"
+                          title="Allocate +10 points"
+                        >
+                          +10
+                        </button>
+                        <button
+                          type="button"
+                          disabled={noPts || atMax}
+                          onClick={() => {
+                            sfx.playUiClick('confirm');
+                            const maxSpend = Math.max(1, MAX_ATTRIBUTE - currentVal);
+                            onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: attrKey, amount: maxSpend });
+                          }}
+                          className="stone-button stone-button-dark py-1.5 px-2.5 text-[11px] font-bold text-[#FCD34D] disabled:opacity-30"
+                          title="Spend all remaining available attribute points into this stat"
+                        >
+                          MAX
+                        </button>
+                      </div>
+                    );
+                  };
 
-                {/* Vitality */}
-                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
-                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                        {me.vitality || 0} / {MAX_ATTRIBUTE}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#A6A4B6]">
-                      Increases maximum health pool (+5 Max HP per point) and grants passive combat health regeneration every 2s (max(1, floor(VIT × 0.1)) at 6+ VIT).
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || (me.vitality || 0) >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'vitality' });
-                    }}
-                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                  >
-                    {(me.vitality || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                  </button>
-                </div>
+                  return (
+                    <>
+                      {/* Strength */}
+                      <div className="stone-plaque p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-[#EF4444]">STR · STRENGTH</span>
+                            <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                              {me.strength || 0} / {MAX_ATTRIBUTE}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A6A4B6]">
+                            Increases physical damage (+0.8% per point) &amp; DoT scaling (+0.1% per point) for Vanguard, and grants physical armor (+0.15% per point).
+                          </p>
+                        </div>
+                        {renderQuickButtons('strength', me.strength || 0)}
+                      </div>
 
-                {/* Dexterity */}
-                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
-                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                        {me.dexterity || 0} / {MAX_ATTRIBUTE}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Ranger damage (+0.8%) &amp; DoT scaling (+0.1%), attack speed (+0.4%), movement speed (+0.25%), and crit chance (+0.3%).
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || (me.dexterity || 0) >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'dexterity' });
-                    }}
-                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                  >
-                    {(me.dexterity || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                  </button>
-                </div>
+                      {/* Vitality */}
+                      <div className="stone-plaque p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-[#10B981]">VIT · VITALITY</span>
+                            <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                              {me.vitality || 0} / {MAX_ATTRIBUTE}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A6A4B6]">
+                            Increases maximum health pool (+5 Max HP per point) and grants passive combat health regeneration every 2s (max(1, floor(VIT × 0.1)) at 6+ VIT).
+                          </p>
+                        </div>
+                        {renderQuickButtons('vitality', me.vitality || 0)}
+                      </div>
 
-                {/* Intelligence */}
-                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
-                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                        {me.intelligence || 0} / {MAX_ATTRIBUTE}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Arcanist damage (+0.8%) &amp; DoT scaling (+0.1%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || (me.intelligence || 0) >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'intelligence' });
-                    }}
-                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                  >
-                    {(me.intelligence || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                  </button>
-                </div>
+                      {/* Dexterity */}
+                      <div className="stone-plaque p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-[#38BDF8]">DEX · DEXTERITY</span>
+                            <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                              {me.dexterity || 0} / {MAX_ATTRIBUTE}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A6A4B6]">
+                            Increases Ranger damage (+0.8%) &amp; DoT scaling (+0.1%), attack speed (+0.4%), movement speed (+0.25%), and crit chance (+0.3%).
+                          </p>
+                        </div>
+                        {renderQuickButtons('dexterity', me.dexterity || 0)}
+                      </div>
 
-                {/* Faith */}
-                <div className="stone-plaque p-3.5 flex items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
-                      <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
-                        {me.faith || 0} / {MAX_ATTRIBUTE}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#A6A4B6]">
-                      Increases Cleric divine damage (+0.8%), healing (+0.6%), DoT scaling (+0.1%), and crowd-control duration resistance (+0.3%).
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={me.attributePoints <= 0 || (me.faith || 0) >= MAX_ATTRIBUTE}
-                    onClick={() => {
-                      sfx.playUiClick('confirm');
-                      onSendAdminCommand?.({ type: 'player:spend_attribute', attribute: 'faith' });
-                    }}
-                    className="stone-button stone-button-dark h-auto py-2 px-4 text-xs font-bold shrink-0 disabled:opacity-30"
-                  >
-                    {(me.faith || 0) >= MAX_ATTRIBUTE ? 'MAX' : '+ Allocate'}
-                  </button>
-                </div>
+                      {/* Intelligence */}
+                      <div className="stone-plaque p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-[#818CF8]">INT · INTELLIGENCE</span>
+                            <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                              {me.intelligence || 0} / {MAX_ATTRIBUTE}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A6A4B6]">
+                            Increases Arcanist damage (+0.8%) &amp; DoT scaling (+0.1%), reduces ability cooldowns (+0.2% CDR), and adds elemental resistance (+0.15%).
+                          </p>
+                        </div>
+                        {renderQuickButtons('intelligence', me.intelligence || 0)}
+                      </div>
+
+                      {/* Faith */}
+                      <div className="stone-plaque p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-[#FDE047]">FTH · FAITH</span>
+                            <span className="text-xs font-mono font-bold text-white bg-[#252336] px-2 py-0.5 border border-[#3A384C]">
+                              {me.faith || 0} / {MAX_ATTRIBUTE}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-[#A6A4B6]">
+                            Increases Cleric divine damage (+0.8%), healing (+0.6%), DoT scaling (+0.1%), and crowd-control duration resistance (+0.3%).
+                          </p>
+                        </div>
+                        {renderQuickButtons('faith', me.faith || 0)}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="pt-3 border-t border-[#2B293A] flex items-center justify-between">

@@ -104,6 +104,7 @@ export const CHANGELOG_DATA: ChangelogEntry[] = [
         'Boss Zone Cleanup: Ensured boss death, despawn, and resets immediately remove associated hazard zones (such as Oriphiel\'s warden_parry).',
       ],
       'QUALITY OF LIFE': [
+        'Bulk & Spend All Attribute Allocation: Added quick bulk allocation buttons (+1, +5, +10, and MAX/Spend All) in Dungeon Run and Party Lobby attribute modals to eliminate click fatigue and instantly allocate remaining points.',
         'Floor Mastery & Stat Projections: Tuned Floor Mastery rewards to grant run-scoped Shield instead of duplicate attribute points, and updated stat projections and tooltips across Character Inventory and Dungeon Run views.',
       ],
     },
