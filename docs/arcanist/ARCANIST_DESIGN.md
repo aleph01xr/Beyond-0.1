@@ -9,7 +9,7 @@
 
 Beyond uses consistent controls across all four hero classes (`[1]` / `[H]` Healing Flask, `[Q / RMB]` Tactical Skill, `[R / Shift]` Ultimate, `[C / F / V]` Dash, `[LMB / Space]` Primary Attack):
 
-- **Primary Attack (`LMB` / `Space`)**: Fires an `'arcane'` bolt (`style: 'arcane'`, `pierce: 2`) and spawns a `star_rift` zone on every 4th primary attack.
+- **Primary Attack (`LMB` / `Space`)**: Fires an `'arcane'` bolt (`24` base damage, `420ms` attack cooldown, `185` range, `style: 'arcane'`, `pierce: 2`). Every 4th primary attack attempts to spawn a `star_rift` zone, gated by an independent `8000ms` Star Rift proc cooldown (counter resets after each 4-hit proc attempt; cooldown starts only on a successful spawn and resets on run end or class change).
 - **Starting Tactical Skill (`[Q]` / `RMB` — `Astral Nova`)**: 8-way radial burst of `'arcane'` projectiles (`24 * computeDamageMult`, `pierce: 2`, `5000ms` base cooldown).
 - **Spell Scrolls (Replacing `[Q / RMB]` via Dungeon RNG)**:
   - There is **no** separate `[1-7]` spellbook hotbar. Instead, Scrolls found inside the dungeon ARE the 7 offensive Arcanist spells (`Scroll of Fireball`, `Scroll of Disintegration`, `Scroll of Frost Lance`, `Scroll of Chain Lightning`, `Scroll of Arcane Meteor`, `Scroll of Arcane Orb`, `Scroll of Arcane Barrage`).

@@ -276,6 +276,80 @@ export function drawAbilityTargetingIndicator(
         }
       }
     }
+  } else if (spec.kind === 'cone') {
+    const halfSpread = spec.coneHalfAngleRad ?? 0.56;
+    const minAng = aim.aimAngle - halfSpread;
+    const maxAng = aim.aimAngle + halfSpread;
+
+    const grad = ctx.createRadialGradient(
+      playerX,
+      playerY,
+      14,
+      playerX,
+      playerY,
+      spec.range
+    );
+    grad.addColorStop(0, hexToRgba(primary, 0.28 * pulse));
+    grad.addColorStop(0.6, hexToRgba(secondary, 0.14 * pulse));
+    grad.addColorStop(1, hexToRgba(primary, 0.03));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(playerX, playerY);
+    ctx.arc(playerX, playerY, spec.range, minAng, maxAng);
+    ctx.closePath();
+    ctx.fill();
+
+    // Cone edges & arc
+    ctx.strokeStyle = hexToRgba(primary, 0.85);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(playerX + Math.cos(minAng) * 14, playerY + Math.sin(minAng) * 14);
+    ctx.lineTo(playerX + Math.cos(minAng) * spec.range, playerY + Math.sin(minAng) * spec.range);
+    ctx.moveTo(playerX + Math.cos(maxAng) * 14, playerY + Math.sin(maxAng) * 14);
+    ctx.lineTo(playerX + Math.cos(maxAng) * spec.range, playerY + Math.sin(maxAng) * spec.range);
+    ctx.stroke();
+
+    ctx.setLineDash([8, 5]);
+    ctx.strokeStyle = hexToRgba(secondary, 0.85);
+    ctx.beginPath();
+    ctx.arc(playerX, playerY, spec.range, minAng, maxAng);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Crackling electric preview arcs inside the cone
+    for (let r = 0; r < 3; r++) {
+      const frac = r === 0 ? -0.55 : r === 1 ? 0 : 0.55;
+      const rayAng = aim.aimAngle + frac * halfSpread;
+      ctx.strokeStyle = hexToRgba(r === 1 ? primary : secondary, r === 1 ? 0.85 : 0.6);
+      ctx.lineWidth = r === 1 ? 2 : 1.3;
+      ctx.beginPath();
+      ctx.moveTo(playerX + Math.cos(rayAng) * 18, playerY + Math.sin(rayAng) * 18);
+      for (let s = 1; s <= 5; s++) {
+        const d = (spec.range * s) / 5;
+        const j = s < 5 ? Math.sin(now * 0.02 + r * 5 + s * 2.7) * 9 : 0;
+        const px = playerX + Math.cos(rayAng) * d - Math.sin(rayAng) * j;
+        const py = playerY + Math.sin(rayAng) * d + Math.cos(rayAng) * j;
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    // Highlight enemies inside the lightning cone
+    for (const en of snap.enemies) {
+      if (en.hp <= 0) continue;
+      const dx = en.x - playerX;
+      const dy = en.y - playerY;
+      const d = Math.hypot(dx, dy);
+      if (d <= spec.range + en.radius * 0.5) {
+        const diff = Math.atan2(
+          Math.sin(Math.atan2(dy, dx) - aim.aimAngle),
+          Math.cos(Math.atan2(dy, dx) - aim.aimAngle)
+        );
+        if (Math.abs(diff) <= halfSpread) {
+          drawTargetBracket(ctx, en.x, en.y, en.radius, primary, now);
+        }
+      }
+    }
   } else if (spec.kind === 'ground_aoe') {
     const target = computeGroundTargetPosition(
       playerX,
@@ -515,11 +589,30 @@ export function drawAbilityTargetingIndicator(
     const endY = playerY + Math.sin(aim.aimAngle) * lineLen;
 
     if (spec.aoeRadius > 24 && player.equippedScrollId === 'fireball') {
-      ctx.strokeStyle = hexToRgba(primary, 0.78);
-      ctx.lineWidth = 1.8;
+      // Snap Fireball AoE preview ring to the first enemy along its path if one is in line
+      let blastX = endX;
+      let blastY = endY;
+      let closestHitDist = lineLen;
+      for (const en of snap.enemies) {
+        if (en.hp <= 0) continue;
+        if (distancePointToSegment(en.x, en.y, playerX, playerY, endX, endY) <= halfW + en.radius) {
+          const d = Math.hypot(en.x - playerX, en.y - playerY);
+          if (d < closestHitDist) {
+            closestHitDist = d;
+            blastX = playerX + Math.cos(aim.aimAngle) * d;
+            blastY = playerY + Math.sin(aim.aimAngle) * d;
+          }
+        }
+      }
+      ctx.fillStyle = hexToRgba(primary, 0.14 * pulse);
+      ctx.beginPath();
+      ctx.arc(blastX, blastY, spec.aoeRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = hexToRgba(primary, 0.85);
+      ctx.lineWidth = 2;
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
-      ctx.arc(endX, endY, spec.aoeRadius, 0, Math.PI * 2);
+      ctx.arc(blastX, blastY, spec.aoeRadius, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }

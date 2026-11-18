@@ -4,7 +4,7 @@ import type { DungeonMap, HeroClassId, PropState } from './types.ts';
 
 export type AimableAction = 'tactical' | 'ult' | 'dash';
 
-export type AbilityTargetKind = 'dash' | 'cone_volley' | 'ground_aoe' | 'self_aoe' | 'line';
+export type AbilityTargetKind = 'dash' | 'cone_volley' | 'cone' | 'ground_aoe' | 'self_aoe' | 'line';
 
 export interface AbilityTargetSpec {
   action: AimableAction;
@@ -24,6 +24,8 @@ export interface AbilityTargetSpec {
   collisionRadius?: number;
   /** Fan ray offsets in radians (for Ranger Frost Volley) */
   coneRayOffsets?: readonly number[];
+  /** Cone half-angle in radians (for cone skills like Chain Lightning) */
+  coneHalfAngleRad?: number;
   /** Number of radial starburst rays (for Arcanist Astral Nova) */
   radialRays?: number;
   /** Primary theme color */
@@ -161,8 +163,8 @@ const ARCANIST_SCROLL_TARGET_SPECS: Record<ArcanistScrollId, AbilityTargetSpec> 
     label: 'Fireball',
     kind: 'line',
     range: 360,
-    aoeRadius: 90,
-    lineWidth: 20,
+    aoeRadius: 105,
+    lineWidth: 28,
     defaultDist: 220,
     accentColor: '#F97316',
     secondaryColor: '#FDBA74',
@@ -192,13 +194,13 @@ const ARCANIST_SCROLL_TARGET_SPECS: Record<ArcanistScrollId, AbilityTargetSpec> 
   chain_lightning: {
     action: 'tactical',
     label: 'Chain Lightning',
-    kind: 'line',
+    kind: 'cone',
     range: 340,
-    aoeRadius: 150,
-    lineWidth: 18,
-    defaultDist: 240,
+    aoeRadius: 0,
+    coneHalfAngleRad: 0.56,
+    defaultDist: 340,
     accentColor: '#FACC15',
-    secondaryColor: '#FEF08A',
+    secondaryColor: '#38BDF8',
   },
   arcane_meteor: {
     action: 'tactical',
@@ -389,3 +391,146 @@ export function findBestAutoTarget(opts: {
   }
   return null;
 }
+
+/**
+ * Smart skill targeting: when an enemy (or dummy fallback) is within or near
+ * an ability's effective range and unobstructed by walls, immediately target them.
+ */
+export function resolveSkillSmartTarget(opts: {
+  spec: AbilityTargetSpec;
+  playerX: number;
+  playerY: number;
+  fallbackAngle: number;
+  fallbackDistance?: number;
+  cursorWorldX?: number;
+  cursorWorldY?: number;
+  preferCursorCone?: boolean;
+  allowFullRangeFallback?: boolean;
+  map?: DungeonMap;
+  props?: readonly PropState[];
+  enemies: readonly AutoTargetCandidate[];
+  trainingDummies?: readonly AutoTargetCandidate[];
+}): {
+  target: AutoTargetCandidate | null;
+  aimAngle: number;
+  aimDistance: number;
+} {
+  const { spec, playerX, playerY, fallbackAngle } = opts;
+  const fallbackDist =
+    typeof opts.fallbackDistance === 'number' && Number.isFinite(opts.fallbackDistance)
+      ? Math.max(0, Math.min(spec.range, opts.fallbackDistance))
+      : spec.defaultDist;
+
+  // Evasion dash and self-centered AoEs preserve manual directional/self semantics
+  if (spec.action === 'dash' || spec.kind === 'self_aoe') {
+    return {
+      target: null,
+      aimAngle: fallbackAngle,
+      aimDistance: fallbackDist,
+    };
+  }
+
+  // Acquire radius includes a small grace buffer near the skill's max reach
+  const acquireRange =
+    spec.kind === 'ground_aoe'
+      ? spec.range + Math.min(44, spec.aoeRadius * 0.35)
+      : spec.kind === 'dash'
+        ? spec.range + Math.min(56, spec.aoeRadius * 0.6)
+        : spec.range + 28;
+
+  const hasCursor =
+    typeof opts.cursorWorldX === 'number' &&
+    Number.isFinite(opts.cursorWorldX) &&
+    typeof opts.cursorWorldY === 'number' &&
+    Number.isFinite(opts.cursorWorldY);
+
+  let match: { target: AutoTargetCandidate; angle: number; distance: number } | null = null;
+
+  if (opts.preferCursorCone && hasCursor) {
+    const cx = opts.cursorWorldX!;
+    const cy = opts.cursorWorldY!;
+    const cursorDist = Math.hypot(cx - playerX, cy - playerY);
+    const cursorAngle = cursorDist > 1 ? Math.atan2(cy - playerY, cx - playerX) : fallbackAngle;
+
+    // 1. Check enemies near cursor world position first (for ground_aoe or cursor hover)
+    let closestNearCursor: AutoTargetCandidate | null = null;
+    let closestCursorDist = Math.max(96, spec.aoeRadius * 0.9);
+    const scanList = (list: readonly AutoTargetCandidate[]) => {
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (typeof c.hp === 'number' && c.hp <= 0) continue;
+        const pDist = Math.hypot(c.x - playerX, c.y - playerY);
+        if (pDist <= 0.001 || pDist > acquireRange) continue;
+        const cDist = Math.hypot(c.x - cx, c.y - cy);
+        if (cDist > closestCursorDist) continue;
+        if (
+          opts.map &&
+          opts.props &&
+          !hasLineOfSight(opts.map, opts.props, playerX, playerY, c.x, c.y)
+        ) {
+          continue;
+        }
+        closestCursorDist = cDist;
+        closestNearCursor = c;
+      }
+    };
+    scanList(opts.enemies);
+    if (!closestNearCursor && opts.trainingDummies) {
+      scanList(opts.trainingDummies);
+    }
+    if (closestNearCursor) {
+      const c = closestNearCursor as AutoTargetCandidate;
+      const dist = Math.hypot(c.x - playerX, c.y - playerY);
+      match = { target: c, angle: Math.atan2(c.y - playerY, c.x - playerX), distance: dist };
+    } else {
+      // 2. Check forward cursor cone (±45 deg)
+      match = findBestAutoTarget({
+        playerX,
+        playerY,
+        maxRange: acquireRange,
+        preferredAngle: cursorAngle,
+        minDot: 0.7,
+        map: opts.map,
+        props: opts.props,
+        enemies: opts.enemies,
+        trainingDummies: opts.trainingDummies,
+      });
+    }
+  }
+
+  if (!match && (!opts.preferCursorCone || opts.allowFullRangeFallback)) {
+    match = findBestAutoTarget({
+      playerX,
+      playerY,
+      maxRange: acquireRange,
+      preferredAngle: fallbackAngle,
+      minDot: -1,
+      map: opts.map,
+      props: opts.props,
+      enemies: opts.enemies,
+      trainingDummies: opts.trainingDummies,
+    });
+  }
+
+  if (!match) {
+    return {
+      target: null,
+      aimAngle: fallbackAngle,
+      aimDistance: fallbackDist,
+    };
+  }
+
+  const clampedDist =
+    spec.kind === 'ground_aoe'
+      ? Math.max(0, Math.min(spec.range, match.distance))
+      : spec.kind === 'dash'
+        ? spec.range
+        : Math.max(0, Math.min(spec.range, match.distance));
+
+  return {
+    target: match.target,
+    aimAngle: match.angle,
+    aimDistance: clampedDist,
+  };
+}
+

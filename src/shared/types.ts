@@ -183,7 +183,7 @@ export const HERO_CLASSES: Record<HeroClassId, HeroClassDef> = {
     passiveDesc: 'Basic attacks loose homing cosmic shards that pierce an additional enemy. Spells leave lingering star rifts.',
     maxHp: 100,
     speed: 188,
-    damage: 32,
+    damage: 24,
     attackCooldownMs: 420,
     range: 185,
     primaryColor: '#4338CA',
@@ -491,7 +491,9 @@ export interface PlayerState {
   disintegrationState?: DisintegrationChannelState | null;
   equippedScrollId?: ArcanistScrollId | null;
   pendingScrollChoices?: ArcanistScrollId[];
+  starRiftCooldownMs?: number;
   chronoSuspendedMs?: number;
+  activeChestPropId?: string | null;
 }
 
 export type PlayerStatusType =
@@ -622,6 +624,11 @@ export interface PropState {
   value: number;
   locked?: boolean;
   roomId?: number;
+  chestGoldClaimed?: boolean;
+  relicChoicesByPlayer?: Record<string, string[]>;
+  scrollChoicesByPlayer?: Record<string, ArcanistScrollId[]>;
+  claimedRelicPlayerIds?: string[];
+  claimedScrollPlayerIds?: string[];
 }
 
 export interface FieldZoneState {
@@ -650,13 +657,15 @@ export interface FieldZoneState {
     | 'verdict_combo'
     | 'warden_shatter'
     | 'arcane_meteor'
-    | 'chain_lightning_arc';
+    | 'chain_lightning_arc'
+    | 'fireball_burn';
   x: number;
   y: number;
   radius: number;
   width?: number;
   height?: number;
   angle?: number;
+  coneHalfAngleRad?: number;
   seqNumber?: number;
   label?: string;
   quadrant?: number;
@@ -868,6 +877,7 @@ export type ClientMessage =
   | { type: 'player:channel_update'; aimAngle: number }
   | { type: 'player:channel_stop' }
   | { type: 'player:select_scroll'; scrollId: ArcanistScrollId }
+  | { type: 'player:close_chest' }
   | { type: 'room:resync' }
   | { type: 'ping'; t: number };
 

@@ -43,14 +43,9 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
     syn.relicIds.every((id) => ownedRelics.includes(id))
   );
 
-  // DPS Rating badge
-  let dpsRank = 'D-RANK';
-  let dpsColor = '#94A3B8';
-  if (stats.sustainedDps >= 800) { dpsRank = 'MYTHIC S+'; dpsColor = '#EC4899'; }
-  else if (stats.sustainedDps >= 500) { dpsRank = 'S-RANK'; dpsColor = '#F59E0B'; }
-  else if (stats.sustainedDps >= 300) { dpsRank = 'A-RANK'; dpsColor = '#A855F7'; }
-  else if (stats.sustainedDps >= 180) { dpsRank = 'B-RANK'; dpsColor = '#3B82F6'; }
-  else if (stats.sustainedDps >= 100) { dpsRank = 'C-RANK'; dpsColor = '#10B981'; }
+  // Reassessed Class Performance Rating (role-calibrated D–S+ across Offense, Defense & Utility)
+  const overallRank = stats.overallRank;
+  const dpsColor = overallRank.color;
 
   // Action handlers
   const handleStoreRelic = (relicId: string) => {
@@ -180,8 +175,8 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
             }`}
           >
             <span>[STAT PROJECTIONS] Live Output</span>
-            <span className="text-[10px] font-bold px-1.5 py-0.5 border border-[#353442]" style={{ color: dpsColor }}>
-              {stats.sustainedDps} DPS
+            <span className="text-[10px] font-bold px-1.5 py-0.5 border border-[#353442]" style={{ color: overallRank.color }}>
+              {overallRank.label} · {stats.effectiveDps} DPS
             </span>
           </button>
         </div>
@@ -573,39 +568,111 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
           {activeTab === 'projections' && (
             <div className="space-y-6">
               
-              {/* Sustained DPS Rating Header Banner */}
-              <div className="stone-plaque p-4 flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <div className="text-[10px] font-mono uppercase text-[#A19FAF]">Target Sustained Combat DPS Rating</div>
-                  <div className="flex items-baseline gap-3 mt-1">
-                    <span className="text-2xl font-mono font-bold" style={{ color: dpsColor }}>
-                      {stats.sustainedDps} <span className="text-xs font-normal text-[#A19FAF]">DPS / sec</span>
-                    </span>
-                    <span className="text-xs font-mono font-bold px-2 py-0.5 border" style={{ color: dpsColor, borderColor: `${dpsColor}66`, backgroundColor: `${dpsColor}15` }}>
-                      {dpsRank}
-                    </span>
+              {/* Reassessed Class Performance & Effective Combat Rating Banner */}
+              <div className="stone-plaque p-4 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-[#A19FAF]">
+                      {heroDef.name} ({heroDef.roleBadge}) Performance Assessment · Rating {overallRank.score} PTS
+                    </div>
+                    <div className="flex items-baseline gap-3 mt-1 flex-wrap">
+                      <span className="text-2xl font-mono font-bold" style={{ color: overallRank.color }}>
+                        {stats.effectiveDps} <span className="text-xs font-normal text-[#A19FAF]">Eff. DPS / sec</span>
+                      </span>
+                      <span
+                        className="text-xs font-mono font-bold px-2.5 py-0.5 border"
+                        style={{
+                          color: overallRank.color,
+                          borderColor: `${overallRank.color}66`,
+                          backgroundColor: `${overallRank.color}15`,
+                        }}
+                      >
+                        {overallRank.label}
+                      </span>
+                      <span className="text-[11px] font-mono text-[#A19FAF]">
+                        (Primary: {stats.directDps}{stats.tacticalAbilityDps > 0 ? ` + Skill: ${stats.tacticalAbilityDps}` : ''}{stats.passiveCombatDps > 0 ? ` + Passive: ${stats.passiveCombatDps}` : ''}{stats.dotDpsContribution > 0 ? ` + DoT: ${stats.dotDpsContribution}` : ''})
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A19FAF] mt-1 font-mono">
+                      Calibrated for {heroDef.role} performance across Offense ({stats.offenseRank.label}), Defense ({stats.defenseRank.label}), and Support/Utility ({stats.utilityRank.label}).
+                    </p>
                   </div>
-                  <p className="text-[11px] text-[#A19FAF] mt-1 font-mono">
-                    Calculated sustained output accounting for attack cadence ({stats.attacksPerSecond} atk/s), base hit ({stats.scaledHitDamage}), critical strikes ({stats.critChancePct}% @ {stats.critMultiplier}x), relic multi-projectiles{stats.dotDpsContribution > 0 ? `, and hybrid DoT scaling (${stats.dotMultiplier}x)` : ''}.
-                  </p>
+
+                  <div className="flex flex-wrap items-center gap-4 stone-input p-3 font-mono text-xs">
+                    <div>
+                      <span className="text-[#A19FAF] text-[10px] block uppercase">Damage Mult</span>
+                      <span className="text-[#FCD34D] font-bold text-sm">{stats.damageMultiplier}x</span>
+                    </div>
+                    <div className="border-l border-[#353442] pl-4">
+                      <span className="text-[#A19FAF] text-[10px] block uppercase">Effective HP</span>
+                      <span className="text-[#10B981] font-bold text-sm">{stats.effectiveHp}</span>
+                    </div>
+                    <div className="border-l border-[#353442] pl-4">
+                      <span className="text-[#A19FAF] text-[10px] block uppercase">Crit Rate</span>
+                      <span className="text-[#38BDF8] font-bold text-sm">{stats.critChancePct}%</span>
+                    </div>
+                    <div className="border-l border-[#353442] pl-4">
+                      <span className="text-[#A19FAF] text-[10px] block uppercase">Attack Cooldown</span>
+                      <span className="text-[#34D399] font-bold text-sm">{stats.attackCooldownMs}ms</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-4 stone-input p-3 font-mono text-xs">
-                  <div>
-                    <span className="text-[#A19FAF] text-[10px] block uppercase">Damage Mult</span>
-                    <span className="text-[#FCD34D] font-bold text-sm">{stats.damageMultiplier}x</span>
+                {/* 3-Pillar D–S+ Rank Breakdown */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                  <div className="stone-input p-2.5 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase text-[#A19FAF]">Offense Output</div>
+                      <div className="text-xs font-bold text-white">{stats.effectiveDps} Eff. DPS</div>
+                    </div>
+                    <span
+                      className="text-[11px] font-bold px-2 py-0.5 border"
+                      style={{
+                        color: stats.offenseRank.color,
+                        borderColor: `${stats.offenseRank.color}66`,
+                        backgroundColor: `${stats.offenseRank.color}15`,
+                      }}
+                    >
+                      {stats.offenseRank.label}
+                    </span>
                   </div>
-                  <div className="border-l border-[#353442] pl-4">
-                    <span className="text-[#A19FAF] text-[10px] block uppercase">DoT Scale</span>
-                    <span className="text-[#F97316] font-bold text-sm">{stats.dotMultiplier}x</span>
+
+                  <div className="stone-input p-2.5 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase text-[#A19FAF]">Defense &amp; EHP</div>
+                      <div className="text-xs font-bold text-white">{stats.effectiveHp} EHP</div>
+                    </div>
+                    <span
+                      className="text-[11px] font-bold px-2 py-0.5 border"
+                      style={{
+                        color: stats.defenseRank.color,
+                        borderColor: `${stats.defenseRank.color}66`,
+                        backgroundColor: `${stats.defenseRank.color}15`,
+                      }}
+                    >
+                      {stats.defenseRank.label}
+                    </span>
                   </div>
-                  <div className="border-l border-[#353442] pl-4">
-                    <span className="text-[#A19FAF] text-[10px] block uppercase">Crit Rate</span>
-                    <span className="text-[#38BDF8] font-bold text-sm">{stats.critChancePct}%</span>
-                  </div>
-                  <div className="border-l border-[#353442] pl-4">
-                    <span className="text-[#A19FAF] text-[10px] block uppercase">Attack Cooldown</span>
-                    <span className="text-[#34D399] font-bold text-sm">{stats.attackCooldownMs}ms</span>
+
+                  <div className="stone-input p-2.5 flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[10px] uppercase text-[#A19FAF]">Support &amp; Tempo</div>
+                      <div className="text-xs font-bold text-white">
+                        {stats.selfShieldPerSec > 0
+                          ? `${stats.healingPerSec} HP/s · ${stats.selfShieldPerSec} Shd/s`
+                          : `${stats.healingPerSec} HP/s · ${stats.cooldownReductionPct}% CDR`}
+                      </div>
+                    </div>
+                    <span
+                      className="text-[11px] font-bold px-2 py-0.5 border"
+                      style={{
+                        color: stats.utilityRank.color,
+                        borderColor: `${stats.utilityRank.color}66`,
+                        backgroundColor: `${stats.utilityRank.color}15`,
+                      }}
+                    >
+                      {stats.utilityRank.label}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -634,9 +701,32 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                     )}
 
                     <div className="flex items-center justify-between p-2 stone-input">
-                      <span className="text-[#A19FAF]">Scaled Hit Damage</span>
-                      <span className="font-bold text-[#FCD34D]">{stats.scaledHitDamage} Dmg / Hit</span>
+                      <span className="text-[#A19FAF]">Scaled Primary Hit</span>
+                      <span className="font-bold text-[#FCD34D]">
+                        {stats.scaledHitDamage} Dmg ({stats.directDps} DPS)
+                      </span>
                     </div>
+
+                    {stats.longshotHitDamage > 0 && (
+                      <div className="flex items-center justify-between p-2 stone-input">
+                        <span className="text-[#A19FAF]">Eagle Keenness (180u+ Longshot)</span>
+                        <span className="font-bold text-[#34D399]">{stats.longshotHitDamage} Dmg / Hit (+25%)</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between p-2 stone-input gap-2">
+                      <span className="text-[#A19FAF]">{stats.activeTacticalLabel}</span>
+                      <span className="font-bold text-[#E879F9] text-right">
+                        {stats.activeTacticalHitDamage} Hit (+{stats.tacticalAbilityDps} DPS)
+                      </span>
+                    </div>
+
+                    {player.heroClass === 'arcanist' && (
+                      <div className="flex items-center justify-between p-2 stone-input">
+                        <span className="text-[#A19FAF]">Star Rift Passive (4th Hit / 8s CD)</span>
+                        <span className="font-bold text-[#C084FC]">+{stats.passiveCombatDps} DPS</span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Hybrid DoT Scaling</span>
@@ -694,9 +784,23 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                     </div>
 
                     <div className="flex items-center justify-between p-2 stone-input">
-                      <span className="text-[#A19FAF]">Combat Health Regeneration</span>
-                      <span className="font-bold text-[#5CD68D]">+{stats.hpRegenPerTick} HP / 2.0s ({stats.hpRegenPerSec} HP/s)</span>
+                      <span className="text-[#A19FAF]">Effective Health (EHP)</span>
+                      <span className="font-bold text-[#34D399]">{stats.effectiveHp} EHP (Mitigation-Adjusted)</span>
                     </div>
+
+                    <div className="flex items-center justify-between p-2 stone-input">
+                      <span className="text-[#A19FAF]">Combat Health Regeneration</span>
+                      <span className="font-bold text-[#5CD68D]">
+                        +{stats.hpRegenPerTick} HP / 2.0s ({stats.healingPerSec} Total Sustain/s)
+                      </span>
+                    </div>
+
+                    {stats.selfShieldPerSec > 0 && (
+                      <div className="flex items-center justify-between p-2 stone-input">
+                        <span className="text-[#A19FAF]">Bulwark &amp; Iron Will Shielding</span>
+                        <span className="font-bold text-[#93C5FD]">+{stats.selfShieldPerSec} Shield/s</span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Physical Damage Mitigation</span>
@@ -737,9 +841,9 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                     </div>
 
                     <div className="p-3 stone-input space-y-1">
-                      <div className="text-[#A19FAF] text-[10px] uppercase">Tactical Ability Cadence</div>
+                      <div className="text-[#A19FAF] text-[10px] uppercase">{stats.activeTacticalLabel}</div>
                       <div className="text-sm font-bold text-[#FCD34D]">{stats.tacticalCooldownSec} seconds</div>
-                      <div className="text-[10px] text-[#A19FAF]">Base: {(heroDef.tacticalCooldownMs / 1000).toFixed(1)}s</div>
+                      <div className="text-[10px] text-[#A19FAF]">Base: {(stats.tacticalBaseCooldownMs / 1000).toFixed(1)}s</div>
                     </div>
 
                     <div className="p-3 stone-input space-y-1">

@@ -1,5 +1,5 @@
 // server.ts
-import crypto from "node:crypto";
+import crypto2 from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -86,7 +86,7 @@ var HERO_CLASSES = {
     passiveDesc: "Basic attacks loose homing cosmic shards that pierce an additional enemy. Spells leave lingering star rifts.",
     maxHp: 100,
     speed: 188,
-    damage: 32,
+    damage: 24,
     attackCooldownMs: 420,
     range: 185,
     primaryColor: "#4338CA",
@@ -550,8 +550,8 @@ var ARCANIST_SCROLL_TARGET_SPECS = {
     label: "Fireball",
     kind: "line",
     range: 360,
-    aoeRadius: 90,
-    lineWidth: 20,
+    aoeRadius: 105,
+    lineWidth: 28,
     defaultDist: 220,
     accentColor: "#F97316",
     secondaryColor: "#FDBA74"
@@ -581,13 +581,13 @@ var ARCANIST_SCROLL_TARGET_SPECS = {
   chain_lightning: {
     action: "tactical",
     label: "Chain Lightning",
-    kind: "line",
+    kind: "cone",
     range: 340,
-    aoeRadius: 150,
-    lineWidth: 18,
-    defaultDist: 240,
+    aoeRadius: 0,
+    coneHalfAngleRad: 0.56,
+    defaultDist: 340,
     accentColor: "#FACC15",
-    secondaryColor: "#FEF08A"
+    secondaryColor: "#38BDF8"
   },
   arcane_meteor: {
     action: "tactical",
@@ -699,6 +699,90 @@ function findBestAutoTarget(opts) {
     return pickFrom(opts.trainingDummies);
   }
   return null;
+}
+function resolveSkillSmartTarget(opts) {
+  const { spec, playerX, playerY, fallbackAngle } = opts;
+  const fallbackDist = typeof opts.fallbackDistance === "number" && Number.isFinite(opts.fallbackDistance) ? Math.max(0, Math.min(spec.range, opts.fallbackDistance)) : spec.defaultDist;
+  if (spec.action === "dash" || spec.kind === "self_aoe") {
+    return {
+      target: null,
+      aimAngle: fallbackAngle,
+      aimDistance: fallbackDist
+    };
+  }
+  const acquireRange = spec.kind === "ground_aoe" ? spec.range + Math.min(44, spec.aoeRadius * 0.35) : spec.kind === "dash" ? spec.range + Math.min(56, spec.aoeRadius * 0.6) : spec.range + 28;
+  const hasCursor = typeof opts.cursorWorldX === "number" && Number.isFinite(opts.cursorWorldX) && typeof opts.cursorWorldY === "number" && Number.isFinite(opts.cursorWorldY);
+  let match = null;
+  if (opts.preferCursorCone && hasCursor) {
+    const cx = opts.cursorWorldX;
+    const cy = opts.cursorWorldY;
+    const cursorDist = Math.hypot(cx - playerX, cy - playerY);
+    const cursorAngle = cursorDist > 1 ? Math.atan2(cy - playerY, cx - playerX) : fallbackAngle;
+    let closestNearCursor = null;
+    let closestCursorDist = Math.max(96, spec.aoeRadius * 0.9);
+    const scanList = (list) => {
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (typeof c.hp === "number" && c.hp <= 0) continue;
+        const pDist = Math.hypot(c.x - playerX, c.y - playerY);
+        if (pDist <= 1e-3 || pDist > acquireRange) continue;
+        const cDist = Math.hypot(c.x - cx, c.y - cy);
+        if (cDist > closestCursorDist) continue;
+        if (opts.map && opts.props && !hasLineOfSight(opts.map, opts.props, playerX, playerY, c.x, c.y)) {
+          continue;
+        }
+        closestCursorDist = cDist;
+        closestNearCursor = c;
+      }
+    };
+    scanList(opts.enemies);
+    if (!closestNearCursor && opts.trainingDummies) {
+      scanList(opts.trainingDummies);
+    }
+    if (closestNearCursor) {
+      const c = closestNearCursor;
+      const dist = Math.hypot(c.x - playerX, c.y - playerY);
+      match = { target: c, angle: Math.atan2(c.y - playerY, c.x - playerX), distance: dist };
+    } else {
+      match = findBestAutoTarget({
+        playerX,
+        playerY,
+        maxRange: acquireRange,
+        preferredAngle: cursorAngle,
+        minDot: 0.7,
+        map: opts.map,
+        props: opts.props,
+        enemies: opts.enemies,
+        trainingDummies: opts.trainingDummies
+      });
+    }
+  }
+  if (!match && (!opts.preferCursorCone || opts.allowFullRangeFallback)) {
+    match = findBestAutoTarget({
+      playerX,
+      playerY,
+      maxRange: acquireRange,
+      preferredAngle: fallbackAngle,
+      minDot: -1,
+      map: opts.map,
+      props: opts.props,
+      enemies: opts.enemies,
+      trainingDummies: opts.trainingDummies
+    });
+  }
+  if (!match) {
+    return {
+      target: null,
+      aimAngle: fallbackAngle,
+      aimDistance: fallbackDist
+    };
+  }
+  const clampedDist = spec.kind === "ground_aoe" ? Math.max(0, Math.min(spec.range, match.distance)) : spec.kind === "dash" ? spec.range : Math.max(0, Math.min(spec.range, match.distance));
+  return {
+    target: match.target,
+    aimAngle: match.angle,
+    aimDistance: clampedDist
+  };
 }
 
 // src/server/dungeonGenerator.ts
@@ -1724,6 +1808,8 @@ function generateTavernFloor() {
 }
 
 // src/shared/arcanist.ts
+var STAR_RIFT_REQUIRED_ATTACKS = 4;
+var STAR_RIFT_PROC_COOLDOWN_MS = 8e3;
 var ARCANIST_SPELL_ORDER = [
   "fireball",
   "disintegration",
@@ -1739,18 +1825,22 @@ var ARCANIST_SPELLS = {
     name: "Fireball",
     scrollName: "Scroll of Fireball",
     tacticalTitle: "Fireball",
-    role: "Burst / AoE",
+    role: "Burst / Burning AoE",
     baseDamage: 42,
-    intCoeff: 0.01,
+    intCoeff: 0.015,
     cooldownMs: 6e3,
     castTimeMs: 350,
-    explosionRadius: 90,
+    explosionRadius: 105,
+    burnRadius: 88,
+    burnTickRatio: 0.22,
+    durationMs: 3500,
+    hitIntervalMs: 500,
     maxRange: 360,
     projectileSpeed: 380,
     damageCategory: "fire",
     accentColor: "#F97316",
-    summary: "Replaces Astral Nova [Q]. 0.35s cast; hurls an explosive fireball (90u AoE, no burn) on impact or max range.",
-    chronoInteraction: "Fireball projectile freezes mid-flight inside ANY Chrono Well (including caster projectiles) until time resumes."
+    summary: "Replaces Astral Nova [Q]. 0.35s cast; hurls a large fireball that explodes on hit (105u AoE) and leaves a 3.5s burning ground zone.",
+    chronoInteraction: "Fireball projectile and lingering burn zone freeze inside ANY Chrono Well (including caster zones) until time resumes."
   },
   disintegration: {
     id: "disintegration",
@@ -1759,7 +1849,7 @@ var ARCANIST_SPELLS = {
     tacticalTitle: "Disintegration",
     role: "Sustained Beam",
     baseDamage: 10,
-    intCoeff: 8e-3,
+    intCoeff: 0.012,
     cooldownMs: 12e3,
     castTimeMs: 0,
     tickIntervalMs: 200,
@@ -1781,7 +1871,7 @@ var ARCANIST_SPELLS = {
     tacticalTitle: "Frost Lance",
     role: "Precision / Piercing",
     baseDamage: 36,
-    intCoeff: 0.012,
+    intCoeff: 0.018,
     cooldownMs: 4500,
     castTimeMs: 200,
     pierce: 3,
@@ -1797,19 +1887,18 @@ var ARCANIST_SPELLS = {
     name: "Chain Lightning",
     scrollName: "Scroll of Chain Lightning",
     tacticalTitle: "Chain Lightning",
-    role: "Multi-Target Arc",
+    role: "Cone Discharge",
     baseDamage: 32,
-    intCoeff: 0.01,
+    intCoeff: 0.015,
     cooldownMs: 7e3,
     castTimeMs: 0,
-    maxTargets: 4,
-    jumpDamageDecay: 0.15,
-    maxJumpDistance: 150,
     maxRange: 340,
+    coneHalfAngleRad: 0.56,
+    // ~±32 deg (64 deg total cone)
     damageCategory: "lightning",
     accentColor: "#FACC15",
-    summary: "Replaces Astral Nova [Q]. Strikes target and arcs up to 3 additional foes within 150u (-15% dmg/jump, no repeats).",
-    chronoInteraction: "Instant lightning discharge hits suspended foes inside Chrono Well; blocked while caster is Chrono-suspended."
+    summary: "Replaces Astral Nova [Q]. Unleashes a 340u cone-shaped lightning blast (64\xB0 arc) shocking all foes inside.",
+    chronoInteraction: "Instant lightning cone hits suspended foes inside Chrono Well; blocked while caster is Chrono-suspended."
   },
   arcane_meteor: {
     id: "arcane_meteor",
@@ -1818,7 +1907,7 @@ var ARCANIST_SPELLS = {
     tacticalTitle: "Arcane Meteor",
     role: "Heavy AoE Burst",
     baseDamage: 75,
-    intCoeff: 0.013,
+    intCoeff: 0.0195,
     cooldownMs: 11e3,
     castTimeMs: 500,
     impactDelayMs: 1e3,
@@ -1836,7 +1925,7 @@ var ARCANIST_SPELLS = {
     tacticalTitle: "Arcane Orb",
     role: "Persistent Pressure",
     baseDamage: 12,
-    intCoeff: 7e-3,
+    intCoeff: 0.0105,
     cooldownMs: 9e3,
     castTimeMs: 0,
     durationMs: 4e3,
@@ -1853,18 +1942,20 @@ var ARCANIST_SPELLS = {
     name: "Arcane Barrage",
     scrollName: "Scroll of Arcane Barrage",
     tacticalTitle: "Arcane Barrage",
-    role: "Multi-Projectile Helix",
+    role: "Multi-Wave Barrage",
     baseDamage: 12,
-    intCoeff: 45e-4,
+    intCoeff: 675e-5,
     cooldownMs: 8e3,
     castTimeMs: 0,
-    projectileCount: 6,
-    projectileSpeed: 400,
+    projectileCount: 8,
+    barrageWaves: 4,
+    barrageWaveIntervalMs: 95,
+    projectileSpeed: 420,
     maxRange: 450,
     damageCategory: "arcane",
     accentColor: "#60A5FA",
-    summary: "Replaces Astral Nova [Q]. Fires 6 alternating helix bolts up to 450u forward; multiple bolts can strike the same target.",
-    chronoInteraction: "All 6 helix bolts suspend inside ANY Chrono Well (including the caster\u2019s own) and burst forward together on resume."
+    summary: "Replaces Astral Nova [Q]. Launches a 4-wave rapid arcane barrage (8 bolts) that streams forward and strikes targets 3-4+ times.",
+    chronoInteraction: "Barrage projectiles suspend inside ANY Chrono Well (including the caster\u2019s own) and burst forward together on resume."
   }
 };
 var ARCANIST_SCROLLS = ARCANIST_SPELL_ORDER.map(
@@ -2121,6 +2212,7 @@ var GameRoom = class _GameRoom {
       pr.state.spellCastState = null;
       pr.state.disintegrationState = null;
       pr.state.chronoSuspendedMs = 0;
+      pr.pendingBarrage = null;
       pr.enteredRooms.clear();
       pr.enteredRooms.add(0);
       if (pr.state.downed) {
@@ -2609,7 +2701,10 @@ var GameRoom = class _GameRoom {
       pr.state.disintegrationState = null;
       pr.state.equippedScrollId = null;
       pr.state.pendingScrollChoices = [];
+      pr.state.starRiftCooldownMs = pr.state.heroClass === "arcanist" ? 0 : void 0;
       pr.state.chronoSuspendedMs = 0;
+      pr.starRiftAttackCount = 0;
+      pr.pendingBarrage = null;
       pr.input = {
         up: false,
         down: false,
@@ -2783,6 +2878,7 @@ var GameRoom = class _GameRoom {
       if (!existing.state.storage) existing.state.storage = [];
       if (existing.state.heroClass === "arcanist") {
         if (!existing.state.pendingScrollChoices) existing.state.pendingScrollChoices = [];
+        if (existing.state.starRiftCooldownMs === void 0) existing.state.starRiftCooldownMs = 0;
       }
       if (wasDisconnected && this.roomId !== "TAVERN-HUB") {
         this.pushSystemChat(`${username} reconnected.`);
@@ -2850,6 +2946,7 @@ var GameRoom = class _GameRoom {
       isAdmin,
       godMode: false,
       speedBoost: false,
+      noCooldownMode: false,
       dexterity: savedStats?.dexterity || 0,
       vitality: savedStats?.vitality || 0,
       strength: savedStats?.strength || 0,
@@ -2862,7 +2959,8 @@ var GameRoom = class _GameRoom {
         spellCastState: null,
         disintegrationState: null,
         equippedScrollId: null,
-        pendingScrollChoices: []
+        pendingScrollChoices: [],
+        starRiftCooldownMs: 0
       } : {},
       chronoSuspendedMs: 0
     };
@@ -2884,7 +2982,8 @@ var GameRoom = class _GameRoom {
       },
       attackCooldownMs: 0,
       enteredRooms: /* @__PURE__ */ new Set([0]),
-      attackCount: 0
+      attackCount: 0,
+      starRiftAttackCount: 0
     });
     if (!this.hostId && this.roomId !== "TAVERN-HUB") {
       this.hostId = playerId;
@@ -3034,6 +3133,9 @@ var GameRoom = class _GameRoom {
     pr.state.spellCastState = null;
     pr.state.equippedScrollId = null;
     pr.state.pendingScrollChoices = [];
+    pr.state.starRiftCooldownMs = heroClass === "arcanist" ? 0 : void 0;
+    pr.starRiftAttackCount = 0;
+    pr.pendingBarrage = null;
     this.emitEvent("status", pr.state.x, pr.state.y - 22, def.name, def.accentColor);
   }
   addPing(playerId, label, x, y) {
@@ -3234,6 +3336,26 @@ var GameRoom = class _GameRoom {
     );
     return nextState;
   }
+  togglePlayerNoCooldown(playerId, enabled) {
+    const pr = this.players.get(playerId);
+    if (!pr) return false;
+    const nextState = enabled !== void 0 ? enabled : !pr.state.noCooldownMode;
+    pr.state.noCooldownMode = nextState;
+    if (nextState) {
+      pr.state.skillCooldownMs = 0;
+      pr.state.ultCooldownMs = 0;
+      pr.state.dashCooldownMs = 0;
+      pr.attackCooldownMs = 0;
+    }
+    this.emitEvent(
+      "status",
+      pr.state.x,
+      pr.state.y - 28,
+      nextState ? "NO COOLDOWN ON" : "NO COOLDOWN OFF",
+      nextState ? "#38BDF8" : "#64748B"
+    );
+    return nextState;
+  }
   addPlayerGold(playerId, amount) {
     const pr = this.players.get(playerId);
     if (!pr) return;
@@ -3408,7 +3530,7 @@ var GameRoom = class _GameRoom {
     const spec = ARCANIST_SPELLS[scrollId];
     if (!spec) return false;
     if (p.spellCastState || p.disintegrationState?.active) return false;
-    if (p.skillCooldownMs > 0) return false;
+    if (p.skillCooldownMs > 0 && !p.noCooldownMode) return false;
     const cleanAngle = Number.isFinite(aimAngle) ? normalizeAngle(aimAngle) : p.aimAngle;
     p.aimAngle = cleanAngle;
     if (scrollId === "disintegration") {
@@ -3436,7 +3558,7 @@ var GameRoom = class _GameRoom {
     const spec = ARCANIST_SPELLS[spellId];
     const cdrMult = this.getPlayerCdrMult(p);
     const applyScrollCooldown = () => {
-      p.skillCooldownMs = Math.round(spec.cooldownMs * cdrMult);
+      p.skillCooldownMs = p.noCooldownMode ? 0 : Math.round(spec.cooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
     };
     const critChance = Math.min(
@@ -3463,13 +3585,13 @@ var GameRoom = class _GameRoom {
         style: "fireball",
         spellId: "fireball",
         damageCategory: "fire",
-        explosionRadius: spec.explosionRadius ?? 90,
+        explosionRadius: spec.explosionRadius ?? 105,
         x: p.x + Math.cos(aimAngle) * 16,
         y: p.y + Math.sin(aimAngle) * 16,
         vx: Math.cos(aimAngle) * speed,
         vy: Math.sin(aimAngle) * speed,
         angle: aimAngle,
-        radius: 10,
+        radius: 14,
         damage: dmg,
         pierce: 1,
         crit: hasCrit,
@@ -3504,73 +3626,52 @@ var GameRoom = class _GameRoom {
     }
     if (spellId === "chain_lightning") {
       const maxRange = spec.maxRange ?? 340;
-      const maxJumpDist = spec.maxJumpDistance ?? 150;
-      const maxTargets = spec.maxTargets ?? 4;
-      const decay = spec.jumpDamageDecay ?? 0.15;
-      const allCandidates = [];
+      const halfAngle = spec.coneHalfAngleRad ?? 0.56;
+      const hitTargets = [];
       for (const e of this.enemies) {
-        if (e.hp > 0) allCandidates.push({ kind: "enemy", id: e.id, x: e.x, y: e.y, enemy: e });
+        if (e.hp <= 0) continue;
+        const dx = e.x - p.x;
+        const dy = e.y - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxRange + e.radius * 0.5) continue;
+        const diff = Math.abs(normalizeAngle(Math.atan2(dy, dx) - aimAngle));
+        if (diff > halfAngle) continue;
+        if (dist > 20 && !this.hasLineOfSight(p.x, p.y, e.x, e.y)) continue;
+        hitTargets.push({ kind: "enemy", id: e.id, x: e.x, y: e.y, dist, enemy: e });
       }
       for (const d of this.trainingDummies) {
-        allCandidates.push({ kind: "dummy", id: d.id, x: d.x, y: d.y, dummy: d });
+        const dx = d.x - p.x;
+        const dy = d.y - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxRange + 16) continue;
+        const diff = Math.abs(normalizeAngle(Math.atan2(dy, dx) - aimAngle));
+        if (diff > halfAngle) continue;
+        if (dist > 20 && !this.hasLineOfSight(p.x, p.y, d.x, d.y)) continue;
+        hitTargets.push({ kind: "dummy", id: d.id, x: d.x, y: d.y, dist, dummy: d });
       }
-      let firstTarget = null;
-      let bestScore = Infinity;
-      for (const cand of allCandidates) {
-        const dPlayer = Math.hypot(cand.x - p.x, cand.y - p.y);
-        if (dPlayer > maxRange) continue;
-        const dCursor = Math.hypot(cand.x - targetX, cand.y - targetY);
-        const score = dCursor * 0.7 + dPlayer * 0.3;
-        if (score < bestScore) {
-          bestScore = score;
-          firstTarget = cand;
-        }
-      }
-      if (!firstTarget) {
-        this.emitEvent("status", p.x, p.y - 24, "No Target in Range", "#94A3B8");
-        return false;
-      }
+      hitTargets.sort((a, b) => a.dist - b.dist);
       applyScrollCooldown();
       p.attackAnimMs = 210;
-      const visited = /* @__PURE__ */ new Set();
-      const hitChain = [];
-      let current = firstTarget;
-      while (current && hitChain.length < maxTargets) {
-        hitChain.push(current);
-        visited.add(current.id);
-        let nextCand = null;
-        let nextDist = Infinity;
-        for (const cand of allCandidates) {
-          if (visited.has(cand.id)) continue;
-          const dist = Math.hypot(cand.x - current.x, cand.y - current.y);
-          if (dist <= maxJumpDist && dist < nextDist) {
-            nextDist = dist;
-            nextCand = cand;
-          }
-        }
-        current = nextCand;
-      }
-      const { hasCrit, dmg: baseHitDmg } = rollSpellCrit();
+      const { hasCrit, dmg: coneDmg } = rollSpellCrit();
       const chainPoints = [{ x: p.x, y: p.y }];
-      for (let idx = 0; idx < hitChain.length; idx++) {
-        const tgt = hitChain[idx];
-        const jumpMult = Math.pow(1 - decay, idx);
-        const jumpDmg = Math.max(1, Math.round(baseHitDmg * jumpMult));
+      for (const tgt of hitTargets) {
         chainPoints.push({ x: tgt.x, y: tgt.y });
         if (tgt.kind === "enemy") {
-          this.damageEnemy(tgt.enemy, jumpDmg, p, hasCrit, "lightning");
+          this.damageEnemy(tgt.enemy, coneDmg, p, hasCrit, "lightning");
         } else {
-          this.damageDummy(tgt.dummy, jumpDmg, p, hasCrit);
+          this.damageDummy(tgt.dummy, coneDmg, p, hasCrit);
         }
       }
       this.zones.push({
         id: this.nextId("zone"),
         kind: "chain_lightning_arc",
-        x: hitChain[0].x,
-        y: hitChain[0].y,
-        radius: 10,
-        ttlMs: 320,
-        maxTtlMs: 320,
+        x: p.x,
+        y: p.y,
+        angle: aimAngle,
+        radius: maxRange,
+        coneHalfAngleRad: halfAngle,
+        ttlMs: 360,
+        maxTtlMs: 360,
         ownerId: p.id,
         chainPoints
       });
@@ -3624,43 +3725,87 @@ var GameRoom = class _GameRoom {
     }
     if (spellId === "arcane_barrage") {
       applyScrollCooldown();
-      p.attackAnimMs = 240;
-      const count = spec.projectileCount ?? 6;
-      const speed = spec.projectileSpeed ?? 400;
+      p.attackAnimMs = 380;
+      const totalWaves = spec.barrageWaves ?? 4;
+      const waveIntervalMs = spec.barrageWaveIntervalMs ?? 95;
       const range = spec.maxRange ?? 450;
-      const ttlMs = Math.round(range / speed * 1e3);
-      const ox = p.x + Math.cos(aimAngle) * 16;
-      const oy = p.y + Math.sin(aimAngle) * 16;
-      for (let i = 0; i < count; i++) {
-        const { hasCrit, dmg } = rollSpellCrit();
-        const helixSign = i % 2 === 0 ? 1 : -1;
-        const helixPhase = Math.floor(i / 2) * Math.PI * 2 / 3;
-        this.spawnProjectile({
-          ownerType: "player",
-          ownerId: p.id,
-          style: "arcane_barrage",
-          spellId: "arcane_barrage",
-          damageCategory: "arcane",
-          x: ox,
-          y: oy,
-          originX: ox,
-          originY: oy,
-          elapsedMs: 0,
-          helixSign,
-          helixPhase,
-          vx: Math.cos(aimAngle) * speed,
-          vy: Math.sin(aimAngle) * speed,
-          angle: aimAngle,
-          radius: 7,
-          damage: dmg,
-          pierce: 1,
-          crit: hasCrit,
-          ttlMs
-        });
+      const lockTarget = findBestAutoTarget({
+        playerX: p.x,
+        playerY: p.y,
+        maxRange: range,
+        preferredAngle: aimAngle,
+        minDot: 0.72,
+        map: this.map,
+        props: this.props,
+        enemies: this.enemies,
+        trainingDummies: this.trainingDummies
+      })?.target;
+      this.fireArcaneBarrageWave(p, aimAngle, 0, lockTarget?.id);
+      const ownerPr = this.players.get(p.id);
+      if (ownerPr && totalWaves > 1) {
+        ownerPr.pendingBarrage = {
+          wavesRemaining: totalWaves - 1,
+          waveIndex: 1,
+          timerMs: waveIntervalMs,
+          waveIntervalMs,
+          aimAngle,
+          targetEnemyId: lockTarget?.id
+        };
       }
       return true;
     }
     return false;
+  }
+  fireArcaneBarrageWave(p, aimAngle, waveIndex, targetEnemyId) {
+    const spec = ARCANIST_SPELLS.arcane_barrage;
+    const speed = spec.projectileSpeed ?? 420;
+    const range = spec.maxRange ?? 450;
+    const ttlMs = Math.round(range / speed * 1e3);
+    const critChance = Math.min(
+      0.45,
+      0.1 + (p.dexterity || 0) * 3e-3 + (p.relics.includes("keen_arrowhead") ? 0.2 : 0)
+    );
+    const baseScaled = this.getArcanistSpellDamage(p, "arcane_barrage");
+    let fireAngle = aimAngle;
+    if (targetEnemyId) {
+      const targetEntity = this.enemies.find((e) => e.id === targetEnemyId && e.hp > 0) || this.trainingDummies.find((d) => d.id === targetEnemyId);
+      if (targetEntity) {
+        fireAngle = Math.atan2(targetEntity.y - p.y, targetEntity.x - p.x);
+      }
+    }
+    const ox = p.x + Math.cos(fireAngle) * 16;
+    const oy = p.y + Math.sin(fireAngle) * 16;
+    for (let b = 0; b < 2; b++) {
+      const hasCrit = Math.random() < critChance;
+      const dmg = hasCrit ? Math.round(baseScaled * CRIT_DAMAGE_MULTIPLIER) : baseScaled;
+      const isFocusedBolt = b === 0;
+      const boltAngle = isFocusedBolt ? fireAngle : fireAngle + (waveIndex % 2 === 0 ? 0.045 : -0.045);
+      const helixSign = (waveIndex + b) % 2 === 0 ? 1 : -1;
+      const helixPhase = isFocusedBolt ? 0 : waveIndex * Math.PI / 2;
+      this.spawnProjectile({
+        ownerType: "player",
+        ownerId: p.id,
+        style: "arcane_barrage",
+        spellId: "arcane_barrage",
+        damageCategory: "arcane",
+        targetEnemyId: isFocusedBolt ? targetEnemyId : void 0,
+        x: ox,
+        y: oy,
+        originX: ox,
+        originY: oy,
+        elapsedMs: 0,
+        helixSign,
+        helixPhase: isFocusedBolt ? void 0 : helixPhase,
+        vx: Math.cos(boltAngle) * speed,
+        vy: Math.sin(boltAngle) * speed,
+        angle: boltAngle,
+        radius: 8,
+        damage: dmg,
+        pierce: 1,
+        crit: hasCrit,
+        ttlMs
+      });
+    }
   }
   startDisintegrationChannel(playerId, aimAngle) {
     const pr = this.players.get(playerId);
@@ -3773,7 +3918,8 @@ var GameRoom = class _GameRoom {
     }
   }
   explodeFireball(proj) {
-    const radius = proj.explosionRadius ?? 90;
+    const fbSpec = ARCANIST_SPELLS.fireball;
+    const radius = proj.explosionRadius ?? fbSpec.explosionRadius ?? 105;
     const ownerPr = this.players.get(proj.ownerId);
     const attacker = ownerPr ? ownerPr.state : null;
     const targets = [...this.enemies];
@@ -3788,6 +3934,22 @@ var GameRoom = class _GameRoom {
         this.damageDummy(dummy, proj.damage, attacker, Boolean(proj.crit));
       }
     }
+    const burnRadius = fbSpec.burnRadius ?? Math.round(radius * 0.85);
+    const burnDuration = fbSpec.durationMs ?? 3500;
+    const baseSpellDmg = attacker ? this.getArcanistSpellDamage(attacker, "fireball") : proj.damage;
+    const burnTickDmg = Math.max(4, Math.round(baseSpellDmg * (fbSpec.burnTickRatio ?? 0.22)));
+    this.zones.push({
+      id: this.nextId("zone"),
+      kind: "fireball_burn",
+      x: proj.x,
+      y: proj.y,
+      radius: burnRadius,
+      ttlMs: burnDuration,
+      maxTtlMs: burnDuration,
+      ownerId: proj.ownerId,
+      damage: burnTickDmg,
+      chronoSuspendedMs: this.isPositionInChronoWell(proj.x, proj.y, 0)
+    });
     this.emitEvent("status", proj.x, proj.y - 16, "FIREBALL BLAST!", "#F97316");
   }
   isPositionInChronoWell(x, y, radius = 0, excludeOwnerId) {
@@ -3823,7 +3985,7 @@ var GameRoom = class _GameRoom {
         continue;
       }
       const isSupportZone = z.kind === "aegis_dome" || z.kind === "solar_beacon";
-      const isOffensivePlayerZone = z.kind === "star_rift" || z.kind === "arcane_meteor";
+      const isOffensivePlayerZone = z.kind === "star_rift" || z.kind === "arcane_meteor" || z.kind === "fireball_burn";
       let susp = this.isPositionInChronoWell(
         z.x,
         z.y,
@@ -3861,8 +4023,8 @@ var GameRoom = class _GameRoom {
     const cdrMult = this.getPlayerCdrMult(p);
     const isSilenced = p.statuses && p.statuses.some((s) => s.type === "silenced");
     if (action === "dash") {
-      if (p.dashCooldownMs > 0) return {};
-      p.dashCooldownMs = Math.round(2600 * cdrMult);
+      if (p.dashCooldownMs > 0 && !p.noCooldownMode) return {};
+      p.dashCooldownMs = p.noCooldownMode ? 0 : Math.round(2600 * cdrMult);
       p.maxDashCooldownMs = p.dashCooldownMs;
       let dashAngle = p.aimAngle;
       if (!options?.explicitAim && Math.hypot(p.vx, p.vy) > 0.1) {
@@ -4082,13 +4244,35 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", p.x, p.y - 24, "[SILENCED]", "#C084FC");
         return {};
       }
-      if (p.skillCooldownMs > 0) return {};
+      if (p.skillCooldownMs > 0 && !p.noCooldownMode) return {};
+      let resolvedTacticalDist = options?.aimDistance;
+      if (!options?.explicitAim) {
+        const tacticalSpec = getAbilityTargetSpec(p.heroClass, "tactical", p.equippedScrollId);
+        const smart = resolveSkillSmartTarget({
+          spec: tacticalSpec,
+          playerX: p.x,
+          playerY: p.y,
+          fallbackAngle: p.aimAngle,
+          fallbackDistance: options?.aimDistance,
+          preferCursorCone: false,
+          map: this.map,
+          props: this.props,
+          enemies: this.enemies,
+          trainingDummies: this.trainingDummies
+        });
+        if (smart.target) {
+          p.aimAngle = smart.aimAngle;
+          if (resolvedTacticalDist === void 0) {
+            resolvedTacticalDist = smart.aimDistance;
+          }
+        }
+      }
       if (p.heroClass === "arcanist" && p.equippedScrollId) {
         const scrollActivated = this.triggerArcanistScrollTactical(
           p,
           p.equippedScrollId,
           p.aimAngle,
-          options?.aimDistance
+          resolvedTacticalDist
         );
         if (scrollActivated && p.relics.includes("oathbound_censer")) {
           for (const ally of this.players.values()) {
@@ -4101,7 +4285,7 @@ var GameRoom = class _GameRoom {
         }
         return {};
       }
-      p.skillCooldownMs = Math.round(def.tacticalCooldownMs * cdrMult);
+      p.skillCooldownMs = p.noCooldownMode ? 0 : Math.round(def.tacticalCooldownMs * cdrMult);
       p.maxSkillCooldownMs = p.skillCooldownMs;
       p.attackAnimMs = 240;
       if (p.relics.includes("oathbound_censer")) {
@@ -4210,8 +4394,30 @@ var GameRoom = class _GameRoom {
         this.emitEvent("status", p.x, p.y - 24, "[SILENCED]", "#C084FC");
         return {};
       }
-      if (p.ultCooldownMs > 0) return {};
-      p.ultCooldownMs = Math.round(def.ultCooldownMs * cdrMult);
+      if (p.ultCooldownMs > 0 && !p.noCooldownMode) return {};
+      let resolvedUltDist = options?.aimDistance;
+      if (!options?.explicitAim) {
+        const ultSpec = getAbilityTargetSpec(p.heroClass, "ult");
+        const smart = resolveSkillSmartTarget({
+          spec: ultSpec,
+          playerX: p.x,
+          playerY: p.y,
+          fallbackAngle: p.aimAngle,
+          fallbackDistance: options?.aimDistance,
+          preferCursorCone: false,
+          map: this.map,
+          props: this.props,
+          enemies: this.enemies,
+          trainingDummies: this.trainingDummies
+        });
+        if (smart.target) {
+          p.aimAngle = smart.aimAngle;
+          if (resolvedUltDist === void 0) {
+            resolvedUltDist = smart.aimDistance;
+          }
+        }
+      }
+      p.ultCooldownMs = p.noCooldownMode ? 0 : Math.round(def.ultCooldownMs * cdrMult);
       p.maxUltCooldownMs = p.ultCooldownMs;
       p.attackAnimMs = 280;
       if (p.heroClass === "vanguard") {
@@ -4242,7 +4448,7 @@ var GameRoom = class _GameRoom {
           p.x,
           p.y,
           p.aimAngle,
-          options?.aimDistance,
+          resolvedUltDist,
           ultSpec
         );
         this.zones.push({
@@ -4263,7 +4469,7 @@ var GameRoom = class _GameRoom {
           p.x,
           p.y,
           p.aimAngle,
-          options?.aimDistance,
+          resolvedUltDist,
           ultSpec
         );
         this.zones.push({
@@ -4382,6 +4588,28 @@ var GameRoom = class _GameRoom {
         }
         this.emitEvent("status", z.x, z.y - 20, "METEOR IMPACT!", "#E879F9");
         this.zones.splice(i, 1);
+        continue;
+      }
+      if (z.kind === "fireball_burn") {
+        if (pulseZonesNow) {
+          const ownerPr = this.players.get(z.ownerId);
+          const attacker = ownerPr ? ownerPr.state : null;
+          const burnDmg = z.damage ?? 9;
+          const targets = [...this.enemies];
+          for (const enemy of targets) {
+            if (enemy && enemy.hp > 0 && this.enemies.includes(enemy) && Math.hypot(enemy.x - z.x, enemy.y - z.y) <= z.radius + enemy.radius * 0.35) {
+              this.damageEnemy(enemy, burnDmg, attacker, false, "fire");
+            }
+          }
+          for (const dummy of this.trainingDummies) {
+            if (Math.hypot(dummy.x - z.x, dummy.y - z.y) <= z.radius + 18) {
+              this.damageDummy(dummy, burnDmg, attacker, false);
+            }
+          }
+        }
+        if (z.ttlMs <= 0) {
+          this.zones.splice(i, 1);
+        }
         continue;
       }
       if (z.kind === "sound_lane" && z.ttlMs <= 0) {
@@ -4777,10 +5005,20 @@ var GameRoom = class _GameRoom {
         p.vy = 0;
         continue;
       }
-      pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
-      p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
-      p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
-      p.dashCooldownMs = Math.max(0, p.dashCooldownMs - dtMs);
+      if (p.noCooldownMode) {
+        pr.attackCooldownMs = 0;
+        p.skillCooldownMs = 0;
+        p.ultCooldownMs = 0;
+        p.dashCooldownMs = 0;
+      } else {
+        pr.attackCooldownMs = Math.max(0, pr.attackCooldownMs - dtMs);
+        p.skillCooldownMs = Math.max(0, p.skillCooldownMs - dtMs);
+        p.ultCooldownMs = Math.max(0, p.ultCooldownMs - dtMs);
+        p.dashCooldownMs = Math.max(0, p.dashCooldownMs - dtMs);
+      }
+      if (p.starRiftCooldownMs && p.starRiftCooldownMs > 0) {
+        p.starRiftCooldownMs = Math.max(0, p.starRiftCooldownMs - dtMs);
+      }
       p.attackAnimMs = Math.max(0, p.attackAnimMs - dtMs);
       p.hasteMs = Math.max(0, p.hasteMs - dtMs);
       if (p.downed) {
@@ -4788,6 +5026,7 @@ var GameRoom = class _GameRoom {
           this.stopDisintegrationChannel(p.id);
         }
         p.spellCastState = null;
+        pr.pendingBarrage = null;
         p.vx = 0;
         p.vy = 0;
         p.downedTimerMs = Math.max(0, p.downedTimerMs - dtMs);
@@ -4808,6 +5047,24 @@ var GameRoom = class _GameRoom {
           p.reviveProgress = Math.max(0, p.reviveProgress - dtSec * 0.25);
         }
         continue;
+      }
+      if (pr.pendingBarrage) {
+        if (p.heroClass !== "arcanist" || p.equippedScrollId !== "arcane_barrage") {
+          pr.pendingBarrage = null;
+        } else {
+          pr.pendingBarrage.timerMs -= dtMs;
+          while (pr.pendingBarrage && pr.pendingBarrage.timerMs <= 0 && pr.pendingBarrage.wavesRemaining > 0) {
+            const b = pr.pendingBarrage;
+            this.fireArcaneBarrageWave(p, b.aimAngle, b.waveIndex, b.targetEnemyId);
+            b.wavesRemaining -= 1;
+            b.waveIndex += 1;
+            if (b.wavesRemaining <= 0) {
+              pr.pendingBarrage = null;
+            } else {
+              b.timerMs += b.waveIntervalMs;
+            }
+          }
+        }
       }
       if (p.spellCastState) {
         if (this.isPlayerCcInterrupted(p)) {
@@ -4911,13 +5168,13 @@ var GameRoom = class _GameRoom {
           }
         }
       }
-      if (pr.input.attack && pr.attackCooldownMs <= 0 && p.pendingRelicChoices.length === 0 && (!p.pendingScrollChoices || p.pendingScrollChoices.length === 0) && !p.disintegrationState?.active && !p.spellCastState) {
+      if (pr.input.attack && (pr.attackCooldownMs <= 0 || p.noCooldownMode) && p.pendingRelicChoices.length === 0 && (!p.pendingScrollChoices || p.pendingScrollChoices.length === 0) && !p.disintegrationState?.active && !p.spellCastState) {
         const dexSpeedMult = (1 + (p.dexterity || 0) * 4e-3) * (1 + this.getBlessingStacks(p, "swiftness") * 0.08);
         let hasteFactor = (p.hasteMs > 0 ? 0.8 : 1) / dexSpeedMult;
         if (p.statuses.some((s) => s.type === "frostbite")) {
           hasteFactor *= 1.25;
         }
-        pr.attackCooldownMs = Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
+        pr.attackCooldownMs = p.noCooldownMode ? 0 : Math.max(100, Math.round(def.attackCooldownMs * hasteFactor));
         p.attackAnimMs = 190;
         this.firePrimaryAttack(p);
       }
@@ -5481,13 +5738,14 @@ var GameRoom = class _GameRoom {
       if (proj.style === "arcane_barrage") {
         proj.elapsedMs = (proj.elapsedMs || 0) + dtMs;
         const tSec = proj.elapsedMs / 1e3;
-        const speed = Math.hypot(proj.vx, proj.vy) || 400;
-        const forwardDist = speed * tSec;
-        const latOffset = (proj.helixSign || 1) * 14 * Math.sin(tSec * 14 + (proj.helixPhase || 0));
-        const ox = proj.originX ?? proj.x;
-        const oy = proj.originY ?? proj.y;
-        proj.x = ox + Math.cos(proj.angle) * forwardDist - Math.sin(proj.angle) * latOffset;
-        proj.y = oy + Math.sin(proj.angle) * forwardDist + Math.cos(proj.angle) * latOffset;
+        const baseX = (proj.originX ?? proj.x) + proj.vx * dtSec;
+        const baseY = (proj.originY ?? proj.y) + proj.vy * dtSec;
+        proj.originX = baseX;
+        proj.originY = baseY;
+        const amp = proj.helixPhase !== void 0 ? 10 : 4;
+        const latOffset = (proj.helixSign || 1) * amp * Math.sin(tSec * 16 + (proj.helixPhase || 0));
+        proj.x = baseX - Math.sin(proj.angle) * latOffset;
+        proj.y = baseY + Math.cos(proj.angle) * latOffset;
       } else {
         proj.x += proj.vx * dtSec;
         proj.y += proj.vy * dtSec;
@@ -5854,23 +6112,29 @@ var GameRoom = class _GameRoom {
           targetEnemyId: bestTarget?.id
         });
       } else if (p.heroClass === "arcanist") {
-        const pr = this.players.get(p.id);
-        if (pr) {
-          pr.attackCount = (pr.attackCount || 0) + 1;
-          if (pr.attackCount % 4 === 0) {
-            const riftX = bestTarget ? bestTarget.x : p.x + Math.cos(ang) * 120;
-            const riftY = bestTarget ? bestTarget.y : p.y + Math.sin(ang) * 120;
-            this.zones.push({
-              id: this.nextId("zone"),
-              kind: "star_rift",
-              x: riftX,
-              y: riftY,
-              radius: 75,
-              ttlMs: 3e3,
-              maxTtlMs: 3e3,
-              ownerId: p.id
-            });
-            this.emitEvent("status", riftX, riftY - 18, " Star Rift", "#C084FC");
+        if (s === 0) {
+          const pr = this.players.get(p.id);
+          if (pr) {
+            pr.starRiftAttackCount = (pr.starRiftAttackCount || 0) + 1;
+            if (pr.starRiftAttackCount >= STAR_RIFT_REQUIRED_ATTACKS) {
+              if ((p.starRiftCooldownMs || 0) <= 0) {
+                const riftX = bestTarget ? bestTarget.x : p.x + Math.cos(ang) * 120;
+                const riftY = bestTarget ? bestTarget.y : p.y + Math.sin(ang) * 120;
+                this.zones.push({
+                  id: this.nextId("zone"),
+                  kind: "star_rift",
+                  x: riftX,
+                  y: riftY,
+                  radius: 75,
+                  ttlMs: 3e3,
+                  maxTtlMs: 3e3,
+                  ownerId: p.id
+                });
+                p.starRiftCooldownMs = STAR_RIFT_PROC_COOLDOWN_MS;
+                this.emitEvent("status", riftX, riftY - 18, " Star Rift", "#C084FC");
+              }
+              pr.starRiftAttackCount = 0;
+            }
           }
         }
         this.spawnProjectile({
@@ -8318,6 +8582,156 @@ function computeSnapshotDelta(prev, next, baseSeq, nextSeq) {
 var SERVER_TICK_MS = 25;
 var CLIENT_WS_BACKPRESSURE_LIMIT_BYTES = 64 * 1024;
 
+// src/server/sharedIdentity.ts
+import crypto from "node:crypto";
+var SHARED_IDENTITY_ISSUER = "beyond-dungeons";
+var SHARED_IDENTITY_AUDIENCE = "beyond-overworld";
+var DEFAULT_ASSERTION_TTL_SECONDS = 60;
+var MIN_SHARED_IDENTITY_SECRET_LENGTH = 16;
+function hashPassword(pw) {
+  const newSalt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(pw, newSalt, 64).toString("hex");
+  return `scrypt:${newSalt}:${hash}`;
+}
+function verifyPassword(pw, storedHash) {
+  if (!storedHash) return false;
+  if (storedHash.startsWith("scrypt:")) {
+    const parts = storedHash.split(":");
+    if (parts.length !== 3) return false;
+    const [, salt, expectedHex] = parts;
+    if (!salt || !expectedHex) return false;
+    try {
+      const expectedBuf = Buffer.from(expectedHex, "hex");
+      const derivedBuf = crypto.scryptSync(pw, salt, 64);
+      if (expectedBuf.length !== derivedBuf.length) return false;
+      return crypto.timingSafeEqual(expectedBuf, derivedBuf);
+    } catch {
+      return false;
+    }
+  }
+  try {
+    const expectedBuf = Buffer.from(storedHash, "hex");
+    const legacyBuf = crypto.createHash("sha256").update(`beyond_salt_${pw}`).digest();
+    if (expectedBuf.length !== legacyBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, legacyBuf);
+  } catch {
+    return false;
+  }
+}
+function normalizeHeroClass(raw) {
+  if (raw === "ranger" || raw === "arcanist" || raw === "cleric") {
+    return raw;
+  }
+  return "vanguard";
+}
+function clampAttr(val) {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(0, Math.min(MAX_ATTRIBUTE, Math.floor(num)));
+}
+function buildSharedAssertionPayload(acc, ttlSeconds = DEFAULT_ASSERTION_TTL_SECONDS, nowMs = Date.now()) {
+  const rawLevel = Number(acc.level) || 1;
+  const level = Math.max(1, Math.min(MAX_LEVEL, Math.floor(rawLevel)));
+  const xp = level >= MAX_LEVEL ? 0 : Math.max(0, Math.floor(Number(acc.xp) || 0));
+  const lockedClass = normalizeHeroClass(acc.lockedClass || acc.preferredClass);
+  const preferredClass = normalizeHeroClass(acc.preferredClass || lockedClass);
+  const iat = Math.floor(nowMs / 1e3);
+  const safeTtl = Math.max(10, Math.min(300, Math.floor(ttlSeconds)));
+  return {
+    iss: SHARED_IDENTITY_ISSUER,
+    aud: SHARED_IDENTITY_AUDIENCE,
+    exp: iat + safeTtl,
+    iat,
+    jti: crypto.randomBytes(16).toString("hex"),
+    accountId: acc.id,
+    username: acc.username,
+    isAdmin: Boolean(acc.isAdmin),
+    preferredClass,
+    lockedClass,
+    level,
+    xp,
+    strength: clampAttr(acc.strength),
+    vitality: clampAttr(acc.vitality),
+    dexterity: clampAttr(acc.dexterity),
+    intelligence: clampAttr(acc.intelligence),
+    faith: clampAttr(acc.faith),
+    attributePoints: Math.max(0, Math.floor(Number(acc.attributePoints) || 0))
+  };
+}
+function signDungeonsIdentityAssertion(payload, secret) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", secret).update(encodedPayload).digest("base64url");
+  return `${encodedPayload}.${signature}`;
+}
+function extractSecretFromHeaders(authorizationHeader, xSecretHeader) {
+  if (typeof authorizationHeader === "string") {
+    const trimmed = authorizationHeader.trim();
+    if (trimmed.toLowerCase().startsWith("bearer ")) {
+      const token = trimmed.slice(7).trim();
+      if (token) return token;
+    }
+  }
+  if (typeof xSecretHeader === "string") {
+    const token = xSecretHeader.trim();
+    if (token) return token;
+  }
+  return null;
+}
+function verifySharedIdentityRequestSecret(authorizationHeader, xSecretHeader, expectedSecret) {
+  const normalizedExpected = expectedSecret?.trim() || "";
+  if (normalizedExpected.length < MIN_SHARED_IDENTITY_SECRET_LENGTH) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Shared identity integration secret is not configured."
+    };
+  }
+  const provided = extractSecretFromHeaders(authorizationHeader, xSecretHeader);
+  if (!provided) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Forbidden: Missing shared identity secret."
+    };
+  }
+  const providedDigest = crypto.createHash("sha256").update(provided, "utf8").digest();
+  const expectedDigest = crypto.createHash("sha256").update(normalizedExpected, "utf8").digest();
+  if (provided.length !== normalizedExpected.length || !crypto.timingSafeEqual(providedDigest, expectedDigest)) {
+    return {
+      ok: false,
+      status: 403,
+      error: "Forbidden: Invalid shared identity secret."
+    };
+  }
+  return { ok: true };
+}
+var SlidingWindowRateLimiter = class {
+  constructor(maxRequests, windowMs) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+    this.hitsByKey = /* @__PURE__ */ new Map();
+  }
+  consume(key, nowMs = Date.now()) {
+    const cutoff = nowMs - this.windowMs;
+    const existing = this.hitsByKey.get(key) ?? [];
+    const recent = existing.filter((ts) => ts > cutoff);
+    if (recent.length >= this.maxRequests) {
+      this.hitsByKey.set(key, recent);
+      return false;
+    }
+    recent.push(nowMs);
+    this.hitsByKey.set(key, recent);
+    if (this.hitsByKey.size > 2e3) {
+      for (const [k, list] of this.hitsByKey.entries()) {
+        const filtered = list.filter((ts) => ts > cutoff);
+        if (filtered.length === 0) this.hitsByKey.delete(k);
+        else this.hitsByKey.set(k, filtered);
+      }
+    }
+    return true;
+  }
+};
+
 // server.ts
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
@@ -8343,23 +8757,6 @@ if (process.env.DATABASE_URL) {
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : void 0
   });
-}
-function hashPassword(pw, salt) {
-  if (!salt) {
-    const newSalt = crypto.randomBytes(16).toString("hex");
-    const hash2 = crypto.scryptSync(pw, newSalt, 64).toString("hex");
-    return `scrypt:${newSalt}:${hash2}`;
-  }
-  const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
-  return hash;
-}
-function verifyPassword(pw, storedHash) {
-  if (storedHash.startsWith("scrypt:")) {
-    const [, salt, hash] = storedHash.split(":");
-    return hashPassword(pw, salt) === hash;
-  }
-  const legacyHash = crypto.createHash("sha256").update(`beyond_salt_${pw}`).digest("hex");
-  return legacyHash === storedHash;
 }
 function normalizeAccountLevel(acc) {
   const rawLevel = Number(acc.level) || 1;
@@ -8707,12 +9104,10 @@ async function initStorage() {
     }
   }
 }
-function createAccount(username, password, chosenClass = "vanguard", isAdmin = false) {
-  const validClass = chosenClass === "ranger" || chosenClass === "arcanist" || chosenClass === "cleric" ? chosenClass : "vanguard";
-  const id = `usr_${crypto.randomBytes(6).toString("hex")}`;
-  const lowerName = username.toLowerCase();
-  const isUserAdmin = isAdmin;
-  const rec = {
+function buildAccountRecord(username, password, chosenClass = "vanguard", isAdmin = false) {
+  const validClass = normalizeHeroClass(chosenClass);
+  const id = `usr_${crypto2.randomBytes(6).toString("hex")}`;
+  return {
     id,
     username,
     usernameLower: username.toLowerCase(),
@@ -8724,7 +9119,7 @@ function createAccount(username, password, chosenClass = "vanguard", isAdmin = f
     totalKills: 0,
     totalRevives: 0,
     gold: 0,
-    isAdmin: isUserAdmin,
+    isAdmin,
     strength: 0,
     vitality: 0,
     dexterity: 0,
@@ -8734,6 +9129,9 @@ function createAccount(username, password, chosenClass = "vanguard", isAdmin = f
     level: 1,
     xp: 0
   };
+}
+function createAccount(username, password, chosenClass = "vanguard", isAdmin = false) {
+  const rec = buildAccountRecord(username, password, chosenClass, isAdmin);
   persistAccount(rec);
   return rec;
 }
@@ -8955,7 +9353,7 @@ async function startServer() {
       acc.isAdmin = true;
       persistAccount(acc);
     }
-    const token = crypto.randomBytes(24).toString("hex");
+    const token = crypto2.randomBytes(24).toString("hex");
     sessionsByToken.set(token, {
       userId: acc.id,
       expiresAt: Date.now() + 1e3 * 60 * 60 * 24
@@ -8990,7 +9388,7 @@ async function startServer() {
     }
     const isAdmin = usernameRaw.toLowerCase() === "aleph";
     const acc = createAccount(usernameRaw, passwordRaw, preferredClass, isAdmin);
-    const token = crypto.randomBytes(24).toString("hex");
+    const token = crypto2.randomBytes(24).toString("hex");
     sessionsByToken.set(token, {
       userId: acc.id,
       expiresAt: Date.now() + 1e3 * 60 * 60 * 24
@@ -9057,6 +9455,169 @@ async function startServer() {
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     if (token) sessionsByToken.delete(token);
     res.json({ ok: true });
+  });
+  const internalIdentityRateLimiter = new SlidingWindowRateLimiter(120, 6e4);
+  const ssoAssertionRateLimiter = new SlidingWindowRateLimiter(30, 6e4);
+  function getConfiguredIdentitySecret() {
+    return (process.env.BEYOND_IDENTITY_SECRET || "").trim();
+  }
+  function requireInternalIdentityAuth(req, res) {
+    const clientKey = req.ip || "unknown";
+    if (!internalIdentityRateLimiter.consume(clientKey)) {
+      res.status(429).json({ error: "Too many shared identity requests. Please retry shortly." });
+      return null;
+    }
+    const expectedSecret = getConfiguredIdentitySecret();
+    const xSecretHeader = typeof req.headers["x-beyond-identity-secret"] === "string" ? req.headers["x-beyond-identity-secret"] : void 0;
+    const check = verifySharedIdentityRequestSecret(
+      req.headers.authorization,
+      xSecretHeader,
+      expectedSecret
+    );
+    if (!check.ok) {
+      res.status(check.status).json({ error: check.error });
+      return null;
+    }
+    return expectedSecret;
+  }
+  app.post("/api/auth/overworld-assertion", (req, res) => {
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
+    if (!userId) {
+      res.status(401).json({ error: "Authentication required." });
+      return;
+    }
+    if (!ssoAssertionRateLimiter.consume(userId)) {
+      res.status(429).json({ error: "Rate limit exceeded for Overworld handoff assertions." });
+      return;
+    }
+    const acc = accountsById.get(userId);
+    if (!acc) {
+      res.status(401).json({ error: "Account not found." });
+      return;
+    }
+    const secret = getConfiguredIdentitySecret();
+    if (secret.length < MIN_SHARED_IDENTITY_SECRET_LENGTH) {
+      res.status(503).json({ error: "Shared Beyond identity integration is not configured." });
+      return;
+    }
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      expiresInSeconds: DEFAULT_ASSERTION_TTL_SECONDS
+    });
+  });
+  app.post("/api/internal/identity/verify-credentials", async (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+    const usernameRaw = String(req.body?.username ?? "").trim();
+    const passwordRaw = String(req.body?.password ?? "");
+    if (usernameRaw.length < 2 || usernameRaw.length > 20) {
+      res.status(400).json({ error: "Username must be 2 to 20 characters." });
+      return;
+    }
+    if (!passwordRaw) {
+      res.status(400).json({ error: "Password is required." });
+      return;
+    }
+    const acc = accountsByLower.get(usernameRaw.toLowerCase());
+    if (!acc) {
+      if (isMaintenance) {
+        res.status(503).json({
+          error: `Server is migrating to Singapore for lower latency. Please connect to: ${redirectTarget}`,
+          redirectUrl: redirectTarget
+        });
+        return;
+      }
+      res.status(401).json({ error: "No adventurer account found with that name." });
+      return;
+    }
+    if (!verifyPassword(passwordRaw, acc.passwordHash)) {
+      res.status(401).json({ error: "Invalid password for this adventurer." });
+      return;
+    }
+    let dirty = false;
+    if (!acc.passwordHash.startsWith("scrypt:")) {
+      acc.passwordHash = hashPassword(passwordRaw);
+      dirty = true;
+    }
+    if (acc.usernameLower === "aleph" && !acc.isAdmin) {
+      acc.isAdmin = true;
+      dirty = true;
+    }
+    if (dirty) {
+      await persistAccount(acc).catch((err) => {
+        console.error("Failed to persist account upgrade during shared verify:", err);
+      });
+    }
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      account: toPublicProfile(acc)
+    });
+  });
+  app.post("/api/internal/identity/register", async (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+    if (isMaintenance) {
+      res.status(503).json({
+        error: `Server is migrating to Singapore for lower latency. Please register at: ${redirectTarget}`,
+        redirectUrl: redirectTarget
+      });
+      return;
+    }
+    const usernameRaw = String(req.body?.username ?? "").trim();
+    const passwordRaw = String(req.body?.password ?? "");
+    const preferredClass = normalizeHeroClass(req.body?.preferredClass ?? req.body?.heroClass);
+    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(usernameRaw)) {
+      res.status(400).json({
+        error: "Username must be 2\u201320 letters, numbers, underscores, or hyphens."
+      });
+      return;
+    }
+    if (passwordRaw.length < 8) {
+      res.status(400).json({ error: "Password must be at least 8 characters." });
+      return;
+    }
+    if (accountsByLower.has(usernameRaw.toLowerCase())) {
+      res.status(409).json({ error: "That adventurer name is already claimed." });
+      return;
+    }
+    const isAdmin = usernameRaw.toLowerCase() === "aleph";
+    const acc = buildAccountRecord(usernameRaw, passwordRaw, preferredClass, isAdmin);
+    try {
+      await persistAccount(acc);
+    } catch (err) {
+      console.error("Failed to persist shared-identity registration:", err);
+      res.status(500).json({ error: "Failed to persist new adventurer account." });
+      return;
+    }
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.status(201).json({
+      assertion,
+      account: toPublicProfile(acc)
+    });
+  });
+  app.get("/api/internal/identity/account/:accountId", (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+    const accountId = String(req.params.accountId ?? "").trim();
+    const acc = accountsById.get(accountId);
+    if (!acc) {
+      res.status(404).json({ error: "Adventurer account not found." });
+      return;
+    }
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      account: toPublicProfile(acc)
+    });
   });
   app.post("/api/voice/token", async (req, res) => {
     const authHeader = req.headers.authorization || "";
@@ -9234,7 +9795,7 @@ async function startServer() {
     }
     const providedToken = Buffer.from(authHeader.slice(7));
     const expectedBuffer = Buffer.from(expectedSecret);
-    if (providedToken.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedToken, expectedBuffer)) {
+    if (providedToken.length !== expectedBuffer.length || !crypto2.timingSafeEqual(providedToken, expectedBuffer)) {
       res.status(403).json({ error: "Forbidden: Invalid or missing migration admin secret." });
       return;
     }
@@ -9258,7 +9819,7 @@ async function startServer() {
     }
     const providedToken = Buffer.from(authHeader.slice(7));
     const expectedBuffer = Buffer.from(expectedSecret);
-    if (providedToken.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedToken, expectedBuffer)) {
+    if (providedToken.length !== expectedBuffer.length || !crypto2.timingSafeEqual(providedToken, expectedBuffer)) {
       res.status(403).json({ error: "Forbidden: Invalid or missing migration admin secret." });
       return;
     }
@@ -9271,7 +9832,7 @@ async function startServer() {
     for (const item of payload) {
       if (item && item.username && item.passwordHash) {
         const rec = {
-          id: String(item.id || `usr_${crypto.randomBytes(6).toString("hex")}`),
+          id: String(item.id || `usr_${crypto2.randomBytes(6).toString("hex")}`),
           username: String(item.username),
           usernameLower: String(item.usernameLower || item.username).toLowerCase(),
           passwordHash: String(item.passwordHash),
@@ -9458,6 +10019,13 @@ async function startServer() {
         if (acc.isAdmin) {
           const isSpeed = room.togglePlayerSpeedBoost(acc.id, msg.enabled);
           room.pushSystemChat(`[ADMIN] Speed Boost ${isSpeed ? "ENABLED" : "DISABLED"} for ${acc.username}`);
+        } else {
+          sendJson(ws, { type: "error", message: "Admin access required." });
+        }
+      } else if (msg.type === "admin:toggle_no_cooldown") {
+        if (acc.isAdmin) {
+          const isNoCd = room.togglePlayerNoCooldown(acc.id, msg.enabled);
+          room.pushSystemChat(`[ADMIN] No Cooldown Mode ${isNoCd ? "ENABLED" : "DISABLED"} for ${acc.username}`);
         } else {
           sendJson(ws, { type: "error", message: "Admin access required." });
         }

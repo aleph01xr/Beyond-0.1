@@ -4,6 +4,7 @@ import {
   findBestAutoTarget,
   getAbilityTargetSpec,
   getPrimaryAttackRange,
+  resolveSkillSmartTarget,
   type AbilityAimState,
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
@@ -243,6 +244,34 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     return getAutoTarget(maxRangeOverride)?.angle ?? lastStickAngleRef.current;
   };
 
+  const getSkillSmartAim = (action: AimableAction) => {
+    const liveSnap = latestSnapshotRef?.current;
+    const fallbackPlayer = playerRef.current;
+    const livePlayer =
+      liveSnap?.players.find((p) => p.id === fallbackPlayer.id) ?? fallbackPlayer;
+    const spec = getAbilityTargetSpec(
+      livePlayer.heroClass,
+      action,
+      livePlayer.equippedScrollId
+    );
+    const liveEnemies = liveSnap?.enemies ?? enemiesRef.current;
+    const liveDummies = liveSnap?.trainingDummies;
+    const smart = resolveSkillSmartTarget({
+      spec,
+      playerX: livePlayer.x,
+      playerY: livePlayer.y,
+      fallbackAngle: lastStickAngleRef.current,
+      fallbackDistance: spec.defaultDist,
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map: mapRef.current,
+      props: liveSnap?.props,
+      enemies: liveEnemies,
+      trainingDummies: liveDummies,
+    });
+    return { spec, ...smart };
+  };
+
   // Touch handlers for floating zone on the left half of screen
   const handleLeftZoneTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -410,13 +439,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     const rect = e.currentTarget.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
     const originY = rect.top + rect.height / 2;
-    const spec = getAbilityTargetSpec(
-      livePlayer.heroClass,
-      action,
-      livePlayer.equippedScrollId
-    );
-    const defaultAngle =
-      action === 'dash' ? lastStickAngleRef.current : getAutoTargetAngle();
+    const { spec, aimAngle: defaultAngle, aimDistance: defaultDist } =
+      getSkillSmartAim(action);
 
     abilityTouchRef.current = {
       id: touch.identifier,
@@ -431,8 +455,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         action,
         source: 'touch',
         aimAngle: defaultAngle,
-        magnitude: 0,
-        aimDistance: spec.defaultDist,
+        magnitude: spec.range > 0 ? Math.min(1, defaultDist / spec.range) : 0,
+        aimDistance: defaultDist,
         cancelled: false,
       };
     }
@@ -538,12 +562,12 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         onSendCommand({ type: 'player:channel_update', aimAngle: angle });
       }
     } else {
-      const defaultAngle =
-        active.action === 'dash' ? lastStickAngleRef.current : getAutoTargetAngle();
+      const smart = getSkillSmartAim(active.action);
       if (abilityAimRef?.current) {
-        abilityAimRef.current.aimAngle = defaultAngle;
-        abilityAimRef.current.magnitude = 0;
-        abilityAimRef.current.aimDistance = spec.defaultDist;
+        abilityAimRef.current.aimAngle = smart.aimAngle;
+        abilityAimRef.current.magnitude =
+          spec.range > 0 ? Math.min(1, smart.aimDistance / spec.range) : 0;
+        abilityAimRef.current.aimDistance = smart.aimDistance;
         abilityAimRef.current.cancelled = isCancelled;
       }
     }
@@ -611,34 +635,17 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       return;
     }
 
-    const spec = getAbilityTargetSpec(
-      livePlayer.heroClass,
-      active.action,
-      livePlayer.equippedScrollId
-    );
+    const smartQuick = getSkillSmartAim(active.action);
     const dragged = active.dragDist > 10;
-    const quickSearchRange =
-      spec.kind === 'cone_volley' || spec.kind === 'ground_aoe' || spec.kind === 'line'
-        ? spec.range
-        : spec.kind === 'dash' && spec.action === 'tactical'
-        ? 160
-        : undefined;
-    const quickTarget = !dragged && active.action !== 'dash'
-      ? getAutoTarget(quickSearchRange)
-      : null;
 
     const castAngle = dragged
       ? currentAim?.aimAngle ?? lastStickAngleRef.current
       : active.action === 'dash'
       ? lastStickAngleRef.current
-      : quickTarget?.angle ?? lastStickAngleRef.current;
+      : smartQuick.aimAngle;
     const castDist = dragged
-      ? currentAim?.aimDistance ?? spec.defaultDist
-      : (spec.kind === 'ground_aoe' || spec.kind === 'line') &&
-        livePlayer.heroClass === 'arcanist' &&
-        quickTarget
-      ? Math.round(Math.min(spec.range, quickTarget.distance))
-      : spec.defaultDist;
+      ? currentAim?.aimDistance ?? smartQuick.spec.defaultDist
+      : smartQuick.aimDistance;
 
     if (active.action === 'dash') {
       sfx.playDash();

@@ -55,6 +55,7 @@ import {
 } from '../shared/arcanist.ts';
 import {
   getAbilityTargetSpec,
+  resolveSkillSmartTarget,
   type AbilityAimState,
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
@@ -79,6 +80,7 @@ interface DungeonRunViewProps {
     opts?: { aimDistance?: number; explicitAim?: boolean }
   ) => void;
   onSelectRelic: (relicId: string) => void;
+  onCloseChest?: () => void;
   onChangeClass: (heroClass: HeroClassId) => void;
   onSendPing: (label: string, x: number, y: number) => void;
   onSendChat: (text: string) => void;
@@ -113,6 +115,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   onSendInput,
   onTriggerAction,
   onSelectRelic,
+  onCloseChest,
   onChangeClass,
   onSendPing,
   onSendChat,
@@ -227,6 +230,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     }
   });
 
+  const me =
+    snapshot.players.find((p) => p.id === playerId) || snapshot.players[0];
+  const hasLootModalOpen = Boolean(
+    me &&
+      snapshot.status === 'playing' &&
+      (me.pendingRelicChoices.length > 0 || (me.pendingScrollChoices?.length ?? 0) > 0)
+  );
+
+  const handleCloseLootChest = useCallback(() => {
+    sfx.playUiClick();
+    if (onCloseChest) {
+      onCloseChest();
+    } else {
+      onSendAdminCommand?.({ type: 'player:close_chest' });
+    }
+  }, [onCloseChest, onSendAdminCommand]);
+
+  const handleCloseLootChestRef = useRef(handleCloseLootChest);
+  handleCloseLootChestRef.current = handleCloseLootChest;
+
   const modalStateRef = useRef({
     adminPanelOpen,
     touchSettingsOpen,
@@ -236,6 +259,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     expandedMapOpen,
     chatOpen,
     pauseOpen,
+    hasLootModalOpen,
     hasCinematic: Boolean(cinematicIntro),
     status: snapshot.status,
   });
@@ -248,6 +272,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     expandedMapOpen,
     chatOpen,
     pauseOpen,
+    hasLootModalOpen,
     hasCinematic: Boolean(cinematicIntro),
     status: snapshot.status,
   };
@@ -271,6 +296,10 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           return;
         }
         const st = modalStateRef.current;
+        if (st.hasLootModalOpen) {
+          handleCloseLootChestRef.current();
+          return;
+        }
         sfx.playUiClick();
         if (st.adminPanelOpen) setAdminPanelOpen(false);
         else if (st.touchSettingsOpen) setTouchSettingsOpen(false);
@@ -353,8 +382,6 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     }
   };
 
-  const me =
-    snapshot.players.find((p) => p.id === playerId) || snapshot.players[0];
   const boss = snapshot.enemies.find((e) => e.kind === 'boss');
 
   const isTavern = map.floor === 0 || snapshot.floor === 0;
@@ -366,9 +393,28 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const nearInteractable = Boolean(
     me &&
       (nearPortal ||
-        snapshot.props.some(
-          (pr) => !pr.opened && Math.hypot(pr.x - me.x, pr.y - me.y) <= 64
-        ) ||
+        snapshot.props.some((pr) => {
+          if (Math.hypot(pr.x - me.x, pr.y - me.y) > 64) return false;
+          if (!pr.opened) return true;
+          if (pr.kind === 'relic_chest') {
+            const relicDone = Boolean(pr.claimedRelicPlayerIds?.includes(me.id));
+            const hasUnclaimedScroll = Boolean(
+              me.heroClass === 'arcanist' &&
+                pr.scrollChoicesByPlayer?.[me.id]?.length &&
+                !pr.claimedScrollPlayerIds?.includes(me.id)
+            );
+            return !relicDone || hasUnclaimedScroll || me.activeChestPropId === pr.id;
+          }
+          if (pr.kind === 'chest') {
+            const hasUnclaimedScroll = Boolean(
+              me.heroClass === 'arcanist' &&
+                pr.scrollChoicesByPlayer?.[me.id]?.length &&
+                !pr.claimedScrollPlayerIds?.includes(me.id)
+            );
+            return !pr.chestGoldClaimed || hasUnclaimedScroll || me.activeChestPropId === pr.id;
+          }
+          return false;
+        }) ||
         snapshot.npcs?.some(
           (n) => Math.hypot(n.x - me.x, n.y - me.y) <= 68
         ) ||
@@ -522,13 +568,27 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return;
 
     const spec = getAbilityTargetSpec(me.heroClass, action, me.equippedScrollId);
-    const angle = unifiedInputRef.current.aimAngle ?? me.aimAngle ?? 0;
+    const liveSnap = latestSnapshotRef.current;
+    const liveMe = liveSnap?.players.find((p) => p.id === playerId) || me;
+    const smart = resolveSkillSmartTarget({
+      spec,
+      playerX: liveMe.x,
+      playerY: liveMe.y,
+      fallbackAngle: unifiedInputRef.current.aimAngle ?? liveMe.aimAngle ?? 0,
+      fallbackDistance: spec.defaultDist,
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map,
+      props: liveSnap?.props,
+      enemies: liveSnap?.enemies ?? [],
+      trainingDummies: liveSnap?.trainingDummies,
+    });
     abilityAimRef.current = {
       action,
       source: 'mouse',
-      aimAngle: angle,
-      magnitude: spec.range > 0 ? Math.min(1, spec.defaultDist / spec.range) : 1,
-      aimDistance: spec.defaultDist,
+      aimAngle: smart.aimAngle,
+      magnitude: spec.range > 0 ? Math.min(1, smart.aimDistance / spec.range) : 1,
+      aimDistance: smart.aimDistance,
       cancelled: false,
       originClientX: clientX,
       originClientY: clientY,
@@ -1230,12 +1290,27 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               e.preventDefault();
               if (me.heroClass === 'arcanist' && me.equippedScrollId === 'disintegration') {
                 if (isSilenced || isChronoSuspended || tacSec > 0 || me.spellCastState) return;
-                const aim = unifiedInputRef.current.aimAngle ?? me.aimAngle ?? 0;
+                const spec = getAbilityTargetSpec('arcanist', 'tactical', 'disintegration');
+                const liveSnap = latestSnapshotRef.current;
+                const liveMe = liveSnap?.players.find((p) => p.id === playerId) || me;
+                const smart = resolveSkillSmartTarget({
+                  spec,
+                  playerX: liveMe.x,
+                  playerY: liveMe.y,
+                  fallbackAngle: unifiedInputRef.current.aimAngle ?? liveMe.aimAngle ?? 0,
+                  fallbackDistance: spec.defaultDist,
+                  preferCursorCone: false,
+                  allowFullRangeFallback: true,
+                  map,
+                  props: liveSnap?.props,
+                  enemies: liveSnap?.enemies ?? [],
+                  trainingDummies: liveSnap?.trainingDummies,
+                });
                 sfx.playArcanistSpell('disintegration');
                 onSendAdminCommand?.({
                   type: 'player:channel_start',
                   spellId: 'disintegration',
-                  aimAngle: aim,
+                  aimAngle: smart.aimAngle,
                 });
                 return;
               }
@@ -1498,14 +1573,26 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
       {/* Relic Draft Modal */}
       {me && me.pendingRelicChoices.length > 0 && snapshot.status === 'playing' && (
         <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="stone-panel max-w-xl w-full p-5 sm:p-7 space-y-5 my-auto">
-            <div className="text-center space-y-1">
-              <h2 className="font-display text-xl sm:text-2xl text-white">
-                Choose an Ancient Relic
-              </h2>
-              <p className="text-xs sm:text-sm text-[#D0CEDB]">
-                Select one permanent boon for your party expedition.
-              </p>
+          <div className="stone-panel max-w-xl w-full p-5 sm:p-7 space-y-5 my-auto relative">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1 flex-1 text-center sm:text-left">
+                <h2 className="font-display text-xl sm:text-2xl text-white">
+                  Choose an Ancient Relic
+                </h2>
+                <p className="text-xs sm:text-sm text-[#D0CEDB]">
+                  {me.activeChestPropId
+                    ? 'Take a relic now, or close the chest to leave it inside and decide later.'
+                    : 'Select one permanent boon for your party expedition.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseLootChest}
+                className="stone-button stone-button-dark px-3 py-1.5 text-xs font-mono text-[#E5E3F0] hover:text-white border border-[#4A4766] shrink-0"
+                title="Close chest without taking a relic [Esc]"
+              >
+                {me.activeChestPropId ? 'Close Chest [Esc]' : 'Close [Esc]'}
+              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1543,6 +1630,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 );
               })}
             </div>
+
+            {(me.pendingScrollChoices?.length ?? 0) > 0 && me.activeChestPropId && (
+              <div className="text-center text-[11px] font-mono text-[#A5B4FC]">
+                This chest also holds Ancient Scroll inscriptions — you can inspect them next or close the chest anytime.
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1554,16 +1647,28 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
         snapshot.status === 'playing' && (
           <div className="fixed inset-0 z-40 bg-black/75 flex items-center justify-center p-4 overflow-y-auto">
             <div className="stone-panel max-w-2xl w-full p-5 sm:p-7 space-y-5 my-auto border-[#6366F1]/70">
-              <div className="text-center space-y-1">
-                <div className="text-[11px] font-mono uppercase tracking-widest text-[#A5B4FC]">
-                  Arcanist Inscription · Tactical Override
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1 flex-1 text-center sm:text-left">
+                  <div className="text-[11px] font-mono uppercase tracking-widest text-[#A5B4FC]">
+                    Arcanist Inscription · Tactical Override
+                  </div>
+                  <h2 className="font-display text-xl sm:text-2xl text-white">
+                    Choose an Ancient Scroll
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#D0CEDB]">
+                    {me.activeChestPropId
+                      ? 'Inscribe a Scroll to reshape your [Q] Tactical Skill, or close the chest to leave them inside.'
+                      : 'Inscribe one Scroll to reshape your [Q] Tactical Skill, or dismiss to keep your current skill.'}
+                  </p>
                 </div>
-                <h2 className="font-display text-xl sm:text-2xl text-white">
-                  Choose an Ancient Scroll
-                </h2>
-                <p className="text-xs sm:text-sm text-[#D0CEDB]">
-                  Inscribe one Scroll to reshape your [Q] Tactical Skill for this expedition. Scrolls remain separate from Ancient Relics.
-                </p>
+                <button
+                  type="button"
+                  onClick={handleCloseLootChest}
+                  className="stone-button stone-button-dark px-3 py-1.5 text-xs font-mono text-[#E5E3F0] hover:text-white border border-[#4A4766] shrink-0"
+                  title={me.activeChestPropId ? 'Close chest and keep scrolls inside [Esc]' : 'Keep current tactical skill [Esc]'}
+                >
+                  {me.activeChestPropId ? 'Close Chest [Esc]' : 'Keep Current [Esc]'}
+                </button>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1960,8 +2065,20 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
               {/* Live Stat Projections Quick Card */}
               <div className="stone-input p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono uppercase text-[#FCD34D] font-bold">[STAT PROJECTIONS]</span>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono uppercase text-[#FCD34D] font-bold">[STAT PROJECTIONS]</span>
+                    <span
+                      className="text-[10px] font-mono font-bold px-1.5 py-0.5 border"
+                      style={{
+                        color: liveStats.overallRank.color,
+                        borderColor: `${liveStats.overallRank.color}66`,
+                        backgroundColor: `${liveStats.overallRank.color}15`,
+                      }}
+                    >
+                      {liveStats.overallRank.label}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -1976,20 +2093,24 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center font-mono text-[11px]">
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
-                    <div className="text-[9px] text-[#94A3B8] uppercase">Target DPS</div>
-                    <div className="font-bold text-[#FCD34D]">{liveStats.sustainedDps}</div>
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Eff. DPS</div>
+                    <div className="font-bold text-[#FCD34D]">{liveStats.effectiveDps}</div>
                   </div>
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
-                    <div className="text-[9px] text-[#94A3B8] uppercase">DoT Scale</div>
-                    <div className="font-bold text-[#F97316]">{liveStats.dotMultiplier}x</div>
+                    <div className="text-[9px] text-[#94A3B8] uppercase">Eff. HP</div>
+                    <div className="font-bold text-[#34D399]">{liveStats.effectiveHp}</div>
                   </div>
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
                     <div className="text-[9px] text-[#94A3B8] uppercase">Max HP</div>
                     <div className="font-bold text-[#10B981]">{liveStats.maxHp}</div>
                   </div>
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C]">
-                    <div className="text-[9px] text-[#94A3B8] uppercase">Crit Rate</div>
-                    <div className="font-bold text-[#38BDF8]">{liveStats.critChancePct}%</div>
+                    <div className="text-[9px] text-[#94A3B8] uppercase">
+                      {me.heroClass === 'cleric' ? 'Sustain' : 'Crit Rate'}
+                    </div>
+                    <div className="font-bold text-[#38BDF8]">
+                      {me.heroClass === 'cleric' ? `${liveStats.healingPerSec}/s` : `${liveStats.critChancePct}%`}
+                    </div>
                   </div>
                   <div className="bg-[#1A1828] p-1.5 border border-[#3A384C] col-span-2 sm:col-span-1">
                     <div className="text-[9px] text-[#94A3B8] uppercase">Phys Armor</div>

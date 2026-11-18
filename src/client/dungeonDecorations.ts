@@ -357,7 +357,7 @@ export function drawRelicVault(
     ctx.save();
     ctx.font = '700 10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
-    const label = '[E] RELIC VAULT';
+    const label = prop.chestGoldClaimed ? '[E] REOPEN VAULT' : '[E] RELIC VAULT';
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = 'rgba(23, 19, 36, 0.9)';
     ctx.fillRect(x - tw / 2 - 6, y - 38 + sealBob, tw + 12, 16);
@@ -707,7 +707,7 @@ export function drawDungeonProp(
       ctx.fillStyle = '#71717A';
       ctx.fillRect(x - 2, y - 14, 4, 12);
     }
-    return;
+  } else if (prop.kind === 'chest') {
     // Ironwood treasure chest with brass bands and padlock
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
     ctx.fillRect(x - 13, y + 7, 26, 5);
@@ -760,6 +760,20 @@ export function drawDungeonProp(
         ctx.strokeRect(x - 20, y - 26, 40, 11);
         ctx.fillStyle = '#FCA5A5';
         ctx.fillText('LOCKED', x, y - 18);
+        ctx.restore();
+      } else {
+        const chestLabel = prop.chestGoldClaimed ? '[E] REOPEN CHEST' : '[E] OPEN CHEST';
+        ctx.save();
+        ctx.font = '700 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        const ctw = ctx.measureText(chestLabel).width;
+        ctx.fillStyle = 'rgba(20, 15, 10, 0.88)';
+        ctx.fillRect(x - ctw / 2 - 5, y - 28, ctw + 10, 14);
+        ctx.strokeStyle = '#F59E0B';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - ctw / 2 - 5, y - 28, ctw + 10, 14);
+        ctx.fillStyle = '#FEF08A';
+        ctx.fillText(chestLabel, x, y - 18);
         ctx.restore();
       }
 

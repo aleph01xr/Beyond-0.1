@@ -1,3 +1,4 @@
+import type { ArcanistScrollId } from './arcanist.ts';
 import type {
   EnemyState,
   FieldZoneState,
@@ -267,7 +268,26 @@ export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
       return copy;
     }),
     projectiles: snap.projectiles.map((pr) => ({ ...pr })),
-    props: snap.props.map((pr) => ({ ...pr })),
+    props: snap.props.map((pr) => {
+      const copy: PropState = { ...pr };
+      if (pr.claimedRelicPlayerIds) copy.claimedRelicPlayerIds = [...pr.claimedRelicPlayerIds];
+      if (pr.claimedScrollPlayerIds) copy.claimedScrollPlayerIds = [...pr.claimedScrollPlayerIds];
+      if (pr.relicChoicesByPlayer) {
+        const mapCopy: Record<string, string[]> = {};
+        for (const [k, v] of Object.entries(pr.relicChoicesByPlayer)) {
+          mapCopy[k] = [...v];
+        }
+        copy.relicChoicesByPlayer = mapCopy;
+      }
+      if (pr.scrollChoicesByPlayer) {
+        const mapCopy: Record<string, ArcanistScrollId[]> = {};
+        for (const [k, v] of Object.entries(pr.scrollChoicesByPlayer)) {
+          mapCopy[k] = [...v];
+        }
+        copy.scrollChoicesByPlayer = mapCopy;
+      }
+      return copy;
+    }),
     zones: snap.zones.map((z) => {
       const copy: FieldZoneState = { ...z };
       if (z.chainPoints) copy.chainPoints = z.chainPoints.map((pt) => ({ ...pt }));

@@ -493,6 +493,10 @@ export function App() {
     [sendWs]
   );
 
+  const handleCloseChest = useCallback(() => {
+    sendWs({ type: 'player:close_chest' });
+  }, [sendWs]);
+
   const handleChangeClass = useCallback(
     (heroClass: HeroClassId) => {
       setSelectedClass(heroClass);
@@ -584,6 +588,7 @@ export function App() {
         onSendInput={handleSendInput}
         onTriggerAction={handleTriggerAction}
         onSelectRelic={handleSelectRelic}
+        onCloseChest={handleCloseChest}
         onChangeClass={handleChangeClass}
         onSendPing={handleSendPing}
         onSendChat={handleSendChat}

@@ -13,6 +13,10 @@
   - Optional Relic/Blessing multipliers: `sunfire_signet` (`* 1.12`), `fury` blessing (`* (1 + furyStacks * 0.06)`).
   - Downstream `damageEnemy(enemy, rawAmount, attacker, isCrit, category)` applies enemy resistance (`arcane` / `fire` / `frost` / `lightning`), `markedMs` (`1.35x`), Sanctum Wards, Malakor Shield Wall, and Oriphiel Parry—**never** re-applying `computeDamageMult`.
 
+- **Primary Attack & Star Rift Baseline**:
+  - `HERO_CLASSES.arcanist.damage = 24` (`420ms` attack cooldown, `185` range, `pierce: 2`).
+  - **Star Rift Proc Rule**: Every 4th primary attack attempts to spawn a `star_rift` zone (`75u` radius, `3000ms` duration). A Star Rift spawns only when 4 primary attacks have completed **and** the independent `8000ms` `starRiftCooldownMs` has expired. The 4-hit counter resets after every proc attempt (so attacks during cooldown do not stockpile an instant burst), and the `8000ms` cooldown starts only when a Rift successfully spawns.
+
 - **Spell Scroll Damage Formula**:
   `D = B * [1 + 0.025 * (L - 1)] * [1 + c * INT]`
   - Applied **exactly once** via `computeArcanistSpellDamage(baseDamage, player, intCoeff)`.
@@ -26,10 +30,10 @@
 
 | # | Spell Scroll ID | Name | Base `B` | INT Coeff `c` | Cooldown | Cast / Timing | Key Mechanics | Damage Category |
 |---|---|---|---:|---:|---:|---|---|---|
-| 1 | `fireball` | Scroll of Fireball | 42 | 1.0% (`0.010`) | 6.0s | 0.35s cast | Travels straight (`380 px/s`, `360u` range), explodes on contact/wall/max-range (`90u` AoE), no burn by default | `fire` |
-| 2 | `disintegration` | Scroll of Disintegration | 10 / tick | 0.8% (`0.008`) | 12.0s (post-end) | 0.15s activation + 0.2s ticks | Hold `[Q / RMB]` to channel, movement disabled, max rot `180 deg/s`, `42u` width, `450u` wall-clipped; stops on release/CC/death | `arcane` |
-| 3 | `frost_lance` | Scroll of Frost Lance | 36 | 1.2% (`0.012`) | 4.5s | 0.20s cast | Straight line (`480 px/s`, `420u` range), pierces up to 3 enemies, no homing, no freeze/stun | `frost` |
-| 4 | `chain_lightning` | Scroll of Chain Lightning | 32 | 1.0% (`0.010`) | 7.0s | Instant | Hits initial target + jumps up to 3 unhit targets (`<= 150u`), `-15%` (`0.85^jump`) per jump, max 4 targets, no repeats | `lightning` |
-| 5 | `arcane_meteor` | Scroll of Arcane Meteor | 75 | 1.3% (`0.013`) | 11.0s | 0.50s cast + 1.0s impact delay | Ground telegraph (`<= 280u` cast range), `125u` AoE burst on impact, no lingering DoT | `arcane` |
-| 6 | `arcane_orb` | Scroll of Arcane Orb | 12 / hit | 0.7% (`0.007`) | 9.0s | Instant (`4.0s` duration) | Slow sphere (`115 px/s`), persists through enemies, max 2 hits/enemy at `>= 0.5s` interval; suspends in Chrono Well | `arcane` |
-| 7 | `arcane_barrage` | Scroll of Arcane Barrage | 12 / bolt | 0.45% (`0.0045`) | 8.0s | Instant | 6 bolts (`400 px/s`, `450u` range) in alternating helix around forward centerline; independent hits, no homing | `arcane` |
+| 1 | `fireball` | Scroll of Fireball | 42 | 1.5% (`0.015`) | 6.0s | 0.35s cast | Enlarged bolt (`r=14`, `380 px/s`, `360u` range), explodes immediately on contact/wall/max-range (`105u` AoE) & leaves a `3.5s` burning area (`88u`, `22%` per `0.5s`) | `fire` |
+| 2 | `disintegration` | Scroll of Disintegration | 10 / tick | 1.2% (`0.012`) | 12.0s (post-end) | 0.15s activation + 0.2s ticks | Hold `[Q / RMB]` to channel, movement disabled, max rot `180 deg/s`, `42u` width, `450u` wall-clipped; stops on release/CC/death | `arcane` |
+| 3 | `frost_lance` | Scroll of Frost Lance | 36 | 1.8% (`0.018`) | 4.5s | 0.20s cast | Straight line (`480 px/s`, `420u` range), pierces up to 3 enemies, no homing, no freeze/stun | `frost` |
+| 4 | `chain_lightning` | Scroll of Chain Lightning | 32 | 1.5% (`0.015`) | 7.0s | Instant | Forward cone-shaped discharge (`340u` range, `±0.56 rad` arc), shocks all LoS foes inside the cone | `lightning` |
+| 5 | `arcane_meteor` | Scroll of Arcane Meteor | 75 | 1.95% (`0.0195`) | 11.0s | 0.50s cast + 1.0s impact delay | Ground telegraph (`<= 280u` cast range), `125u` AoE burst on impact, no lingering DoT | `arcane` |
+| 6 | `arcane_orb` | Scroll of Arcane Orb | 12 / hit | 1.05% (`0.0105`) | 9.0s | Instant (`4.0s` duration) | Slow sphere (`115 px/s`), persists through enemies, max 2 hits/enemy at `>= 0.5s` interval; suspends in Chrono Well | `arcane` |
+| 7 | `arcane_barrage` | Scroll of Arcane Barrage | 12 / bolt | 0.675% (`0.00675`) | 8.0s | Instant (`4` waves) | 4 rapid staggered waves (`95ms` apart, `2` bolts/wave = `8` bolts, `420 px/s`, `450u` range) with soft-seeking focus bolts reliably landing 3–4+ hits | `arcane` |

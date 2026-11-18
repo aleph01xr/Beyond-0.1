@@ -1,5 +1,8 @@
 import { MAX_LEVEL, type DamageCategory } from './types.ts';
 
+export const STAR_RIFT_REQUIRED_ATTACKS = 4;
+export const STAR_RIFT_PROC_COOLDOWN_MS = 8000;
+
 export type ArcanistSpellId =
   | 'fireball'
   | 'disintegration'
@@ -42,6 +45,11 @@ export interface ArcanistSpellDef {
   hitIntervalMs?: number;
   maxHitsPerEnemy?: number;
   projectileCount?: number;
+  barrageWaves?: number;
+  barrageWaveIntervalMs?: number;
+  coneHalfAngleRad?: number;
+  burnRadius?: number;
+  burnTickRatio?: number;
   tickIntervalMs?: number;
   beamWidth?: number;
   activationMs?: number;
@@ -67,18 +75,22 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     name: 'Fireball',
     scrollName: 'Scroll of Fireball',
     tacticalTitle: 'Fireball',
-    role: 'Burst / AoE',
+    role: 'Burst / Burning AoE',
     baseDamage: 42,
-    intCoeff: 0.01,
+    intCoeff: 0.015,
     cooldownMs: 6000,
     castTimeMs: 350,
-    explosionRadius: 90,
+    explosionRadius: 105,
+    burnRadius: 88,
+    burnTickRatio: 0.22,
+    durationMs: 3500,
+    hitIntervalMs: 500,
     maxRange: 360,
     projectileSpeed: 380,
     damageCategory: 'fire',
     accentColor: '#F97316',
-    summary: 'Replaces Astral Nova [Q]. 0.35s cast; hurls an explosive fireball (90u AoE, no burn) on impact or max range.',
-    chronoInteraction: 'Fireball projectile freezes mid-flight inside ANY Chrono Well (including caster projectiles) until time resumes.',
+    summary: 'Replaces Astral Nova [Q]. 0.35s cast; hurls a large fireball that explodes on hit (105u AoE) and leaves a 3.5s burning ground zone.',
+    chronoInteraction: 'Fireball projectile and lingering burn zone freeze inside ANY Chrono Well (including caster zones) until time resumes.',
   },
   disintegration: {
     id: 'disintegration',
@@ -87,7 +99,7 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     tacticalTitle: 'Disintegration',
     role: 'Sustained Beam',
     baseDamage: 10,
-    intCoeff: 0.008,
+    intCoeff: 0.012,
     cooldownMs: 12000,
     castTimeMs: 0,
     tickIntervalMs: 200,
@@ -108,7 +120,7 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     tacticalTitle: 'Frost Lance',
     role: 'Precision / Piercing',
     baseDamage: 36,
-    intCoeff: 0.012,
+    intCoeff: 0.018,
     cooldownMs: 4500,
     castTimeMs: 200,
     pierce: 3,
@@ -124,19 +136,17 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     name: 'Chain Lightning',
     scrollName: 'Scroll of Chain Lightning',
     tacticalTitle: 'Chain Lightning',
-    role: 'Multi-Target Arc',
+    role: 'Cone Discharge',
     baseDamage: 32,
-    intCoeff: 0.01,
+    intCoeff: 0.015,
     cooldownMs: 7000,
     castTimeMs: 0,
-    maxTargets: 4,
-    jumpDamageDecay: 0.15,
-    maxJumpDistance: 150,
     maxRange: 340,
+    coneHalfAngleRad: 0.56, // ~±32 deg (64 deg total cone)
     damageCategory: 'lightning',
     accentColor: '#FACC15',
-    summary: 'Replaces Astral Nova [Q]. Strikes target and arcs up to 3 additional foes within 150u (-15% dmg/jump, no repeats).',
-    chronoInteraction: 'Instant lightning discharge hits suspended foes inside Chrono Well; blocked while caster is Chrono-suspended.',
+    summary: 'Replaces Astral Nova [Q]. Unleashes a 340u cone-shaped lightning blast (64° arc) shocking all foes inside.',
+    chronoInteraction: 'Instant lightning cone hits suspended foes inside Chrono Well; blocked while caster is Chrono-suspended.',
   },
   arcane_meteor: {
     id: 'arcane_meteor',
@@ -145,7 +155,7 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     tacticalTitle: 'Arcane Meteor',
     role: 'Heavy AoE Burst',
     baseDamage: 75,
-    intCoeff: 0.013,
+    intCoeff: 0.0195,
     cooldownMs: 11000,
     castTimeMs: 500,
     impactDelayMs: 1000,
@@ -163,7 +173,7 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     tacticalTitle: 'Arcane Orb',
     role: 'Persistent Pressure',
     baseDamage: 12,
-    intCoeff: 0.007,
+    intCoeff: 0.0105,
     cooldownMs: 9000,
     castTimeMs: 0,
     durationMs: 4000,
@@ -180,18 +190,20 @@ export const ARCANIST_SPELLS: Record<ArcanistSpellId, ArcanistSpellDef> = {
     name: 'Arcane Barrage',
     scrollName: 'Scroll of Arcane Barrage',
     tacticalTitle: 'Arcane Barrage',
-    role: 'Multi-Projectile Helix',
+    role: 'Multi-Wave Barrage',
     baseDamage: 12,
-    intCoeff: 0.0045,
+    intCoeff: 0.00675,
     cooldownMs: 8000,
     castTimeMs: 0,
-    projectileCount: 6,
-    projectileSpeed: 400,
+    projectileCount: 8,
+    barrageWaves: 4,
+    barrageWaveIntervalMs: 95,
+    projectileSpeed: 420,
     maxRange: 450,
     damageCategory: 'arcane',
     accentColor: '#60A5FA',
-    summary: 'Replaces Astral Nova [Q]. Fires 6 alternating helix bolts up to 450u forward; multiple bolts can strike the same target.',
-    chronoInteraction: 'All 6 helix bolts suspend inside ANY Chrono Well (including the caster’s own) and burst forward together on resume.',
+    summary: 'Replaces Astral Nova [Q]. Launches a 4-wave rapid arcane barrage (8 bolts) that streams forward and strikes targets 3-4+ times.',
+    chronoInteraction: 'Barrage projectiles suspend inside ANY Chrono Well (including the caster’s own) and burst forward together on resume.',
   },
 };
 

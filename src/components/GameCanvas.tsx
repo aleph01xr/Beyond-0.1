@@ -51,6 +51,7 @@ import {
   findBestAutoTarget,
   getAbilityTargetSpec,
   getPrimaryAttackRange,
+  resolveSkillSmartTarget,
   type AbilityAimState,
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
@@ -242,40 +243,100 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action, me?.equippedScrollId);
     const pos = localPlayerPosRef.current || (me ? { x: me.x, y: me.y } : null);
     const vp = viewportRef.current;
-    // Quick-tap on HUD ability button before dragging >12px preserves pre-click aim
-    if (curAimOverride && curAimOverride.hasDragged === false) {
+
+    let cursorWorldX: number | undefined;
+    let cursorWorldY: number | undefined;
+    let cursorAngle = aimAngleRef.current;
+    let cursorDist = spec.defaultDist;
+    if (pos && hasMouseMovedRef.current) {
+      const safeZoom = Math.max(0.1, vp.zoom);
+      cursorWorldX = cameraRef.current.x + (mouseScreenRef.current.x - vp.cw / 2) / safeZoom;
+      cursorWorldY = cameraRef.current.y + (mouseScreenRef.current.y - vp.ch / 2) / safeZoom;
+      const dx = cursorWorldX - pos.x;
+      const dy = cursorWorldY - pos.y;
+      cursorDist = Math.hypot(dx, dy);
+      if (cursorDist > 0.5) {
+        cursorAngle = Math.atan2(dy, dx);
+      }
+    }
+
+    const isQuickHudTap = Boolean(curAimOverride && curAimOverride.hasDragged === false);
+    const isKeyboardTrigger = source === 'keyboard' && !curAimOverride?.hasDragged;
+
+    if (pos && snap && (isQuickHudTap || isKeyboardTrigger)) {
+      const fallbackAngle = isQuickHudTap
+        ? curAimOverride!.aimAngle
+        : aimSourceRef.current === 'mouse' && hasMouseMovedRef.current
+          ? cursorAngle
+          : aimAngleRef.current;
+      const smart = resolveSkillSmartTarget({
+        spec,
+        playerX: pos.x,
+        playerY: pos.y,
+        fallbackAngle,
+        fallbackDistance: spec.defaultDist,
+        cursorWorldX,
+        cursorWorldY,
+        preferCursorCone: aimSourceRef.current === 'mouse' && hasMouseMovedRef.current,
+        allowFullRangeFallback: true,
+        map,
+        props: snap.props,
+        enemies: snap.enemies,
+        trainingDummies: snap.trainingDummies,
+      });
+      const magnitude =
+        spec.range > 0 ? Math.min(1, smart.aimDistance / spec.range) : 1;
       return {
-        aimAngle: curAimOverride.aimAngle,
-        aimDistance: spec.defaultDist,
-        magnitude: spec.range > 0 ? Math.min(1, spec.defaultDist / spec.range) : 1,
+        aimAngle: smart.aimAngle,
+        aimDistance: smart.aimDistance,
+        magnitude,
       };
     }
 
     const useMouse =
       (source === 'mouse' || aimSourceRef.current === 'mouse') &&
       pos &&
-      hasMouseMovedRef.current;
+      hasMouseMovedRef.current &&
+      cursorWorldX !== undefined &&
+      cursorWorldY !== undefined;
 
     if (useMouse && pos) {
-      const safeZoom = Math.max(0.1, vp.zoom);
-      const wx = cameraRef.current.x + (mouseScreenRef.current.x - vp.cw / 2) / safeZoom;
-      const wy = cameraRef.current.y + (mouseScreenRef.current.y - vp.ch / 2) / safeZoom;
-      const dx = wx - pos.x;
-      const dy = wy - pos.y;
-      const dist = Math.hypot(dx, dy);
-      const angle = dist > 0.5 ? Math.atan2(dy, dx) : aimAngleRef.current;
-      let aimDistance = spec.defaultDist;
+      let rawDistance = spec.defaultDist;
       if (spec.kind === 'ground_aoe') {
-        aimDistance = Math.max(0, Math.min(spec.range, dist));
+        rawDistance = Math.max(0, Math.min(spec.range, cursorDist));
       } else if (spec.kind === 'dash' && spec.action === 'dash') {
-        aimDistance =
-          dist >= 28 ? Math.max(36, Math.min(spec.range, dist)) : spec.defaultDist;
+        rawDistance =
+          cursorDist >= 28 ? Math.max(36, Math.min(spec.range, cursorDist)) : spec.defaultDist;
       } else {
-        aimDistance = spec.range;
+        rawDistance = spec.range;
       }
+
+      if (snap && spec.action !== 'dash' && spec.kind !== 'self_aoe') {
+        const smart = resolveSkillSmartTarget({
+          spec,
+          playerX: pos.x,
+          playerY: pos.y,
+          fallbackAngle: cursorAngle,
+          fallbackDistance: rawDistance,
+          cursorWorldX,
+          cursorWorldY,
+          preferCursorCone: true,
+          allowFullRangeFallback: false,
+          map,
+          props: snap.props,
+          enemies: snap.enemies,
+          trainingDummies: snap.trainingDummies,
+        });
+        const finalDist =
+          spec.kind === 'ground_aoe' ? smart.aimDistance : spec.range;
+        const magnitude =
+          spec.range > 0 ? Math.min(1, finalDist / spec.range) : 1;
+        return { aimAngle: smart.aimAngle, aimDistance: finalDist, magnitude };
+      }
+
       const magnitude =
-        spec.range > 0 ? Math.min(1, aimDistance / spec.range) : 1;
-      return { aimAngle: angle, aimDistance, magnitude };
+        spec.range > 0 ? Math.min(1, rawDistance / spec.range) : 1;
+      return { aimAngle: cursorAngle, aimDistance: rawDistance, magnitude };
     }
 
     return {
@@ -295,12 +356,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       cur.source === 'mouse' ? 'mouse' : 'keyboard',
       cur
     );
-    const castAngle =
-      cur.hasDragged === false
-        ? cur.aimAngle
-        : cur.source === 'mouse' || aimSourceRef.current === 'mouse'
-          ? refreshed.aimAngle
-          : aimAngleRef.current;
+    const castAngle = refreshed.aimAngle;
     const castDist = refreshed.aimDistance;
     const wasCancelled = forceCancel || cur.cancelled;
 
@@ -819,14 +875,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
         if (action === 'tactical' && me?.heroClass === 'arcanist' && me.equippedScrollId === 'disintegration') {
           if ((me.chronoSuspendedMs || 0) > 0) return;
+          const smartTarget = computeDesktopAimTarget('tactical', 'keyboard');
           disintegrationHoldSourceRef.current = 'q';
-          lastSentChannelAngleRef.current = aimAngleRef.current;
+          lastSentChannelAngleRef.current = smartTarget.aimAngle;
           lastChannelUpdateAtRef.current = performance.now();
           sfx.playArcanistSpell('disintegration');
           onSendCommandRef.current?.({
             type: 'player:channel_start',
             spellId: 'disintegration',
-            aimAngle: aimAngleRef.current,
+            aimAngle: smartTarget.aimAngle,
           });
           return;
         }
@@ -1060,6 +1117,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       };
     }
     const floatingTexts: ActiveFloatingText[] = [];
+    const recentStatusLabels = new Map<string, { at: number; x: number; y: number }>();
     const clericPulses: { x: number; y: number; bornAt: number }[] = [];
     const playerFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
     const enemyFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
@@ -1147,7 +1205,43 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       for (const ev of snap.events) {
         if (!seenEventIds.has(ev.id)) {
           seenEventIds.add(ev.id);
-          floatingTexts.push({ ...ev, bornAt: now });
+          const trimmedText = ev.text.trim();
+          const upperText = trimmedText.toUpperCase();
+          const isDialogue = trimmedText.startsWith('"');
+          let pushFloating = true;
+
+          if (ev.kind === 'status' && !isDialogue) {
+            if (
+              upperText.includes('IRON WILL') ||
+              upperText === 'ARMORED' ||
+              upperText.includes('EAGLE SWIFTNESS')
+            ) {
+              pushFloating = false;
+            } else {
+              const prevStatus = recentStatusLabels.get(upperText);
+              if (
+                prevStatus &&
+                now - prevStatus.at < 1300 &&
+                Math.hypot(ev.x - prevStatus.x, ev.y - prevStatus.y) < 160
+              ) {
+                pushFloating = false;
+              } else {
+                const activeNonDialogueStatus = floatingTexts.filter(
+                  (f) => f.kind === 'status' && !f.text.trim().startsWith('"') && now - f.bornAt < 800
+                ).length;
+                if (activeNonDialogueStatus >= 4) {
+                  pushFloating = false;
+                }
+              }
+              if (pushFloating) {
+                recentStatusLabels.set(upperText, { at: now, x: ev.x, y: ev.y });
+              }
+            }
+          }
+
+          if (pushFloating) {
+            floatingTexts.push({ ...ev, bornAt: now });
+          }
           if (ev.kind === 'gold') sfx.playCoin();
           else if (ev.kind === 'heal') {
             sfx.playHeal();
@@ -1487,7 +1581,25 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               particleManager.spawnClericSolarBeaconCast(z.x, z.y, z.radius, now);
             } else if (z.kind === 'star_rift') {
               particleManager.spawnArcanistBoltHit(z.x, z.y, now);
+            } else if (z.kind === 'chain_lightning_arc') {
+              particleManager.spawnLightningConeBurst(
+                z.x,
+                z.y,
+                z.angle ?? 0,
+                z.radius || 340,
+                z.coneHalfAngleRad ?? 0.56,
+                z.chainPoints,
+                now
+              );
+              screenShake = Math.min(8, Math.max(screenShake, 4.2));
             }
+          }
+        }
+        // Trigger player Arcane Meteor impact detonation in any room (boss or non-boss)
+        for (const [id, prevZ] of prevZonesMap.entries()) {
+          if (!currentZoneIds.has(id) && prevZ.ttlMs <= 220 && prevZ.kind === 'arcane_meteor') {
+            particleManager.spawnArcaneMeteorImpact(prevZ.x, prevZ.y, prevZ.radius, now);
+            screenShake = Math.min(9, Math.max(screenShake, 6.5));
           }
         }
         if (activeBoss) {
@@ -1561,8 +1673,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
                 particleManager.spawnOriphielVerdictStage(prevZ.x, prevZ.y, prevZ.radius, prevZ.stage || 1, now);
               } else if (prevZ.kind === 'warden_shatter') {
                 particleManager.spawnOriphielBastionShatter(prevZ.x, prevZ.y, prevZ.radius, now);
-              } else if (prevZ.kind === 'arcane_meteor') {
-                particleManager.spawnIgnisMagmaEruption(prevZ.x, prevZ.y, prevZ.radius, now);
               }
             }
           }
@@ -1586,14 +1696,20 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         particleManager.spawnMaliceVoidStep(prevBossState.x, prevBossState.y, activeBoss.x, activeBoss.y, now);
       }
 
-      // Track newly fired melee cleave arcs, silent boss nova spreads & projectile impacts
+      // Track newly fired melee cleave arcs, spell scroll launches, boss nova spreads & projectile impacts
       const currentProjIds = new Set<string>();
       let newBossProjCount = 0;
       for (const proj of snap.projectiles) {
         currentProjIds.add(proj.id);
         if (!prevProjectilesMap.has(proj.id)) {
-          if (proj.ownerType === 'player' && proj.style === 'slash') {
-            particleManager.spawnVanguardCleave(proj.x, proj.y, proj.angle, Boolean(proj.crit), now);
+          if (proj.ownerType === 'player') {
+            if (proj.style === 'slash') {
+              particleManager.spawnVanguardCleave(proj.x, proj.y, proj.angle, Boolean(proj.crit), now);
+            } else if (proj.style === 'fireball') {
+              particleManager.spawnFireballCastBurst(proj.x, proj.y, proj.angle, now);
+            } else if (proj.style === 'arcane_barrage') {
+              particleManager.spawnArcaneBarrageMuzzle(proj.x, proj.y, proj.angle, now);
+            }
           } else if (proj.ownerType === 'enemy' && activeBoss && proj.ownerId === activeBoss.id) {
             newBossProjCount++;
           }
@@ -1610,17 +1726,33 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
       if (hasInitWorldEffects) {
         for (const [id, prevProj] of prevProjectilesMap.entries()) {
-          if (!currentProjIds.has(id) && prevProj.ownerType === 'player' && prevProj.ttlMs > 90) {
-            if (prevProj.style === 'arrow') {
-              if (prevProj.slowOnHit) {
-                particleManager.spawnRangerFrostArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
-              } else {
-                particleManager.spawnRangerArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+          if (!currentProjIds.has(id) && prevProj.ownerType === 'player') {
+            if (prevProj.style === 'fireball') {
+              particleManager.spawnFireballExplosion(
+                prevProj.x,
+                prevProj.y,
+                prevProj.explosionRadius ?? 105,
+                now
+              );
+              screenShake = Math.min(8, Math.max(screenShake, 5.2));
+            } else if (prevProj.ttlMs > 90) {
+              if (prevProj.style === 'arrow') {
+                if (prevProj.slowOnHit) {
+                  particleManager.spawnRangerFrostArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+                } else {
+                  particleManager.spawnRangerArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+                }
+              } else if (prevProj.style === 'arcane') {
+                particleManager.spawnArcanistBoltHit(prevProj.x, prevProj.y, now);
+              } else if (prevProj.style === 'radiant') {
+                particleManager.spawnClericSmiteHit(prevProj.x, prevProj.y, Boolean(prevProj.crit), now);
+              } else if (prevProj.style === 'frost_lance') {
+                particleManager.spawnFrostLanceImpact(prevProj.x, prevProj.y, prevProj.angle, now);
+              } else if (prevProj.style === 'arcane_orb') {
+                particleManager.spawnArcaneOrbImpact(prevProj.x, prevProj.y, now);
+              } else if (prevProj.style === 'arcane_barrage') {
+                particleManager.spawnArcaneBarrageImpact(prevProj.x, prevProj.y, Boolean(prevProj.crit), now);
               }
-            } else if (prevProj.style === 'arcane') {
-              particleManager.spawnArcanistBoltHit(prevProj.x, prevProj.y, now);
-            } else if (prevProj.style === 'radiant') {
-              particleManager.spawnClericSmiteHit(prevProj.x, prevProj.y, Boolean(prevProj.crit), now);
             }
           }
         }
@@ -3295,91 +3427,230 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.stroke();
 
           ctx.restore();
+        } else if (z.kind === 'fireball_burn') {
+          const lifeRatio = Math.max(0, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const fadeOut = lifeRatio < 0.25 ? lifeRatio / 0.25 : 1;
+          const pulse = 0.85 + 0.15 * Math.sin(now * 0.012);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+
+          // Scorched magma crater ground gradient
+          const craterGrad = ctx.createRadialGradient(0, 0, z.radius * 0.1, 0, 0, z.radius);
+          craterGrad.addColorStop(0, `rgba(251, 146, 60, ${(0.38 * fadeOut * pulse).toFixed(3)})`);
+          craterGrad.addColorStop(0.55, `rgba(220, 38, 38, ${(0.26 * fadeOut).toFixed(3)})`);
+          craterGrad.addColorStop(0.88, `rgba(124, 45, 18, ${(0.18 * fadeOut).toFixed(3)})`);
+          craterGrad.addColorStop(1, 'rgba(28, 25, 23, 0)');
+          ctx.fillStyle = craterGrad;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Glowing magma fissure cracks radiating from impact center
+          ctx.strokeStyle = `rgba(253, 224, 71, ${(0.55 * fadeOut * pulse).toFixed(3)})`;
+          ctx.lineWidth = 1.8;
+          for (let c = 0; c < 6; c++) {
+            const baseA = (c * Math.PI) / 3 + 0.25;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            const midR = z.radius * 0.45;
+            const endR = z.radius * 0.84;
+            const bend = Math.sin(c * 2.3) * 0.22;
+            ctx.lineTo(Math.cos(baseA + bend) * midR, Math.sin(baseA + bend) * midR);
+            ctx.lineTo(Math.cos(baseA - bend * 0.6) * endR, Math.sin(baseA - bend * 0.6) * endR);
+            ctx.stroke();
+          }
+
+          // Pulsing burning rim
+          ctx.strokeStyle = `rgba(249, 115, 22, ${(0.72 * fadeOut * pulse).toFixed(3)})`;
+          ctx.lineWidth = 2.2;
+          ctx.setLineDash([8, 5]);
+          ctx.beginPath();
+          ctx.arc(0, 0, z.radius * 0.96, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+
+          if ((z.chronoSuspendedMs || 0) <= 0) {
+            particleManager.spawnFireballBurnEmbers(z.x, z.y, z.radius, now);
+          }
         } else if (z.kind === 'arcane_meteor') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
           ctx.translate(z.x, z.y);
 
-          // Target blast area fill + warning rim
-          ctx.fillStyle = `rgba(249, 115, 22, ${0.14 + progress * 0.22})`;
+          // Arcane cosmic blast zone fill + celestial rune ring
+          const metFloorGrad = ctx.createRadialGradient(0, 0, 8, 0, 0, z.radius);
+          metFloorGrad.addColorStop(0, `rgba(232, 121, 249, ${(0.18 + progress * 0.26).toFixed(3)})`);
+          metFloorGrad.addColorStop(0.7, `rgba(126, 34, 206, ${(0.16 + progress * 0.2).toFixed(3)})`);
+          metFloorGrad.addColorStop(1, 'rgba(56, 189, 248, 0.08)');
+          ctx.fillStyle = metFloorGrad;
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(251, 146, 60, 0.92)';
-          ctx.lineWidth = 2.5;
+          // Rotating celestial outer rune ring
+          ctx.save();
+          ctx.rotate(now * 0.003);
+          ctx.strokeStyle = 'rgba(232, 121, 249, 0.92)';
+          ctx.lineWidth = 2.6;
+          ctx.setLineDash([12, 6]);
           ctx.beginPath();
           ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
           ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+
+          // Dark impact shadow growing beneath meteor
+          ctx.fillStyle = `rgba(15, 23, 42, ${(0.18 + progress * 0.34).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, Math.max(8, z.radius * 0.32 * progress), Math.max(5, z.radius * 0.18 * progress), 0, 0, Math.PI * 2);
+          ctx.fill();
 
           // Shrinking countdown lock-on ring
           const shrinkR = Math.max(6, z.radius * (1 - progress));
-          ctx.strokeStyle = 'rgba(254, 240, 138, 0.95)';
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(186, 230, 253, 0.95)';
+          ctx.lineWidth = 2.2;
           ctx.beginPath();
           ctx.arc(0, 0, shrinkR, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Falling meteor core descending from above
-          const dropY = -(1 - progress) * 180;
-          const mRadius = 10 + progress * 12;
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+          // Falling celestial meteor comet descending from above
+          const dropY = -(1 - progress) * 210;
+          const mRadius = 11 + progress * 14;
+          const tailGrad = ctx.createLinearGradient(0, dropY, 0, dropY - 76);
+          tailGrad.addColorStop(0, 'rgba(232, 121, 249, 0.78)');
+          tailGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.35)');
+          tailGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+          ctx.fillStyle = tailGrad;
           ctx.beginPath();
-          ctx.moveTo(-mRadius * 0.7, dropY);
-          ctx.lineTo(0, dropY - 56);
-          ctx.lineTo(mRadius * 0.7, dropY);
+          ctx.moveTo(-mRadius * 0.85, dropY);
+          ctx.lineTo(0, dropY - 76);
+          ctx.lineTo(mRadius * 0.85, dropY);
           ctx.closePath();
           ctx.fill();
 
-          const metGrad = ctx.createRadialGradient(0, dropY, 2, 0, dropY, mRadius);
+          const metGrad = ctx.createRadialGradient(0, dropY, 2, 0, dropY, mRadius * 1.15);
           metGrad.addColorStop(0, '#FFFFFF');
-          metGrad.addColorStop(0.4, '#FDE047');
-          metGrad.addColorStop(0.8, '#EA580C');
-          metGrad.addColorStop(1, '#7C2D12');
+          metGrad.addColorStop(0.35, '#F0ABFC');
+          metGrad.addColorStop(0.7, '#A855F7');
+          metGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
           ctx.fillStyle = metGrad;
           ctx.beginPath();
-          ctx.arc(0, dropY, mRadius, 0, Math.PI * 2);
+          ctx.arc(0, dropY, mRadius * 1.15, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
-        } else if (z.kind === 'chain_lightning_arc' && z.chainPoints && z.chainPoints.length >= 2) {
+
+          if ((z.chronoSuspendedMs || 0) <= 0) {
+            particleManager.spawnArcaneMeteorDescent(z.x, z.y, dropY, now);
+          }
+        } else if (z.kind === 'chain_lightning_arc') {
           const alpha = Math.max(0.15, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const coneAngle = z.angle ?? 0;
+          const coneRange = z.radius || 340;
+          const halfArc = z.coneHalfAngleRad ?? 0.56;
+          const minA = coneAngle - halfArc;
+          const maxA = coneAngle + halfArc;
+
           ctx.save();
-          for (let i = 0; i < z.chainPoints.length - 1; i++) {
-            const p1 = z.chainPoints[i];
-            const p2 = z.chainPoints[i + 1];
-            const dx = p2.x - p1.x;
-            const dy = p2.y - p1.y;
+
+          // 1. Electrified cone flash sector + crisp cone edges
+          const coneGrad = ctx.createRadialGradient(z.x, z.y, 10, z.x, z.y, coneRange);
+          coneGrad.addColorStop(0, `rgba(250, 204, 21, ${(0.34 * alpha).toFixed(3)})`);
+          coneGrad.addColorStop(0.55, `rgba(56, 189, 248, ${(0.22 * alpha).toFixed(3)})`);
+          coneGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+          ctx.fillStyle = coneGrad;
+          ctx.beginPath();
+          ctx.moveTo(z.x, z.y);
+          ctx.arc(z.x, z.y, coneRange, minA, maxA);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.strokeStyle = `rgba(253, 224, 71, ${(0.65 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(z.x, z.y);
+          ctx.lineTo(z.x + Math.cos(minA) * coneRange, z.y + Math.sin(minA) * coneRange);
+          ctx.moveTo(z.x, z.y);
+          ctx.lineTo(z.x + Math.cos(maxA) * coneRange, z.y + Math.sin(maxA) * coneRange);
+          ctx.stroke();
+
+          // 2. Animated forked electric bolts fanning across the cone
+          const drawJaggedBolt = (
+            x1: number,
+            y1: number,
+            x2: number,
+            y2: number,
+            seedOffset: number,
+            outerWidth: number,
+            amp: number
+          ) => {
+            const dx = x2 - x1;
+            const dy = y2 - y1;
             const len = Math.max(1, Math.hypot(dx, dy));
             const nx = -dy / len;
             const ny = dx / len;
-            const segs = 6;
-            const pts: { x: number; y: number }[] = [p1];
+            const segs = 7;
+            const pts: { x: number; y: number }[] = [{ x: x1, y: y1 }];
             for (let s = 1; s < segs; s++) {
               const t = s / segs;
-              const jitter = Math.sin(now * 0.05 + i * 7 + s * 3.1) * 11;
+              const jitter = Math.sin(now * 0.065 + seedOffset * 5.7 + s * 3.1) * amp;
               pts.push({
-                x: p1.x + dx * t + nx * jitter,
-                y: p1.y + dy * t + ny * jitter,
+                x: x1 + dx * t + nx * jitter,
+                y: y1 + dy * t + ny * jitter,
               });
             }
-            pts.push(p2);
+            pts.push({ x: x2, y: y2 });
 
-            ctx.strokeStyle = `rgba(56, 189, 248, ${(0.85 * alpha).toFixed(2)})`;
-            ctx.lineWidth = 5;
+            ctx.strokeStyle = `rgba(56, 189, 248, ${(0.72 * alpha).toFixed(3)})`;
+            ctx.lineWidth = outerWidth;
             ctx.beginPath();
             pts.forEach((pt, pi) => (pi === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
             ctx.stroke();
 
-            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha.toFixed(2)})`;
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = `rgba(253, 224, 71, ${(0.92 * alpha).toFixed(3)})`;
+            ctx.lineWidth = Math.max(2, outerWidth * 0.48);
             ctx.beginPath();
             pts.forEach((pt, pi) => (pi === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
             ctx.stroke();
 
-            ctx.fillStyle = `rgba(186, 230, 253, ${alpha.toFixed(2)})`;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+            ctx.lineWidth = 1.4;
             ctx.beginPath();
-            ctx.arc(p2.x, p2.y, 7, 0, Math.PI * 2);
-            ctx.fill();
+            pts.forEach((pt, pi) => (pi === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y)));
+            ctx.stroke();
+          };
+
+          for (let f = 0; f < 5; f++) {
+            const frac = (f / 4) - 0.5;
+            const rayA = coneAngle + frac * halfArc * 1.78;
+            const rayLen = coneRange * (0.86 + (f % 2) * 0.12);
+            drawJaggedBolt(
+              z.x,
+              z.y,
+              z.x + Math.cos(rayA) * rayLen,
+              z.y + Math.sin(rayA) * rayLen,
+              f + 1,
+              4.2,
+              12
+            );
+          }
+
+          // 3. Direct bright discharge arcs locking onto every shocked foe in cone
+          if (z.chainPoints && z.chainPoints.length >= 2) {
+            const originPt = z.chainPoints[0];
+            for (let i = 1; i < z.chainPoints.length; i++) {
+              const targetPt = z.chainPoints[i];
+              drawJaggedBolt(originPt.x, originPt.y, targetPt.x, targetPt.y, 20 + i * 3, 6.2, 13);
+
+              ctx.fillStyle = `rgba(253, 224, 71, ${(0.85 * alpha).toFixed(3)})`;
+              ctx.beginPath();
+              ctx.arc(targetPt.x, targetPt.y, 9, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+              ctx.beginPath();
+              ctx.arc(targetPt.x, targetPt.y, 4.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
           }
           ctx.restore();
         }
@@ -5035,50 +5306,85 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           }
           const finalLen = Math.max(18, Math.min(maxRange, bDist));
           const warmingUp = ch.activationRemainingMs > 0;
-          const widthScale = warmingUp ? 0.32 : 1.0 + Math.sin(now * 0.03) * 0.08;
+          const widthScale = warmingUp ? 0.34 : 1.0 + Math.sin(now * 0.03) * 0.09;
 
           ctx.save();
           ctx.translate(hx, hy);
           ctx.rotate(ch.angle);
 
+          // Casting muzzle arcane focal rune ring
+          ctx.strokeStyle = warmingUp ? 'rgba(232, 121, 249, 0.7)' : 'rgba(56, 189, 248, 0.9)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.ellipse(10, 0, 5, warmingUp ? 11 : 20, 0, 0, Math.PI * 2);
+          ctx.stroke();
+
           // Outer violet plasma field (42u width when active)
           const outerW = beamWidth * widthScale;
-          ctx.fillStyle = warmingUp ? 'rgba(192, 132, 252, 0.35)' : 'rgba(147, 51, 234, 0.38)';
+          ctx.fillStyle = warmingUp ? 'rgba(192, 132, 252, 0.36)' : 'rgba(147, 51, 234, 0.42)';
           ctx.fillRect(8, -outerW / 2, finalLen - 8, outerW);
 
           // Mid magenta/indigo beam
           const midW = outerW * 0.54;
-          ctx.fillStyle = warmingUp ? 'rgba(232, 121, 249, 0.55)' : 'rgba(217, 70, 239, 0.72)';
+          ctx.fillStyle = warmingUp ? 'rgba(232, 121, 249, 0.58)' : 'rgba(217, 70, 239, 0.78)';
           ctx.fillRect(8, -midW / 2, finalLen - 8, midW);
 
           // High-energy white-cyan beam core
-          const coreW = Math.max(3, outerW * 0.22);
+          const coreW = Math.max(3.5, outerW * 0.24);
           ctx.fillStyle = '#FFFFFF';
           ctx.fillRect(8, -coreW / 2, finalLen - 8, coreW);
 
-          // Moving pulse rings along beam axis
+          // Dual braided helical energy ribbons + pulse shock rings
           if (!warmingUp) {
-            ctx.strokeStyle = 'rgba(186, 230, 253, 0.85)';
-            ctx.lineWidth = 2;
-            const ringOffset = (now * 0.35) % 56;
-            for (let rx = 24 + ringOffset; rx < finalLen - 12; rx += 56) {
+            const amp = outerW * 0.38;
+            for (let strand = 0; strand < 2; strand++) {
+              const phaseShift = strand * Math.PI;
+              ctx.strokeStyle = strand === 0 ? 'rgba(56, 189, 248, 0.92)' : 'rgba(240, 171, 252, 0.9)';
+              ctx.lineWidth = 2.2;
               ctx.beginPath();
-              ctx.ellipse(rx, 0, 4, outerW * 0.48, 0, 0, Math.PI * 2);
+              for (let rx = 10; rx <= finalLen; rx += 10) {
+                const ry = Math.sin(rx * 0.08 - now * 0.022 + phaseShift) * amp;
+                if (rx === 10) ctx.moveTo(rx, ry);
+                else ctx.lineTo(rx, ry);
+              }
+              ctx.stroke();
+            }
+
+            ctx.strokeStyle = 'rgba(186, 230, 253, 0.88)';
+            ctx.lineWidth = 2;
+            const ringOffset = (now * 0.35) % 52;
+            for (let rx = 20 + ringOffset; rx < finalLen - 10; rx += 52) {
+              ctx.beginPath();
+              ctx.ellipse(rx, 0, 4.5, outerW * 0.49, 0, 0, Math.PI * 2);
               ctx.stroke();
             }
           }
 
-          // Tip terminus flare
-          ctx.fillStyle = '#E879F9';
+          // Tip terminus dispersion flare
+          ctx.fillStyle = 'rgba(232, 121, 249, 0.75)';
           ctx.beginPath();
-          ctx.arc(finalLen, 0, outerW * 0.42, 0, Math.PI * 2);
+          ctx.arc(finalLen, 0, outerW * 0.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#38BDF8';
+          ctx.beginPath();
+          ctx.arc(finalLen, 0, outerW * 0.3, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = '#FFFFFF';
           ctx.beginPath();
-          ctx.arc(finalLen, 0, coreW, 0, Math.PI * 2);
+          ctx.arc(finalLen, 0, coreW * 1.15, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.restore();
+
+          particleManager.spawnDisintegrationBeamParticles(
+            hx,
+            hy,
+            hx + bCos * finalLen,
+            hy + bSin * finalLen,
+            ch.angle,
+            warmingUp,
+            now
+          );
         }
       }
 
@@ -5172,34 +5478,69 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.fillStyle = '#FEF08A';
           ctx.fillText(` ${ft.text}!`, 0, 0);
         } else if (ft.kind === 'status') {
-          // Styled Status / Speech Badge
+          const trimmed = ft.text.trim();
+          const upper = trimmed.toUpperCase();
+          const isMajorStatus =
+            isDialogue ||
+            upper.includes('PHASE') ||
+            upper.includes('ENRAGED') ||
+            upper.includes('LEVEL') ||
+            upper.includes('PORTAL') ||
+            upper.includes('WARD') ||
+            upper.includes('GUARDIAN') ||
+            upper.includes('ROOM CLEARED') ||
+            upper.includes('FLOOR CLEARED') ||
+            upper.includes('RELIC') ||
+            upper.includes('SCROLL') ||
+            upper.includes('OBELISK') ||
+            upper.includes('LOCKED') ||
+            upper.includes('DETONATION') ||
+            upper.includes('JUDGMENT') ||
+            upper.includes('PARRY') ||
+            upper.includes('SHIELD WALL') ||
+            upper.includes('WAR CHARGE') ||
+            upper.includes('SUPERNOVA') ||
+            upper.includes('SINGULARITY') ||
+            upper.includes('CHARM BROKEN') ||
+            upper.includes('COOLDOWNS') ||
+            upper.includes('SKILLS READY') ||
+            upper.includes('RESET');
+
           ctx.translate(ft.x, floatY);
-          ctx.font = isDialogue
-            ? '600 12px "Plus Jakarta Sans", sans-serif'
-            : '700 11px "JetBrains Mono", monospace';
-          const textW = ctx.measureText(ft.text).width;
+          if (isMajorStatus) {
+            ctx.font = isDialogue
+              ? '600 12px "Plus Jakarta Sans", sans-serif'
+              : '700 11px "JetBrains Mono", monospace';
+            const textW = ctx.measureText(ft.text).width;
 
-          // Translucent Speech/Status box
-          ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
-          ctx.fillRect(-textW / 2 - 8, -13, textW + 16, 20);
-          ctx.strokeStyle = isDialogue ? '#FCD34D' : ft.color;
-          ctx.lineWidth = 1.4;
-          ctx.strokeRect(-textW / 2 - 8, -13, textW + 16, 20);
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+            ctx.fillRect(-textW / 2 - 8, -13, textW + 16, 20);
+            ctx.strokeStyle = isDialogue ? '#FCD34D' : ft.color;
+            ctx.lineWidth = 1.4;
+            ctx.strokeRect(-textW / 2 - 8, -13, textW + 16, 20);
 
-          if (isDialogue) {
-            // Speech tail pointer
-            ctx.fillStyle = '#FCD34D';
-            ctx.beginPath();
-            ctx.moveTo(0, 7);
-            ctx.lineTo(-4, 11);
-            ctx.lineTo(4, 11);
-            ctx.closePath();
-            ctx.fill();
+            if (isDialogue) {
+              ctx.fillStyle = '#FCD34D';
+              ctx.beginPath();
+              ctx.moveTo(0, 7);
+              ctx.lineTo(-4, 11);
+              ctx.lineTo(4, 11);
+              ctx.closePath();
+              ctx.fill();
+            }
+
+            ctx.textAlign = 'center';
+            ctx.fillStyle = isDialogue ? '#FDE68A' : ft.color;
+            ctx.fillText(ft.text, 0, 1);
+          } else {
+            // Compact borderless status cue for combat procs so the arena stays clear
+            ctx.font = '700 10px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillText(trimmed, 1, 2);
+            ctx.fillStyle = ft.color;
+            ctx.fillText(trimmed, 0, 1);
           }
-
-          ctx.textAlign = 'center';
-          ctx.fillStyle = isDialogue ? '#FDE68A' : ft.color;
-          ctx.fillText(ft.text, 0, 1);
         } else {
           // Standard Damage, Heal, Gold, Ping
           ctx.font =
@@ -5539,14 +5880,15 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         canStartAbilityAim('tactical') &&
         (me.chronoSuspendedMs || 0) <= 0
       ) {
+        const smartTarget = computeDesktopAimTarget('tactical', 'mouse');
         disintegrationHoldSourceRef.current = 'rmb';
-        lastSentChannelAngleRef.current = aimAngleRef.current;
+        lastSentChannelAngleRef.current = smartTarget.aimAngle;
         lastChannelUpdateAtRef.current = performance.now();
         sfx.playArcanistSpell('disintegration');
         onSendCommandRef.current?.({
           type: 'player:channel_start',
           spellId: 'disintegration',
-          aimAngle: aimAngleRef.current,
+          aimAngle: smartTarget.aimAngle,
         });
         return;
       }

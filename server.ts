@@ -1506,6 +1506,8 @@ async function startServer() {
         room.stopDisintegrationChannel(acc.id);
       } else if (msg.type === 'player:select_scroll') {
         room.selectArcanistScroll(acc.id, msg.scrollId);
+      } else if (msg.type === 'player:close_chest') {
+        room.closeChest(acc.id);
       } else if (msg.type === 'player:select_relic') {
         room.selectRelic(acc.id, msg.relicId);
         acc.storedRelics = [...(room.getPlayerState(acc.id)?.storage || [])];

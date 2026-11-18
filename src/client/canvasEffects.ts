@@ -1390,13 +1390,45 @@ export class ParticleManager {
       attractSpiralBias = 0.35;
       maxAgeMs = 320 + Math.random() * 120;
     } else if (proj.style === 'fireball') {
-      color = Math.random() > 0.5 ? '#F97316' : '#EF4444';
+      color = Math.random() > 0.35 ? '#F97316' : '#EF4444';
       secondaryColor = '#FEF08A';
       colorEnd = '#7F1D1D';
-      shape = Math.random() > 0.5 ? 'flame' : 'smoke';
-      size = 2.5;
-      gravity = -20;
-      maxAgeMs = 350 + Math.random() * 150;
+      shape = Math.random() > 0.4 ? 'flame' : 'smoke';
+      size = 3.2;
+      wander = 12;
+      gravity = -26;
+      maxAgeMs = 380 + Math.random() * 160;
+    } else if (proj.style === 'frost_lance') {
+      color = Math.random() > 0.45 ? '#BAE6FD' : '#38BDF8';
+      secondaryColor = '#FFFFFF';
+      colorEnd = '#0284C7';
+      shape = Math.random() > 0.4 ? 'shard' : 'diamond';
+      size = 2.4;
+      wander = 10;
+      stretchWithVelocity = true;
+      stretchFactor = 0.007;
+      maxAgeMs = 290 + Math.random() * 130;
+    } else if (proj.style === 'arcane_orb') {
+      color = Math.random() > 0.5 ? '#C084FC' : '#38BDF8';
+      secondaryColor = '#E0E7FF';
+      colorEnd = '#312E81';
+      shape = Math.random() > 0.4 ? 'rune' : 'spark';
+      size = 2.6;
+      attractX = proj.x;
+      attractY = proj.y;
+      attractStrength = 95;
+      attractSpiralBias = 0.45;
+      maxAgeMs = 360 + Math.random() * 150;
+    } else if (proj.style === 'arcane_barrage') {
+      color = Math.random() > 0.5 ? '#60A5FA' : '#E879F9';
+      secondaryColor = '#FFFFFF';
+      colorEnd = '#4C1D95';
+      shape = Math.random() > 0.45 ? 'streak' : 'diamond';
+      size = 2.1;
+      stretchWithVelocity = true;
+      stretchFactor = 0.009;
+      curveDrift = (Math.random() - 0.5) * 32;
+      maxAgeMs = 220 + Math.random() * 100;
     } else if (proj.style === 'slash') {
       color = proj.crit ? '#FDE047' : Math.random() > 0.5 ? '#F59E0B' : '#E2E8F0';
       secondaryColor = '#FFFFFF';
@@ -2966,6 +2998,646 @@ export class ParticleManager {
         shape: Math.random() > 0.4 ? 'rune' : 'crescent',
         glow: false,
         priority: 'low',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Fireball): Muzzle ignition burst when launching an enlarged fireball.
+   */
+  public spawnFireballCastBurst(
+    x: number,
+    y: number,
+    angle: number,
+    now: number = performance.now()
+  ): void {
+    this.acquireParticle({
+      x: x + Math.cos(angle) * 12,
+      y: y + Math.sin(angle) * 12,
+      vx: 0,
+      vy: 0,
+      color: '#FEF08A',
+      secondaryColor: '#F97316',
+      size: 4.5,
+      bornAt: now,
+      maxAgeMs: 170,
+      shape: 'starburst',
+      glow: true,
+      priority: 'high',
+    });
+    for (let i = 0; i < 8; i++) {
+      const a = angle + (Math.random() - 0.5) * 0.85;
+      const sp = 75 + Math.random() * 75;
+      this.acquireParticle({
+        x: x + Math.cos(angle) * 10,
+        y: y + Math.sin(angle) * 10,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#FB923C' : '#FDE047',
+        colorEnd: '#991B1B',
+        size: 2.8 + Math.random() * 1.4,
+        bornAt: now,
+        maxAgeMs: 260 + Math.random() * 120,
+        friction: 0.9,
+        gravity: -18,
+        shape: i % 2 === 0 ? 'flame' : 'spark',
+        glow: true,
+        priority: 'high',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Fireball): Full-radius fiery detonation shockwave + embers + rising smoke.
+   */
+  public spawnFireballExplosion(
+    x: number,
+    y: number,
+    radius: number = 105,
+    now: number = performance.now()
+  ): void {
+    // 1. Primary incandescent starburst flash
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#FFFFFF',
+      secondaryColor: '#FEF08A',
+      size: 7.5,
+      bornAt: now,
+      maxAgeMs: 220,
+      shape: 'starburst',
+      glow: true,
+      priority: 'critical',
+    });
+
+    // 2. Dual shockwave rings (inner white-gold + outer orange-crimson)
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#FDE047',
+      size: 5,
+      ringRadius: 8,
+      ringMaxRadius: radius * 0.72,
+      ringLineWidth: 3.5,
+      bornAt: now,
+      maxAgeMs: 260,
+      shape: 'ring',
+      glow: true,
+      priority: 'critical',
+    });
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#F97316',
+      colorEnd: '#DC2626',
+      size: 5,
+      ringRadius: 10,
+      ringMaxRadius: radius,
+      ringLineWidth: 3.2,
+      bornAt: now,
+      maxAgeMs: 360,
+      shape: 'ring',
+      glow: true,
+      priority: 'critical',
+    });
+
+    // 3. Radial fireball flames
+    for (let i = 0; i < 16; i++) {
+      const a = (i * Math.PI * 2) / 16 + (Math.random() - 0.5) * 0.25;
+      const sp = 90 + Math.random() * 140;
+      this.acquireParticle({
+        x: x + Math.cos(a) * 6,
+        y: y + Math.sin(a) * 6,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 3 === 0 ? '#FEF08A' : i % 3 === 1 ? '#F97316' : '#EF4444',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#7F1D1D',
+        size: 3.8 + Math.random() * 2.2,
+        bornAt: now,
+        maxAgeMs: 380 + Math.random() * 200,
+        friction: 0.9,
+        gravity: -28,
+        shape: 'flame',
+        glow: true,
+        priority: 'critical',
+      });
+    }
+
+    // 4. High-speed embers + scorching smoke plumes
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 140 + Math.random() * 120;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: '#FDE047',
+        colorEnd: '#EA580C',
+        size: 2.2 + Math.random() * 1.4,
+        bornAt: now,
+        maxAgeMs: 320 + Math.random() * 180,
+        friction: 0.92,
+        stretchWithVelocity: true,
+        stretchFactor: 0.008,
+        shape: 'streak',
+        glow: true,
+        priority: 'high',
+      });
+    }
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.random() * (radius * 0.45);
+      this.acquireParticle({
+        x: x + Math.cos(a) * d,
+        y: y + Math.sin(a) * d,
+        vx: (Math.random() - 0.5) * 28,
+        vy: -22 - Math.random() * 24,
+        color: '#57534E',
+        colorEnd: '#1C1917',
+        size: 4.5 + Math.random() * 2.5,
+        bornAt: now,
+        maxAgeMs: 520 + Math.random() * 220,
+        friction: 0.95,
+        shape: 'smoke',
+        glow: false,
+        alphaStart: 0.55,
+        alphaEnd: 0,
+        priority: 'normal',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Fireball Burn): Ambient rising flames & glowing embers from the scorched ground zone.
+   */
+  public spawnFireballBurnEmbers(
+    x: number,
+    y: number,
+    radius: number,
+    now: number = performance.now()
+  ): void {
+    if (Math.random() < 0.42) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * radius * 0.85;
+      const isFlame = Math.random() > 0.45;
+      this.acquireParticle({
+        x: x + Math.cos(a) * r,
+        y: y + Math.sin(a) * r,
+        vx: (Math.random() - 0.5) * 18,
+        vy: -26 - Math.random() * 32,
+        color: isFlame ? (Math.random() > 0.5 ? '#F97316' : '#EF4444') : '#FDE047',
+        secondaryColor: '#FEF9C3',
+        colorEnd: '#7C2D12',
+        size: isFlame ? 3.2 + Math.random() * 1.4 : 1.8 + Math.random(),
+        bornAt: now,
+        maxAgeMs: 420 + Math.random() * 240,
+        wander: 10,
+        friction: 0.95,
+        shape: isFlame ? 'flame' : 'spark',
+        glow: true,
+        priority: 'low',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Frost Lance): Crystalline shatter burst along travel direction.
+   */
+  public spawnFrostLanceImpact(
+    x: number,
+    y: number,
+    angle: number,
+    now: number = performance.now()
+  ): void {
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#BAE6FD',
+      size: 4,
+      ringRadius: 4,
+      ringMaxRadius: 28,
+      ringLineWidth: 2.2,
+      bornAt: now,
+      maxAgeMs: 220,
+      shape: 'ring',
+      glow: true,
+      priority: 'high',
+    });
+    for (let i = 0; i < 10; i++) {
+      const a = angle + (Math.random() - 0.5) * 2.2;
+      const sp = 70 + Math.random() * 105;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#E0F2FE' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#0369A1',
+        size: 2.6 + Math.random() * 1.4,
+        bornAt: now,
+        maxAgeMs: 300 + Math.random() * 160,
+        friction: 0.91,
+        rotation: a,
+        angularVelocity: (Math.random() - 0.5) * 14,
+        shape: i % 3 === 0 ? 'diamond' : 'shard',
+        glow: true,
+        priority: 'high',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Chain Lightning Cone): Electric cone surge streaks + crackling target bolts.
+   */
+  public spawnLightningConeBurst(
+    x: number,
+    y: number,
+    angle: number,
+    range: number = 340,
+    halfAngle: number = 0.56,
+    chainPoints?: { x: number; y: number }[],
+    now: number = performance.now()
+  ): void {
+    // Muzzle surge flash
+    this.acquireParticle({
+      x: x + Math.cos(angle) * 14,
+      y: y + Math.sin(angle) * 14,
+      vx: 0,
+      vy: 0,
+      color: '#FFFFFF',
+      secondaryColor: '#FDE047',
+      size: 5.5,
+      bornAt: now,
+      maxAgeMs: 180,
+      shape: 'starburst',
+      glow: true,
+      priority: 'critical',
+    });
+
+    // High-velocity electric streaks fanning across the cone
+    for (let i = 0; i < 16; i++) {
+      const a = angle + ((i / 15) - 0.5) * halfAngle * 1.9 + (Math.random() - 0.5) * 0.08;
+      const sp = 280 + Math.random() * 240;
+      this.acquireParticle({
+        x: x + Math.cos(a) * 16,
+        y: y + Math.sin(a) * 16,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#FDE047' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#0284C7',
+        size: 2.4 + Math.random() * 1.2,
+        bornAt: now,
+        maxAgeMs: Math.min(260, (range / sp) * 650),
+        friction: 0.93,
+        stretchWithVelocity: true,
+        stretchFactor: 0.011,
+        shape: 'streak',
+        glow: true,
+        priority: 'critical',
+      });
+    }
+
+    // Arc to every shocked target in the cone
+    if (chainPoints && chainPoints.length >= 2) {
+      for (let i = 1; i < chainPoints.length; i++) {
+        this.spawnLightningArc(x, y, chainPoints[i].x, chainPoints[i].y, now);
+      }
+    }
+  }
+
+  /**
+   * SCROLL (Arcane Meteor): Falling celestial stardust during telegraph descent.
+   */
+  public spawnArcaneMeteorDescent(
+    x: number,
+    y: number,
+    dropY: number,
+    now: number = performance.now()
+  ): void {
+    if (Math.random() < 0.55) {
+      this.acquireParticle({
+        x: x + (Math.random() - 0.5) * 20,
+        y: y + dropY + (Math.random() - 0.5) * 14,
+        vx: (Math.random() - 0.5) * 24,
+        vy: -45 - Math.random() * 45,
+        color: Math.random() > 0.45 ? '#E879F9' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#6B21A8',
+        size: 2.5 + Math.random() * 1.5,
+        bornAt: now,
+        maxAgeMs: 280 + Math.random() * 150,
+        friction: 0.94,
+        shape: Math.random() > 0.5 ? 'rune' : 'star',
+        glow: true,
+        priority: 'normal',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Arcane Meteor): Cataclysmic cosmic starburst impact + double shockwaves + rune shrapnel.
+   */
+  public spawnArcaneMeteorImpact(
+    x: number,
+    y: number,
+    radius: number = 125,
+    now: number = performance.now()
+  ): void {
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#FFFFFF',
+      secondaryColor: '#F0ABFC',
+      size: 8.5,
+      bornAt: now,
+      maxAgeMs: 250,
+      rotation: 0,
+      angularVelocity: 8,
+      shape: 'starburst',
+      glow: true,
+      priority: 'critical',
+    });
+
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#38BDF8',
+      size: 5,
+      ringRadius: 10,
+      ringMaxRadius: radius * 0.8,
+      ringLineWidth: 3.4,
+      bornAt: now,
+      maxAgeMs: 280,
+      shape: 'ring',
+      glow: true,
+      priority: 'critical',
+    });
+
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#E879F9',
+      colorEnd: '#7E22CE',
+      size: 5,
+      ringRadius: 12,
+      ringMaxRadius: radius,
+      ringLineWidth: 3.8,
+      bornAt: now,
+      maxAgeMs: 390,
+      shape: 'ring',
+      glow: true,
+      priority: 'critical',
+    });
+
+    for (let i = 0; i < 20; i++) {
+      const a = (i * Math.PI * 2) / 20 + (Math.random() - 0.5) * 0.2;
+      const sp = 110 + Math.random() * 165;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 3 === 0 ? '#E879F9' : i % 3 === 1 ? '#38BDF8' : '#FDE047',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#4C1D95',
+        size: 3.2 + Math.random() * 1.8,
+        bornAt: now,
+        maxAgeMs: 420 + Math.random() * 200,
+        friction: 0.9,
+        spiralSpeed: 2.8,
+        spiralTangentialVelocity: 40,
+        rotation: a,
+        angularVelocity: 7,
+        shape: i % 3 === 0 ? 'rune' : i % 3 === 1 ? 'diamond' : 'star',
+        glow: true,
+        priority: 'critical',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Arcane Orb): Cosmic sphere dissipation burst at end of path.
+   */
+  public spawnArcaneOrbImpact(
+    x: number,
+    y: number,
+    now: number = performance.now()
+  ): void {
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#A5B4FC',
+      colorEnd: '#38BDF8',
+      size: 4,
+      ringRadius: 8,
+      ringMaxRadius: 42,
+      ringLineWidth: 2.5,
+      bornAt: now,
+      maxAgeMs: 280,
+      shape: 'ring',
+      glow: true,
+      priority: 'high',
+    });
+    for (let i = 0; i < 12; i++) {
+      const a = (i * Math.PI * 2) / 12;
+      const sp = 65 + Math.random() * 65;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#C084FC' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#312E81',
+        size: 2.8 + Math.random() * 1.2,
+        bornAt: now,
+        maxAgeMs: 360 + Math.random() * 160,
+        friction: 0.92,
+        spiralSpeed: 3.2,
+        spiralTangentialVelocity: 50,
+        shape: i % 2 === 0 ? 'rune' : 'hexagon',
+        glow: true,
+        priority: 'high',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Arcane Barrage): Crisp missile launch glint per wave.
+   */
+  public spawnArcaneBarrageMuzzle(
+    x: number,
+    y: number,
+    angle: number,
+    now: number = performance.now()
+  ): void {
+    for (let i = 0; i < 3; i++) {
+      const a = angle + (Math.random() - 0.5) * 0.7;
+      const sp = 70 + Math.random() * 55;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#60A5FA' : '#E879F9',
+        secondaryColor: '#FFFFFF',
+        size: 2.2,
+        bornAt: now,
+        maxAgeMs: 180 + Math.random() * 80,
+        friction: 0.9,
+        shape: 'diamond',
+        glow: true,
+        priority: 'normal',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Arcane Barrage): High-energy impact pop per barrage missile hit.
+   */
+  public spawnArcaneBarrageImpact(
+    x: number,
+    y: number,
+    isCrit: boolean = false,
+    now: number = performance.now()
+  ): void {
+    this.acquireParticle({
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      color: '#FFFFFF',
+      secondaryColor: isCrit ? '#FDE047' : '#E879F9',
+      size: isCrit ? 4.8 : 3.8,
+      bornAt: now,
+      maxAgeMs: 160,
+      shape: 'starburst',
+      glow: true,
+      priority: 'high',
+    });
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI * 2) / 6 + Math.random() * 0.4;
+      const sp = 65 + Math.random() * 65;
+      this.acquireParticle({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: i % 2 === 0 ? '#60A5FA' : '#E879F9',
+        secondaryColor: '#FFFFFF',
+        size: 2.2 + Math.random(),
+        bornAt: now,
+        maxAgeMs: 220 + Math.random() * 100,
+        friction: 0.9,
+        stretchWithVelocity: true,
+        stretchFactor: 0.008,
+        shape: 'streak',
+        glow: true,
+        priority: 'high',
+      });
+    }
+  }
+
+  /**
+   * SCROLL (Disintegration): Continuous beam motes along channel ray and violent terminus sparks.
+   */
+  public spawnDisintegrationBeamParticles(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    angle: number,
+    warmingUp: boolean,
+    now: number = performance.now()
+  ): void {
+    if (warmingUp) {
+      if (Math.random() < 0.5) {
+        const a = Math.random() * Math.PI * 2;
+        const d = 14 + Math.random() * 14;
+        this.acquireParticle({
+          x: startX + Math.cos(a) * d,
+          y: startY + Math.sin(a) * d,
+          vx: 0,
+          vy: 0,
+          color: '#E879F9',
+          size: 2.0,
+          bornAt: now,
+          maxAgeMs: 200,
+          attractX: startX,
+          attractY: startY,
+          attractStrength: 160,
+          shape: 'spark',
+          glow: true,
+          priority: 'normal',
+        });
+      }
+      return;
+    }
+
+    // Beam body motes
+    if (Math.random() < 0.65) {
+      const t = 0.1 + Math.random() * 0.85;
+      const px = startX + (endX - startX) * t;
+      const py = startY + (endY - startY) * t;
+      const perpAngle = angle + (Math.random() > 0.5 ? Math.PI / 2 : -Math.PI / 2);
+      const sp = 25 + Math.random() * 45;
+      this.acquireParticle({
+        x: px,
+        y: py,
+        vx: Math.cos(perpAngle) * sp + Math.cos(angle) * 40,
+        vy: Math.sin(perpAngle) * sp + Math.sin(angle) * 40,
+        color: Math.random() > 0.45 ? '#E879F9' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        size: 2.2 + Math.random() * 1.2,
+        bornAt: now,
+        maxAgeMs: 220 + Math.random() * 120,
+        friction: 0.92,
+        shape: Math.random() > 0.5 ? 'rune' : 'spark',
+        glow: true,
+        priority: 'normal',
+      });
+    }
+
+    // Terminus dispersion flare
+    if (Math.random() < 0.7) {
+      const a = angle + Math.PI + (Math.random() - 0.5) * 1.8;
+      const sp = 60 + Math.random() * 85;
+      this.acquireParticle({
+        x: endX,
+        y: endY,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        color: Math.random() > 0.5 ? '#F0ABFC' : '#BAE6FD',
+        secondaryColor: '#FFFFFF',
+        size: 2.4,
+        bornAt: now,
+        maxAgeMs: 200 + Math.random() * 100,
+        friction: 0.9,
+        stretchWithVelocity: true,
+        stretchFactor: 0.008,
+        shape: 'streak',
+        glow: true,
+        priority: 'high',
       });
     }
   }
@@ -6515,100 +7187,163 @@ export function drawEnhancedProjectile(
     ctx.fillRect(-1, -1, 2, 2);
 
   } else if (proj.style === 'frost_lance') {
-    // Crystalline piercing spearhead with icy trail
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
-    ctx.fillRect(-18, -5, 36, 10);
+    // Luminous crystalline piercing spearhead with frosted halo & razor tail
+    const halo = ctx.createRadialGradient(0, 0, 2, 0, 0, 20);
+    halo.addColorStop(0, 'rgba(224, 242, 254, 0.72)');
+    halo.addColorStop(0.55, 'rgba(56, 189, 248, 0.35)');
+    halo.addColorStop(1, 'rgba(2, 132, 199, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 22, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.fillStyle = '#0284C7';
     ctx.beginPath();
-    ctx.moveTo(18, 0);
-    ctx.lineTo(2, -6);
-    ctx.lineTo(-14, -2);
-    ctx.lineTo(-14, 2);
-    ctx.lineTo(2, 6);
+    ctx.moveTo(21, 0);
+    ctx.lineTo(3, -7);
+    ctx.lineTo(-17, -2.5);
+    ctx.lineTo(-17, 2.5);
+    ctx.lineTo(3, 7);
     ctx.closePath();
     ctx.fill();
+
     ctx.fillStyle = '#BAE6FD';
     ctx.beginPath();
-    ctx.moveTo(16, 0);
-    ctx.lineTo(3, -3.5);
-    ctx.lineTo(-10, 0);
-    ctx.lineTo(3, 3.5);
+    ctx.moveTo(19, 0);
+    ctx.lineTo(4, -4);
+    ctx.lineTo(-13, 0);
+    ctx.lineTo(4, 4);
     ctx.closePath();
     ctx.fill();
+
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(-6, -1, 18, 2);
+    ctx.fillRect(-8, -1.2, 22, 2.4);
 
   } else if (proj.style === 'arcane_orb') {
-    // Persistent floating cosmic energy sphere with orbiting rune arcs
-    const r = Math.max(14, proj.radius || 22);
-    const spin = now * 0.004;
-    const orbGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, r);
-    orbGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
-    orbGrad.addColorStop(0.35, 'rgba(192, 132, 252, 0.85)');
-    orbGrad.addColorStop(0.75, 'rgba(99, 102, 241, 0.55)');
-    orbGrad.addColorStop(1, 'rgba(56, 189, 248, 0.08)');
+    // Persistent floating cosmic energy sphere with dual counter-rotating rune arcs & orbiting satellites
+    const r = Math.max(16, proj.radius || 22);
+    const spin = now * 0.0045;
+    const orbGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 1.15);
+    orbGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+    orbGrad.addColorStop(0.32, 'rgba(216, 180, 254, 0.9)');
+    orbGrad.addColorStop(0.68, 'rgba(99, 102, 241, 0.62)');
+    orbGrad.addColorStop(1, 'rgba(56, 189, 248, 0.06)');
     ctx.fillStyle = orbGrad;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 1.15, 0, Math.PI * 2);
     ctx.fill();
 
+    // Inner rotating rune ring
     ctx.save();
     ctx.rotate(spin);
-    ctx.strokeStyle = 'rgba(165, 180, 252, 0.9)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(224, 231, 255, 0.92)';
+    ctx.lineWidth = 2.2;
     ctx.beginPath();
-    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 1.25);
+    ctx.arc(0, 0, r * 0.78, 0, Math.PI * 1.2);
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(0, 0, r * 0.82, Math.PI, Math.PI * 2.25);
+    ctx.arc(0, 0, r * 0.78, Math.PI, Math.PI * 2.2);
     ctx.stroke();
     ctx.restore();
 
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
-    ctx.lineWidth = 1.5;
+    // Counter-rotating orbiting cosmic nodes
+    ctx.save();
+    ctx.rotate(-spin * 1.4);
+    for (let i = 0; i < 3; i++) {
+      const ma = (i * Math.PI * 2) / 3;
+      const mx = Math.cos(ma) * (r * 0.92);
+      const my = Math.sin(ma) * (r * 0.92);
+      ctx.fillStyle = i % 2 === 0 ? '#38BDF8' : '#F0ABFC';
+      ctx.beginPath();
+      ctx.arc(mx, my, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
     ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.stroke();
 
   } else if (proj.style === 'arcane_barrage') {
-    // Helix weaving arcane bolt
-    ctx.fillStyle = 'rgba(232, 121, 249, 0.35)';
+    // Sleek cyan-magenta plasma barrage missile with bright streaking tail
+    const glow = ctx.createRadialGradient(0, 0, 1, 0, 0, 12);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+    glow.addColorStop(0.5, 'rgba(232, 121, 249, 0.45)');
+    glow.addColorStop(1, 'rgba(96, 165, 250, 0)');
+    ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.ellipse(-2, 0, 14, 7, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#C084FC';
+
+    ctx.fillStyle = '#60A5FA';
     ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(-4, -4);
-    ctx.lineTo(-8, 0);
-    ctx.lineTo(-4, 4);
+    ctx.moveTo(12, 0);
+    ctx.lineTo(-4, -4.5);
+    ctx.lineTo(-11, 0);
+    ctx.lineTo(-4, 4.5);
     ctx.closePath();
     ctx.fill();
+
+    ctx.fillStyle = '#E879F9';
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-2, -2.5);
+    ctx.lineTo(-8, 0);
+    ctx.lineTo(-2, 2.5);
+    ctx.closePath();
+    ctx.fill();
+
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(-3, -1.5, 8, 3);
+    ctx.fillRect(-4, -1.3, 11, 2.6);
 
   } else {
-    // Fireball: Molten core with blazing outer flames
-    ctx.fillStyle = 'rgba(239, 68, 68, 0.35)';
+    // Enlarged Fireball: Blazing molten sphere with rotating flame corona & flickering tail
+    const r = Math.max(13, proj.radius || 14);
+    const pulse = Math.sin(now * 0.025) * 1.8;
+    const corona = ctx.createRadialGradient(0, 0, 2, 0, 0, r + 5 + pulse);
+    corona.addColorStop(0, '#FFFFFF');
+    corona.addColorStop(0.28, '#FEF08A');
+    corona.addColorStop(0.62, '#F97316');
+    corona.addColorStop(0.88, 'rgba(220, 38, 38, 0.72)');
+    corona.addColorStop(1, 'rgba(220, 38, 38, 0)');
+    ctx.fillStyle = corona;
     ctx.beginPath();
-    ctx.arc(0, 0, 9, 0, Math.PI * 2);
+    ctx.arc(0, 0, r + 5 + pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Inner molten core
+    ctx.fillStyle = '#EA580C';
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.74, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FDE047';
+    ctx.beginPath();
+    ctx.arc(1, 0, r * 0.48, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(2, 0, r * 0.24, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Dual trailing flame tongues
+    const flicker = Math.sin(now * 0.032) * 3;
+    ctx.fillStyle = '#F97316';
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.45, -r * 0.42);
+    ctx.lineTo(-r * 1.45, flicker * 0.5);
+    ctx.lineTo(-r * 0.45, r * 0.42);
+    ctx.closePath();
     ctx.fill();
 
     ctx.fillStyle = '#DC2626';
-    ctx.fillRect(-7, -7, 14, 14);
-    ctx.fillStyle = '#F97316';
-    ctx.fillRect(-5, -5, 10, 10);
-    ctx.fillStyle = '#FDE047';
-    ctx.fillRect(-3, -3, 6, 6);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(-1, -1, 2, 2);
-
-    // Trailing flame tongue
-    const flicker = Math.sin(now * 0.03) * 2;
-    ctx.fillStyle = '#F97316';
-    ctx.fillRect(-11, -2 + flicker, 4, 4);
-    ctx.fillStyle = '#EF4444';
-    ctx.fillRect(-14, -1 - flicker, 3, 2);
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.75, -r * 0.24);
+    ctx.lineTo(-r * 1.7, -flicker * 0.6);
+    ctx.lineTo(-r * 0.75, r * 0.24);
+    ctx.closePath();
+    ctx.fill();
   }
 
   if ((proj.chronoSuspendedMs || 0) > 0) {

@@ -1,15 +1,38 @@
 import { CRIT_DAMAGE_MULTIPLIER, HERO_CLASSES, MAX_LEVEL, type HeroClassId, type PlayerState, type DamageCategory } from './types.ts';
+import { computeArcanistSpellDamage, getArcanistScrollDef } from './arcanist.ts';
 import { computePlayerMoveSpeed } from './playerMovement.ts';
+
+export type StatRankTier = 'D' | 'C' | 'B' | 'A' | 'S' | 'S+';
+
+export interface StatRankBadge {
+  tier: StatRankTier;
+  label: string;
+  color: string;
+  score: number;
+}
+
+export function scoreToStatRank(rawScore: number): StatRankBadge {
+  const score = Math.max(0, Math.round(rawScore));
+  if (score >= 90) return { tier: 'S+', label: 'S+-RANK', color: '#EC4899', score };
+  if (score >= 78) return { tier: 'S', label: 'S-RANK', color: '#F59E0B', score };
+  if (score >= 62) return { tier: 'A', label: 'A-RANK', color: '#A855F7', score };
+  if (score >= 44) return { tier: 'B', label: 'B-RANK', color: '#3B82F6', score };
+  if (score >= 30) return { tier: 'C', label: 'C-RANK', color: '#10B981', score };
+  return { tier: 'D', label: 'D-RANK', color: '#94A3B8', score };
+}
 
 export interface PlayerStatProjections {
   // Survivability & Health
   maxHp: number;
+  effectiveHp: number;
   baseHp: number;
   levelHpBonus: number;
   vitHpBonus: number;
   relicHpBonus: number;
   hpRegenPerTick: number; // every 2.0s pulse
   hpRegenPerSec: number;
+  healingPerSec: number; // Projected HP/s from class healing kit + regen + relics
+  selfShieldPerSec: number; // Projected shield/s (Vanguard Bulwark Dash & Iron Will)
 
   // Defenses & Mitigations
   physicalResistPct: number; // e.g. 38.5%
@@ -34,7 +57,8 @@ export interface PlayerStatProjections {
   healingBonusPct: number;
   baseHitDamage: number;
   scaledHitDamage: number; // Damage per non-crit hit
-  
+  longshotHitDamage: number; // Ranger Eagle Keenness hit damage (180u+)
+
   // Attack Speed & Cadence
   baseAttackCooldownMs: number;
   attackCooldownMs: number; // Cooldown between attacks
@@ -46,12 +70,18 @@ export interface PlayerStatProjections {
   baseCritChancePct: number;
   dexCritChancePct: number;
   relicCritChancePct: number;
-  critMultiplier: number; // 1.75x
+  critMultiplier: number; // 1.25x
   critHitDamage: number; // Scaled damage when hit crits
 
   // Sustained DPS Projection
   directDps: number; // Direct attack & crit/twinstring DPS before DoTs
-  sustainedDps: number; // Combined average damage per second (direct + active DoT relics)
+  sustainedDps: number; // Primary direct DPS + active DoT relics (preserved baseline)
+  tacticalAbilityDps: number; // Sustained DPS from [Q/RMB] Tactical Skill or equipped Scroll
+  passiveCombatDps: number; // Class passive DPS (Ranger Longshot/Quarry, Arcanist Star Rift)
+  effectiveDps: number; // True class combat DPS (Direct + Tactical/Scroll + Passive + DoTs + Relic procs)
+  activeTacticalLabel: string;
+  activeTacticalHitDamage: number;
+  tacticalBaseCooldownMs: number;
 
   // Hybrid DoT Scaling & Relic Projections
   dotMultiplier: number; // 1 + 0.003 * (Level - 1) + 0.001 * PrimaryAttr
@@ -75,10 +105,16 @@ export interface PlayerStatProjections {
   // Piercing & Multi-projectile
   pierceCount: number;
   extraProjectileCount: number;
+
+  // Reassessed D–S+ Performance Ranks
+  offenseRank: StatRankBadge;
+  defenseRank: StatRankBadge;
+  utilityRank: StatRankBadge;
+  overallRank: StatRankBadge;
 }
 
 export function calculatePlayerStatProjections(p: PlayerState, floor = 1): PlayerStatProjections {
-  const heroClass = p.heroClass || 'vanguard';
+  const heroClass: HeroClassId = p.heroClass || 'vanguard';
   const def = HERO_CLASSES[heroClass] || HERO_CLASSES.vanguard;
   const level = Math.max(1, Math.min(MAX_LEVEL, p.level || 1));
   const safeFloor = Math.max(1, floor || 1);
@@ -167,6 +203,7 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
 
   const baseHitDamage = def.damage;
   const scaledHitDamage = Math.round(baseHitDamage * damageMultiplier);
+  const longshotHitDamage = heroClass === 'ranger' ? Math.round(scaledHitDamage * 1.25) : 0;
 
   // 6. Attack Speed & Cooldown
   const baseAttackCooldownMs = def.attackCooldownMs;
@@ -206,7 +243,7 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
     (hasBleedRelic ? bleedTickDamage / 0.65 : 0);
   const dotDpsContribution = Number(rawDotDps.toFixed(1));
 
-  // 9. Sustained DPS Projection (direct attacks + active DoT relics)
+  // 9. Primary Sustained DPS Projection (direct attacks + active DoT relics)
   const extraProjectileFactor = relics.includes('twinstring_charm') ? 0.35 : 0;
   const avgDamagePerHit = (scaledHitDamage * (1 - critChancePct / 100)) + (critHitDamage * (critChancePct / 100));
   const totalPerShotDmg = avgDamagePerHit * (1 + extraProjectileFactor);
@@ -234,22 +271,201 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
   const cooldownReductionPct = Number(Math.min(50, intCdrPct + relicCdrPct + blessingCdrPct).toFixed(1));
 
   const cdrFactor = 1 - (cooldownReductionPct / 100);
-  const tacticalCooldownSec = Number(((def.tacticalCooldownMs * cdrFactor) / 1000).toFixed(1));
+  const activeScroll = heroClass === 'arcanist' ? getArcanistScrollDef(p.equippedScrollId) : null;
+  const tacticalBaseCooldownMs = activeScroll ? activeScroll.cooldownMs : def.tacticalCooldownMs;
+  const tacticalCooldownSec = Number(((tacticalBaseCooldownMs * cdrFactor) / 1000).toFixed(1));
   const ultCooldownSec = Number(((def.ultCooldownMs * cdrFactor) / 1000).toFixed(1));
+  const safeTacCdSec = Math.max(0.5, tacticalCooldownSec);
+  const safeUltCdSec = Math.max(1.0, ultCooldownSec);
 
   // 11. Piercing
   let pierceCount = heroClass === 'vanguard' ? 4 : heroClass === 'arcanist' ? 2 : 1;
   if (relics.includes('piercing_prism')) pierceCount += 1;
   const extraProjectileCount = relics.includes('twinstring_charm') ? 1 : 0;
 
+  // 12. Class-Accurate Tactical/Scroll, Passive & Effective Combat Output
+  let activeTacticalLabel = def.tacticalName;
+  let activeTacticalHitDamage = Math.round(32 * damageMultiplier);
+  let rawTacticalAbilityDps = 0;
+
+  if (heroClass === 'arcanist' && activeScroll) {
+    activeTacticalLabel = activeScroll.scrollName;
+    const spellHit = computeArcanistSpellDamage(
+      activeScroll.baseDamage,
+      { level, intelligence: intStat, relics, furyStacks },
+      activeScroll.intCoeff
+    );
+    activeTacticalHitDamage = spellHit;
+    if (activeScroll.id === 'fireball') {
+      const burnTicks = Math.floor((activeScroll.durationMs || 3500) / (activeScroll.hitIntervalMs || 500));
+      const burnTickDmg = Math.max(1, Math.round(spellHit * (activeScroll.burnTickRatio || 0.22)));
+      rawTacticalAbilityDps = (spellHit + burnTicks * burnTickDmg) / safeTacCdSec;
+    } else if (activeScroll.id === 'disintegration') {
+      const channelDurationSec = 3.0;
+      const ticks = channelDurationSec * (1000 / (activeScroll.tickIntervalMs || 200));
+      rawTacticalAbilityDps = (spellHit * ticks) / (safeTacCdSec + channelDurationSec);
+    } else if (activeScroll.id === 'arcane_orb') {
+      rawTacticalAbilityDps = (spellHit * (activeScroll.maxHitsPerEnemy || 2)) / safeTacCdSec;
+    } else if (activeScroll.id === 'arcane_barrage') {
+      // 4 waves x 2 bolts (average ~3.5 bolts hitting a primary target)
+      rawTacticalAbilityDps = (spellHit * 3.5) / safeTacCdSec;
+    } else {
+      rawTacticalAbilityDps = spellHit / safeTacCdSec;
+    }
+  } else if (heroClass === 'arcanist') {
+    activeTacticalLabel = def.tacticalName;
+    activeTacticalHitDamage = Math.round(24 * damageMultiplier);
+    rawTacticalAbilityDps = (activeTacticalHitDamage * 2.5) / safeTacCdSec;
+  } else if (heroClass === 'vanguard') {
+    activeTacticalLabel = def.tacticalName;
+    activeTacticalHitDamage = Math.round(32 * damageMultiplier);
+    rawTacticalAbilityDps = activeTacticalHitDamage / safeTacCdSec;
+  } else if (heroClass === 'ranger') {
+    activeTacticalLabel = def.tacticalName;
+    activeTacticalHitDamage = Math.round(18 * damageMultiplier);
+    // 5-arrow fan (average ~2.5 arrows connecting on primary target)
+    rawTacticalAbilityDps = (activeTacticalHitDamage * 2.5) / safeTacCdSec;
+  } else {
+    activeTacticalLabel = def.tacticalName;
+    activeTacticalHitDamage = Math.round(28 * damageMultiplier);
+    rawTacticalAbilityDps = activeTacticalHitDamage / safeTacCdSec;
+  }
+
+  let rawPassiveCombatDps = 0;
+  if (heroClass === 'ranger') {
+    // Eagle Keenness (+25% Longshot dmg at >= 180u, modeled at 60% ranged uptime) + Hunter's Quarry (+35% boss mark uptime)
+    const quarryUptime = Math.min(0.65, 6.5 / safeUltCdSec) * 0.75;
+    rawPassiveCombatDps = rawDirectDps * (0.15 + 0.35 * quarryUptime);
+  } else if (heroClass === 'arcanist') {
+    // Star Rift: 6 pulses of (14 + 2*floor) over 3s, every (8s proc CD + 4 attacks)
+    const riftTickDmg = 14 + safeFloor * 2;
+    const riftCycleSec = 8.0 + 4.0 / Math.max(0.5, attacksPerSecond);
+    rawPassiveCombatDps = (riftTickDmg * 6) / riftCycleSec;
+  }
+
+  const stormcallerBonusDps = relics.includes('stormcaller_lodestone') ? rawDirectDps * 0.08 : 0;
+  const tacticalAbilityDps = Number(rawTacticalAbilityDps.toFixed(1));
+  const passiveCombatDps = Number(rawPassiveCombatDps.toFixed(1));
+  const effectiveDps = Number(
+    (rawDirectDps + rawDotDps + rawTacticalAbilityDps + rawPassiveCombatDps + stormcallerBonusDps).toFixed(1)
+  );
+
+  // 13. Effective HP, Healing & Shield Sustain
+  const weightedMit = 0.60 * (physicalResistPct / 100) + 0.40 * (elementalResistPct / 100);
+  const damageTakenMult = (1 - weightedMit) * (heroClass === 'vanguard' ? 0.85 : 1.0);
+  const effectiveHp = Math.round(maxHp / Math.max(0.18, damageTakenMult));
+
+  const selfShieldPerSec = Number(
+    (heroClass === 'vanguard' ? 28 / safeTacCdSec + 0.8 : 0).toFixed(1)
+  );
+  const censerHealPerSec = relics.includes('oathbound_censer') ? 8 / safeTacCdSec : 0;
+  const clericKitHealPerSec =
+    heroClass === 'cleric'
+      ? Math.max(1, Math.round(2.3 * rawHealingMult)) / 2.0 +
+        Math.max(1, Math.round(24 * rawHealingMult)) / safeTacCdSec +
+        (Math.max(1, Math.round(4 * rawHealingMult)) * 10) / safeUltCdSec
+      : 0;
+  const healingPerSec = Number((hpRegenPerSec + censerHealPerSec + clericKitHealPerSec).toFixed(1));
+
+  // 14. Reassessed D–S+ Performance Ranks (calibrated across all 4 class identities)
+  const hasFrostfireSynergy = relics.includes('cinder_heart') && relics.includes('rimefrost_shard');
+  const hasStormVenomSynergy = relics.includes('stormcaller_lodestone') && relics.includes('viper_crucible');
+  const hasThornedFortressSynergy = relics.includes('runic_carapace') && relics.includes('thorned_aegis');
+  const hasTwinPierceSynergy = relics.includes('twinstring_charm') && relics.includes('piercing_prism');
+
+  const offenseSynergyBonus =
+    (hasFrostfireSynergy ? 5 : 0) + (hasStormVenomSynergy ? 5 : 0) + (hasTwinPierceSynergy ? 5 : 0);
+  // Modest AoE / cleave multiplier for abilities & projectiles that hit multiple targets simultaneously
+  let aoeOffenseMult = 1.0;
+  if (heroClass === 'arcanist') {
+    aoeOffenseMult = activeScroll ? 1.16 : 1.08;
+  } else if (heroClass === 'vanguard') {
+    aoeOffenseMult = 1.06;
+  } else if (pierceCount >= 2 || extraProjectileCount > 0) {
+    aoeOffenseMult = 1.04;
+  }
+
+  const offenseScore = Math.min(
+    115,
+    100 * Math.pow(Math.max(1, effectiveDps * aoeOffenseMult) / 780, 0.62) + offenseSynergyBonus
+  );
+
+  const defPower = effectiveHp + (hpRegenPerSec + selfShieldPerSec * 0.85) * 16;
+  const defenseScore = Math.min(
+    115,
+    100 * Math.pow(Math.max(1, defPower) / 2450, 0.56) + (hasThornedFortressSynergy ? 4 : 0)
+  );
+
+  const healUtilityCap = heroClass === 'cleric' ? 62 : 24;
+  const healUtilityScale = heroClass === 'cleric' ? 2.8 : 1.9;
+  const sustainContribution = Math.min(
+    healUtilityCap,
+    (healingPerSec + selfShieldPerSec * 0.75) * healUtilityScale
+  );
+  const cdrContribution = cooldownReductionPct * 0.85;
+  const speedContribution = Math.min(20, Math.max(0, moveSpeedBonusPct) * 0.65);
+
+  let kitAndRelicUtility = 10;
+  if (heroClass === 'cleric') {
+    kitAndRelicUtility =
+      14 +
+      Math.min(18, faithCcTenacityPct * 0.55) +
+      (relics.includes('oathbound_censer') ? 10 : 0) +
+      (relics.includes('hourglass_shard') ? 6 : 0);
+  } else if (heroClass === 'vanguard') {
+    kitAndRelicUtility =
+      12 +
+      Math.min(12, Math.max(0, pierceCount - 1) * 2.5) +
+      (relics.includes('thorned_aegis') ? 8 : 0) +
+      (hasThornedFortressSynergy ? 8 : 0);
+  } else if (heroClass === 'arcanist') {
+    kitAndRelicUtility =
+      10 +
+      (activeScroll ? 18 : 6) +
+      Math.min(12, Math.max(0, pierceCount - 1) * 4) +
+      (relics.includes('rimefrost_shard') ? 8 : 0) +
+      (relics.includes('stormcaller_lodestone') ? 6 : 0);
+  } else {
+    kitAndRelicUtility =
+      14 +
+      extraProjectileCount * 12 +
+      Math.min(12, Math.max(0, pierceCount - 1) * 5) +
+      (relics.includes('rimefrost_shard') ? 8 : 0) +
+      (hasTwinPierceSynergy ? 8 : 0);
+  }
+
+  const utilityScore = Math.min(115, sustainContribution + cdrContribution + speedContribution + kitAndRelicUtility);
+
+  const weights =
+    heroClass === 'vanguard'
+      ? { off: 0.36, def: 0.44, util: 0.20 }
+      : heroClass === 'cleric'
+        ? { off: 0.24, def: 0.28, util: 0.48 }
+        : heroClass === 'arcanist'
+          ? { off: 0.65, def: 0.12, util: 0.23 }
+          : { off: 0.62, def: 0.16, util: 0.22 };
+
+  const overallScore =
+    offenseScore * weights.off +
+    defenseScore * weights.def +
+    utilityScore * weights.util;
+
+  const offenseRank = scoreToStatRank(offenseScore);
+  const defenseRank = scoreToStatRank(defenseScore);
+  const utilityRank = scoreToStatRank(utilityScore);
+  const overallRank = scoreToStatRank(overallScore);
+
   return {
     maxHp,
+    effectiveHp,
     baseHp,
     levelHpBonus,
     vitHpBonus,
     relicHpBonus,
     hpRegenPerTick,
     hpRegenPerSec,
+    healingPerSec,
+    selfShieldPerSec,
     physicalResistPct,
     basePhysicalResistPct,
     strPhysicalResistPct,
@@ -268,6 +484,7 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
     healingBonusPct,
     baseHitDamage,
     scaledHitDamage,
+    longshotHitDamage,
     baseAttackCooldownMs,
     attackCooldownMs,
     attacksPerSecond,
@@ -280,6 +497,12 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
     critHitDamage,
     directDps,
     sustainedDps,
+    tacticalAbilityDps,
+    passiveCombatDps,
+    effectiveDps,
+    activeTacticalLabel,
+    activeTacticalHitDamage,
+    tacticalBaseCooldownMs,
     dotMultiplier,
     dotBonusPct,
     hasBurnRelic,
@@ -297,6 +520,10 @@ export function calculatePlayerStatProjections(p: PlayerState, floor = 1): Playe
     ultCooldownSec,
     pierceCount,
     extraProjectileCount,
+    offenseRank,
+    defenseRank,
+    utilityRank,
+    overallRank,
   };
 }
 

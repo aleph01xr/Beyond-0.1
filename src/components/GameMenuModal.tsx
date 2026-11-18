@@ -346,19 +346,35 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
                 </div>
 
                 <div className="stone-input p-3 space-y-2">
-                  <div className="text-[#34D399] font-bold">Combat Projections Summary</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-[#34D399] font-bold">Combat Projections Summary</div>
+                    <span
+                      className="text-[10px] font-bold px-2 py-0.5 border"
+                      style={{
+                        color: stats.overallRank.color,
+                        borderColor: `${stats.overallRank.color}66`,
+                        backgroundColor: `${stats.overallRank.color}15`,
+                      }}
+                    >
+                      {stats.overallRank.label} ({stats.overallRank.score} PTS)
+                    </span>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-xs">
                     <div className="p-2 stone-plaque">
-                      <div className="text-[9px] text-[#A19FAF]">Max HP</div>
-                      <div className="font-bold text-[#10B981]">{stats.maxHp}</div>
+                      <div className="text-[9px] text-[#A19FAF]">Eff. HP</div>
+                      <div className="font-bold text-[#10B981]">{stats.effectiveHp}</div>
                     </div>
                     <div className="p-2 stone-plaque">
-                      <div className="text-[9px] text-[#A19FAF]">Target DPS</div>
-                      <div className="font-bold text-[#FCD34D]">{stats.sustainedDps}</div>
+                      <div className="text-[9px] text-[#A19FAF]">Eff. DPS</div>
+                      <div className="font-bold text-[#FCD34D]">{stats.effectiveDps}</div>
                     </div>
                     <div className="p-2 stone-plaque">
-                      <div className="text-[9px] text-[#A19FAF]">DoT Scale</div>
-                      <div className="font-bold text-[#F97316]">{stats.dotMultiplier}x</div>
+                      <div className="text-[9px] text-[#A19FAF]">
+                        {player.heroClass === 'cleric' ? 'Sustain' : 'DoT Scale'}
+                      </div>
+                      <div className="font-bold text-[#F97316]">
+                        {player.heroClass === 'cleric' ? `${stats.healingPerSec}/s` : `${stats.dotMultiplier}x`}
+                      </div>
                     </div>
                     <div className="p-2 stone-plaque">
                       <div className="text-[9px] text-[#A19FAF]">Crit Rate</div>

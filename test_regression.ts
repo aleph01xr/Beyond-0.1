@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { GameRoom } from './src/server/gameEngine.ts';
-import { TILE_SIZE, MAX_LEVEL, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState } from './src/shared/types.ts';
+import { TILE_SIZE, MAX_LEVEL, HERO_CLASSES, type AccountRecord, type HeroClassId, type EnemyState, type PropState } from './src/shared/types.ts';
 import {
   computeGroundTargetPosition,
   findBestAutoTarget,
@@ -6679,9 +6679,12 @@ async function runRegressionTests() {
       arc0.skillCooldownMs = 0;
 
       if (spellId === 'chain_lightning') {
-        // Without a target in range, Chain Lightning fails gracefully without wasting cooldown
-        room.performAction(arc0.id, 'tactical', 0, { aimDistance: 180, explicitAim: true });
-        assert.strictEqual(arc0.skillCooldownMs, 0, 'Chain Lightning must preserve cooldown when no target is in range');
+        // Cone blast fires forward immediately even if no enemy is inside the cone
+        room.performAction(arc0.id, 'tactical', 0, { aimDistance: 340, explicitAim: true });
+        assert.strictEqual(arc0.skillCooldownMs, spec.cooldownMs, 'Chain Lightning cone must consume cooldown on cast');
+        assert.ok(room.zones.some((z) => z.kind === 'chain_lightning_arc' && Math.abs((z.coneHalfAngleRad || 0) - 0.56) < 0.01), 'Chain Lightning must spawn cone discharge zone');
+        room.zones = [];
+        arc0.skillCooldownMs = 0;
         const t1 = makeNeutralDummyEnemy('cl_target', origin.x + 120, origin.y, 1000);
         room.enemies.push(t1);
       }
@@ -6707,6 +6710,11 @@ async function runRegressionTests() {
         spec.cooldownMs,
         `${spellId} maxSkillCooldownMs must reflect ${spec.cooldownMs}ms`
       );
+      if (spellId === 'arcane_barrage') {
+        for (let step = 0; step < 14; step++) {
+          room.tick(25);
+        }
+      }
       // Attempting recast while on cooldown must not fire extra projectiles/zones
       const prevProjCount = room.projectiles.length;
       const prevZoneCount = room.zones.length;
@@ -6720,6 +6728,7 @@ async function runRegressionTests() {
       arc0.skillCooldownMs = 0;
       arc0.spellCastState = null;
     }
+    room.removePlayer(arc0.id);
 
     // Single-application INT scaling verification (Lv25, 60 INT, Sunfire Signet, 2 Fury stacks)
     const arc25 = room.addOrReconnectPlayer('arc25', 'Archmage', 'arcanist', false, {
@@ -6730,13 +6739,13 @@ async function runRegressionTests() {
     arc25.relics = ['sunfire_signet'];
     arc25.floorBlessings = ['fury', 'fury'];
 
-    // D = 42 * (1 + 0.025 * 24) * (1 + 0.01 * 60) * 1.12 * 1.12 = 42 * 1.6 * 1.6 * 1.2544 = 134.87 -> 135
+    // D = 42 * (1 + 0.025 * 24) * (1 + 0.015 * 60) * 1.12 * 1.12 = 42 * 1.6 * 1.9 * 1.2544 = 160.16 -> 160
     const expectedFireball = computeArcanistSpellDamage(
       ARCANIST_SPELLS.fireball.baseDamage,
       { level: 25, intelligence: 60, relics: ['sunfire_signet'], furyStacks: 2 },
       ARCANIST_SPELLS.fireball.intCoeff
     );
-    assert.strictEqual(expectedFireball, 135, 'Single-application Fireball INT formula must yield 135 (no double-dip)');
+    assert.strictEqual(expectedFireball, 160, 'Single-application Fireball INT formula must yield 160 (no double-dip)');
 
     const equipAndCast = (spellId: (typeof ARCANIST_SPELL_ORDER)[number], aimDistance: number) => {
       arc25.pendingScrollChoices = [spellId];
@@ -6746,17 +6755,30 @@ async function runRegressionTests() {
       room.performAction(arc25.id, 'tactical', 0, { aimDistance, explicitAim: true });
     };
 
-    // 1) Fireball: 90u AoE, no burn DoT
+    // 1) Fireball: larger projectile (radius 14), immediate explosion on enemy hit, 105u AoE, and lingering burning ground zone
     const fbDirect = makeNeutralDummyEnemy('fb_1', origin.x + 160, origin.y, 2000);
-    const fbSplashIn = makeNeutralDummyEnemy('fb_2', origin.x + 225, origin.y + 10, 2000); // ~66u away (<90u)
-    const fbOut = makeNeutralDummyEnemy('fb_3', origin.x + 280, origin.y, 2000); // 120u away (>90u)
+    const fbSplashIn = makeNeutralDummyEnemy('fb_2', origin.x + 215, origin.y + 10, 2000); // ~85u from detonation (<105u)
+    const fbOut = makeNeutralDummyEnemy('fb_3', origin.x + 295, origin.y, 2000); // ~165u from detonation (>105u)
     room.enemies.push(fbDirect, fbSplashIn, fbOut);
     equipAndCast('fireball', 180);
-    for (let i = 0; i < 45; i++) room.tick(25);
-    assert.ok(fbDirect.hp < 2000, 'Fireball direct enemy must take damage');
-    assert.ok(fbSplashIn.hp < 2000, 'Fireball 90u AoE must hit splash enemy within radius');
-    assert.strictEqual(fbOut.hp, 2000, 'Fireball must NOT hit enemies outside 90u AoE');
-    assert.strictEqual(fbDirect.burnedMs, 0, 'Fireball must NOT apply Burn DoT');
+    for (let i = 0; i < 14; i++) room.tick(25); // completes 350ms cast
+    const fbProj = room.projectiles.find((pr) => pr.spellId === 'fireball');
+    assert.ok(fbProj && fbProj.radius === 14, 'Fireball projectile must be larger (radius 14)');
+    let explodedImmediately = false;
+    for (let i = 0; i < 20; i++) {
+      room.tick(25);
+      if (fbDirect.hp < 2000) {
+        explodedImmediately = !room.projectiles.some((pr) => pr.spellId === 'fireball') &&
+          room.zones.some((z) => z.kind === 'fireball_burn');
+        break;
+      }
+    }
+    assert.strictEqual(explodedImmediately, true, 'Fireball must immediately explode on enemy contact, remove projectile, and leave a burning zone');
+    assert.ok(fbSplashIn.hp < 2000, 'Fireball 105u AoE must hit splash enemy within explosion radius');
+    assert.strictEqual(fbOut.hp, 2000, 'Fireball must NOT hit enemies outside 105u AoE');
+    const hpAfterBlast = fbDirect.hp;
+    for (let i = 0; i < 24; i++) room.tick(25); // +600ms -> lingering burn zone ticks at 500ms
+    assert.ok(fbDirect.hp < hpAfterBlast, 'Fireball lingering burn zone must deal periodic fire damage');
 
     room.enemies = [];
     room.projectiles = [];
@@ -6780,22 +6802,20 @@ async function runRegressionTests() {
     room.projectiles = [];
     room.zones = [];
 
-    // 3) Chain Lightning: max 4 targets, 150u max jump, -15% decay per jump, no repeats
-    const cl1 = makeNeutralDummyEnemy('cl1', origin.x + 100, origin.y, 5000);
-    const cl2 = makeNeutralDummyEnemy('cl2', origin.x + 210, origin.y, 5000); // 110u jump
-    const cl3 = makeNeutralDummyEnemy('cl3', origin.x + 320, origin.y, 5000); // 110u jump
-    const cl4 = makeNeutralDummyEnemy('cl4', origin.x + 430, origin.y, 5000); // 110u jump
-    const cl5 = makeNeutralDummyEnemy('cl5', origin.x + 480, origin.y, 5000); // 5th target (>4 max)
-    const clFar = makeNeutralDummyEnemy('clFar', origin.x + 100, origin.y + 220, 5000); // >150u away
-    room.enemies.push(cl1, cl2, cl3, cl4, cl5, clFar);
-    equipAndCast('chain_lightning', 100);
-    assert.ok(cl1.hp < 5000 && cl2.hp < 5000 && cl3.hp < 5000 && cl4.hp < 5000, 'Chain Lightning must hit 4 chained targets');
-    assert.strictEqual(cl5.hp, 5000, 'Chain Lightning must NOT exceed 4 targets');
-    assert.strictEqual(clFar.hp, 5000, 'Chain Lightning must NOT jump >150u');
-    const d1 = 5000 - cl1.hp;
-    const d2 = 5000 - cl2.hp;
-    assert.ok(d2 < d1, `Jump 2 damage (${d2}) must decay ~15% from jump 1 (${d1})`);
-    assert.ok(room.zones.some((z) => z.kind === 'chain_lightning_arc' && (z.chainPoints?.length || 0) === 5), 'Chain Lightning arc zone must record player + 4 targets');
+    // 3) Chain Lightning: cone-shaped discharge (340u range, ±0.56 rad arc)
+    const clIn1 = makeNeutralDummyEnemy('cl1', origin.x + 110, origin.y, 5000);
+    const clIn2 = makeNeutralDummyEnemy('cl2', origin.x + 260, origin.y + 80, 5000); // ~272u, ~0.30 rad (inside cone)
+    const clOutAngle = makeNeutralDummyEnemy('clOutAng', origin.x + 60, origin.y + 140, 5000); // ~1.17 rad (outside cone angle)
+    const clOutRange = makeNeutralDummyEnemy('clOutRng', origin.x + 390, origin.y, 5000); // 390u (beyond 340u range)
+    room.enemies.push(clIn1, clIn2, clOutAngle, clOutRange);
+    equipAndCast('chain_lightning', 340);
+    assert.ok(clIn1.hp < 5000 && clIn2.hp < 5000, 'Chain Lightning cone must hit all enemies inside the forward cone');
+    assert.strictEqual(clOutAngle.hp, 5000, 'Chain Lightning cone must NOT hit enemies outside cone angle');
+    assert.strictEqual(clOutRange.hp, 5000, 'Chain Lightning cone must NOT hit enemies beyond 340u range');
+    assert.ok(
+      room.zones.some((z) => z.kind === 'chain_lightning_arc' && (z.chainPoints?.length || 0) === 3 && Math.abs((z.coneHalfAngleRad || 0) - 0.56) < 0.01),
+      'Chain Lightning arc zone must record cone geometry and shocked target points'
+    );
 
     room.enemies = [];
     room.zones = [];
@@ -6841,23 +6861,27 @@ async function runRegressionTests() {
     room.enemies = [];
     room.projectiles = [];
 
-    // 6) Arcane Barrage: 6 helix projectiles, 450u max range, multiple bolts can hit same target
-    const barTarget = makeNeutralDummyEnemy('bar_t1', origin.x + 160, origin.y, 5000);
-    barTarget.radius = 28;
+    // 6) Arcane Barrage: 4 rapid waves (8 bolts total), 450u max range, hits a single standard enemy 3-4+ times
+    const barTarget = makeNeutralDummyEnemy('bar_t1', origin.x + 170, origin.y, 5000);
     room.enemies.push(barTarget);
     equipAndCast('arcane_barrage', 300);
-    const spawnedBolts = room.projectiles.filter((pr) => pr.spellId === 'arcane_barrage');
-    assert.strictEqual(spawnedBolts.length, 6, 'Arcane Barrage must spawn 6 helix projectiles');
+    const wave0Bolts = room.projectiles.filter((pr) => pr.spellId === 'arcane_barrage');
+    assert.strictEqual(wave0Bolts.length, 2, 'Arcane Barrage wave 0 must spawn 2 bolts immediately');
+    const seenBoltIds = new Set<string>(wave0Bolts.map((b) => b.id));
     let barrageDamageTicks = 0;
     let barPrevHp = barTarget.hp;
-    for (let step = 0; step < 50; step++) {
+    for (let step = 0; step < 48; step++) {
       room.tick(25);
+      for (const pr of room.projectiles) {
+        if (pr.spellId === 'arcane_barrage') seenBoltIds.add(pr.id);
+      }
       if (barTarget.hp < barPrevHp) {
         barrageDamageTicks++;
         barPrevHp = barTarget.hp;
       }
     }
-    assert.ok(barrageDamageTicks >= 2, `Multiple Arcane Barrage bolts must independently hit same large/aligned target (hits=${barrageDamageTicks})`);
+    assert.strictEqual(seenBoltIds.size, 8, `Arcane Barrage must fire 8 total bolts across 4 staggered waves (got ${seenBoltIds.size})`);
+    assert.ok(barrageDamageTicks >= 3, `Arcane Barrage multi-wave barrage must hit standard target 3-4+ times (hits=${barrageDamageTicks})`);
   });
 
   // --- Test 98: Disintegration Scroll Channeling, Movement Lock, 180 deg/s Turn Cap, 42u/450u Wall-Clip & Interrupts ---
@@ -7029,6 +7053,8 @@ async function runRegressionTests() {
       const spec = getAbilityTargetSpec('arcanist', 'tactical', scroll.id);
       if (scroll.id === 'arcane_meteor') {
         assert.strictEqual(spec.kind, 'ground_aoe', `${scroll.id} must use ground_aoe targeting preview`);
+      } else if (scroll.id === 'chain_lightning') {
+        assert.strictEqual(spec.kind, 'cone', `${scroll.id} must use cone targeting preview`);
       } else {
         assert.strictEqual(spec.kind, 'line', `${scroll.id} must use line targeting preview`);
       }
@@ -7374,6 +7400,717 @@ async function runRegressionTests() {
     assert.strictEqual(limiter.consume('10.0.0.1', 200), true);
     assert.strictEqual(limiter.consume('10.0.0.1', 300), false);
     assert.strictEqual(limiter.consume('10.0.0.1', 1500), true);
+  });
+
+  // --- Test 103: Complete Arcanist Balance Pass (Primary 24, Star Rift 8s Cooldown & Sync, 7 Scroll INT Coefficients) ---
+  await test('103. Arcanist Balance Pass: 24 primary damage, Star Rift 4-hit + 8s cooldown/sync/reset, and 50% Scroll INT scaling', async () => {
+    const {
+      ARCANIST_SPELLS,
+      STAR_RIFT_PROC_COOLDOWN_MS,
+      STAR_RIFT_REQUIRED_ATTACKS,
+      computeArcanistSpellDamage,
+    } = await import('./src/shared/arcanist.ts');
+    const {
+      applySnapshotDelta,
+      cloneSnapshotBaseline,
+      computeSnapshotDelta,
+    } = await import('./src/shared/snapshotDelta.ts');
+
+    // 1. Primary Attack base damage & class isolation
+    assert.strictEqual(HERO_CLASSES.arcanist.damage, 24, 'Arcanist base primary damage must be 24');
+    assert.strictEqual(HERO_CLASSES.arcanist.attackCooldownMs, 420, 'Arcanist attackCooldownMs must remain 420ms');
+    assert.strictEqual(HERO_CLASSES.arcanist.range, 185, 'Arcanist range must remain 185');
+    assert.strictEqual(HERO_CLASSES.vanguard.damage, 28, 'Vanguard damage must remain untouched');
+    assert.strictEqual(HERO_CLASSES.ranger.damage, 24, 'Ranger damage must remain untouched');
+    assert.strictEqual(HERO_CLASSES.cleric.damage, 22, 'Cleric damage must remain untouched');
+
+    const room = new GameRoom({
+      roomId: 'R_ARC_BAL_103',
+      name: 'Arcanist Balance Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10301,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 20);
+
+    const arc = room.addOrReconnectPlayer('arc_bal', 'ArcBal', 'arcanist', false, {
+      level: 1, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    arc.x = origin.x;
+    arc.y = origin.y;
+    assert.strictEqual(arc.starRiftCooldownMs, 0, 'Arcanist must start with 0ms Star Rift proc cooldown');
+
+    // Primary bolt preserves speed, radius, pierce 2, and 24 base damage (or 30 crit)
+    room.firePrimaryAttack(arc);
+    const firstBolt = room.projectiles.find((pr) => pr.ownerId === arc.id && pr.style === 'arcane')!;
+    assert.ok(firstBolt, 'Arcanist must spawn arcane primary bolt');
+    assert.strictEqual(firstBolt.pierce, 2, 'Arcanist primary bolt must retain pierce 2');
+    assert.strictEqual(firstBolt.radius, 8, 'Arcanist primary bolt must retain radius 8');
+    assert.strictEqual(Math.round(Math.hypot(firstBolt.vx, firstBolt.vy)), 380, 'Arcanist primary bolt must retain speed 380');
+    assert.ok(firstBolt.damage === 24 || firstBolt.damage === 30, `Lv1 0-INT primary damage must be 24 (or 30 crit), got ${firstBolt.damage}`);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, '1st attack must not spawn Star Rift');
+
+    // 2. Star Rift: 4-hit requirement + independent 8s cooldown + counter reset + multiplayer delta sync
+    room.firePrimaryAttack(arc);
+    room.firePrimaryAttack(arc);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, '3rd attack must not spawn Star Rift');
+    assert.strictEqual(arc.starRiftCooldownMs, 0, 'Cooldown must only start when Star Rift successfully spawns');
+
+    let prevSnap = cloneSnapshotBaseline(room.buildNetworkSnapshot());
+    let clientSnap = cloneSnapshotBaseline(prevSnap);
+
+    // 4th attack spawns Star Rift & triggers 8000ms cooldown
+    room.firePrimaryAttack(arc);
+    assert.strictEqual(STAR_RIFT_REQUIRED_ATTACKS, 4);
+    assert.strictEqual(STAR_RIFT_PROC_COOLDOWN_MS, 8000);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 1, '4th attack must spawn Star Rift');
+    assert.strictEqual(arc.starRiftCooldownMs, 8000, 'Successful Star Rift spawn must start 8000ms cooldown');
+
+    // Verify multiplayer snapshot delta syncs starRiftCooldownMs
+    let nextSnap = room.buildNetworkSnapshot();
+    let wireDelta = JSON.parse(JSON.stringify(computeSnapshotDelta(prevSnap, nextSnap, 1, 2)));
+    clientSnap = applySnapshotDelta(clientSnap, wireDelta);
+    prevSnap = cloneSnapshotBaseline(nextSnap);
+    assert.strictEqual(clientSnap.players.find((p) => p.id === arc.id)?.starRiftCooldownMs, 8000, 'Multiplayer delta sync must transmit starRiftCooldownMs');
+
+    // Firing 4 more primary attacks during cooldown must NOT spawn a Rift, must NOT restart cooldown, and must reset counter
+    room.zones = [];
+    for (let t = 0; t < 40; t++) room.tick(25); // advance 1000ms -> 7000ms remaining
+    assert.strictEqual(arc.starRiftCooldownMs, 7000, 'Star Rift cooldown must count down independently to 7000ms');
+
+    for (let i = 0; i < 4; i++) room.firePrimaryAttack(arc);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, 'No Star Rift may spawn during 8s cooldown');
+    assert.strictEqual(arc.starRiftCooldownMs, 7000, 'Blocked proc attempt must NOT restart 8s cooldown');
+
+    // Expire remaining 7000ms cooldown -> verify counter was reset (1 attack does NOT immediately proc!)
+    for (let t = 0; t < 280; t++) room.tick(25); // +7000ms
+    assert.strictEqual(arc.starRiftCooldownMs, 0, 'Star Rift cooldown must expire to 0ms after 8s total');
+    room.firePrimaryAttack(arc); // attack 1 post-reset
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, 'Attack counter reset on cooldown block prevents instant proc on 1st post-cooldown hit');
+    room.firePrimaryAttack(arc); // attack 2
+    room.firePrimaryAttack(arc); // attack 3
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, '3 post-cooldown attacks must not spawn Star Rift yet');
+    room.firePrimaryAttack(arc); // attack 4
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 1, '4th post-cooldown attack must spawn Star Rift again');
+    assert.strictEqual(arc.starRiftCooldownMs, 8000, 'Second Star Rift spawn must start fresh 8000ms cooldown');
+
+    // Changing class and restarting run must reset Star Rift cooldown & counter cleanly
+    room.changeClass(arc.id, 'ranger');
+    assert.strictEqual(arc.starRiftCooldownMs, undefined, 'Changing off Arcanist must clear starRiftCooldownMs');
+    room.changeClass(arc.id, 'arcanist');
+    assert.strictEqual(arc.starRiftCooldownMs, 0, 'Changing back to Arcanist must initialize starRiftCooldownMs to 0');
+    for (let i = 0; i < 4; i++) room.firePrimaryAttack(arc);
+    assert.strictEqual(arc.starRiftCooldownMs, 8000);
+    room.restartRun();
+    const arcSnapAfterReset = room.buildNetworkSnapshot().players.find((p) => p.id === arc.id)!;
+    assert.strictEqual(arc.starRiftCooldownMs, 0, 'Ending/restarting run must reset starRiftCooldownMs to 0');
+    assert.strictEqual(arcSnapAfterReset.starRiftCooldownMs, 0, 'Network snapshot after run reset must expose starRiftCooldownMs = 0');
+    room.zones = [];
+    for (let i = 0; i < 3; i++) room.firePrimaryAttack(arc);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 0, 'Run reset must clear Star Rift attack counter');
+    room.firePrimaryAttack(arc);
+    assert.strictEqual(room.zones.filter((z) => z.kind === 'star_rift').length, 1, '4th attack after run reset spawns Star Rift');
+
+    // 3. All 7 Spell Scrolls use exact +50% INT coefficients without double scaling
+    const expectedCoeffs: Record<keyof typeof ARCANIST_SPELLS, { base: number; coeff: number; cd: number }> = {
+      fireball: { base: 42, coeff: 0.015, cd: 6000 },
+      disintegration: { base: 10, coeff: 0.012, cd: 12000 },
+      frost_lance: { base: 36, coeff: 0.018, cd: 4500 },
+      chain_lightning: { base: 32, coeff: 0.015, cd: 7000 },
+      arcane_meteor: { base: 75, coeff: 0.0195, cd: 11000 },
+      arcane_orb: { base: 12, coeff: 0.0105, cd: 9000 },
+      arcane_barrage: { base: 12, coeff: 0.00675, cd: 8000 },
+    };
+
+    for (const [id, expected] of Object.entries(expectedCoeffs) as Array<[keyof typeof ARCANIST_SPELLS, { base: number; coeff: number; cd: number }]>) {
+      const def = ARCANIST_SPELLS[id];
+      assert.strictEqual(def.baseDamage, expected.base, `${id} baseDamage must remain unchanged`);
+      assert.strictEqual(def.cooldownMs, expected.cd, `${id} cooldownMs must remain unchanged`);
+      assert.ok(Math.abs(def.intCoeff - expected.coeff) < 1e-9, `${id} intCoeff must equal ${expected.coeff} (got ${def.intCoeff})`);
+
+      // Verify formula D = B * [1 + 0.025*(L-1)] * [1 + c*INT] and single relic scaling
+      const dmgLv21Int80 = computeArcanistSpellDamage(def.baseDamage, { level: 21, intelligence: 80 }, def.intCoeff);
+      const exactRaw = def.baseDamage * (1 + 0.025 * 20) * (1 + expected.coeff * 80); // B * 1.5 * (1 + 80*c)
+      assert.strictEqual(dmgLv21Int80, Math.round(exactRaw), `${id} single-application Lv21/80-INT damage mismatch`);
+
+      const dmgWithRelic = computeArcanistSpellDamage(
+        def.baseDamage,
+        { level: 21, intelligence: 80, relics: ['sunfire_signet'] },
+        def.intCoeff
+      );
+      assert.strictEqual(dmgWithRelic, Math.round(exactRaw * 1.12), `${id} Sunfire Signet must multiply once`);
+    }
+
+    // Live server-pipeline parity checks (Disintegration tick & Chain Lightning decay, no double INT scaling)
+    const arenaOrigin = carveOpenArena(room, 25, 25, 20);
+    const mage = room.addOrReconnectPlayer('arc_int80', 'IntMage', 'arcanist', false, {
+      level: 21, xp: 0, strength: 0, vitality: 0, dexterity: 0, intelligence: 80, faith: 0, attributePoints: 0,
+    });
+    mage.x = arenaOrigin.x;
+    mage.y = arenaOrigin.y;
+
+    // Disintegration tick damage against 0-resistance enemy: 10 * 1.5 * (1 + 0.012 * 80) = 15 * 1.96 = 29.4 -> 29
+    const beamTarget = makeNeutralDummyEnemy('bal_beam', arenaOrigin.x + 120, arenaOrigin.y, 2000);
+    room.enemies = [beamTarget];
+    mage.pendingScrollChoices = ['disintegration'];
+    room.selectArcanistScroll(mage.id, 'disintegration');
+    mage.skillCooldownMs = 0;
+    assert.strictEqual(room.startDisintegrationChannel(mage.id, 0), true);
+    for (let t = 0; t < 14; t++) room.tick(25); // 150ms activation + 200ms first tick = 350ms
+    assert.strictEqual(2000 - beamTarget.hp, 29, 'Disintegration live channel tick must apply 0.012 INT coeff exactly once (29 dmg)');
+    room.stopDisintegrationChannel(mage.id);
+
+    // Chain Lightning live cone scaling against 0-res targets: 32 * 1.5 * (1 + 0.015 * 80) = 48 * 2.2 = 105.6 -> 106 (or crit 133)
+    const clA = makeNeutralDummyEnemy('bal_cl1', arenaOrigin.x + 100, arenaOrigin.y, 2000);
+    const clB = makeNeutralDummyEnemy('bal_cl2', arenaOrigin.x + 210, arenaOrigin.y, 2000);
+    room.enemies = [clA, clB];
+    mage.pendingScrollChoices = ['chain_lightning'];
+    room.selectArcanistScroll(mage.id, 'chain_lightning');
+    mage.skillCooldownMs = 0;
+    room.performAction(mage.id, 'tactical', 0, { aimDistance: 340, explicitAim: true });
+    const hitA = 2000 - clA.hp;
+    const hitB = 2000 - clB.hp;
+    assert.ok(hitA === 106 || hitA === 133, `Chain Lightning cone target A damage (${hitA}) must match single-scaled 106 (or 133 crit)`);
+    assert.ok(hitB === 106 || hitB === 133, `Chain Lightning cone target B damage (${hitB}) must match single-scaled 106 (or 133 crit)`);
+  });
+
+  // --- Test 104: Skill Smart Targeting Across Skill Ranges, LoS & Server Non-Explicit Casts ---
+  await test('104. Skill Smart Targeting immediately acquires unobstructed enemies within/near skill range', async () => {
+    const {
+      getAbilityTargetSpec,
+      resolveSkillSmartTarget,
+    } = await import('./src/shared/abilityTargeting.ts');
+
+    const room = new GameRoom({
+      roomId: 'R_SMART_TARGET_104',
+      name: 'Smart Target Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10401,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 22);
+
+    const arc = room.addOrReconnectPlayer('arc_smart', 'SmartMage', 'arcanist', false, {
+      level: 10, xp: 0, strength: 0, vitality: 20, dexterity: 0, intelligence: 30, faith: 0, attributePoints: 0,
+    });
+    arc.x = origin.x;
+    arc.y = origin.y;
+
+    // 1. Enemy near outer edge of Fireball range (370u vs 360u + 28u buffer) behind player (facing Math.PI) is immediately acquired
+    const fbSpec = getAbilityTargetSpec('arcanist', 'tactical', 'fireball');
+    const nearEdgeEnemy = makeNeutralDummyEnemy('sm_edge', origin.x + 370, origin.y, 2000);
+    const farEnemy = makeNeutralDummyEnemy('sm_far', origin.x + 480, origin.y, 2000);
+    const smartFb = resolveSkillSmartTarget({
+      spec: fbSpec,
+      playerX: arc.x,
+      playerY: arc.y,
+      fallbackAngle: Math.PI, // player facing opposite direction
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map: room.map,
+      props: room.props,
+      enemies: [farEnemy, nearEdgeEnemy],
+    });
+    assert.strictEqual(smartFb.target?.id, 'sm_edge', 'Smart targeting must acquire unobstructed enemy near Fireball range');
+    assert.ok(Math.abs(smartFb.aimAngle) < 0.05, `Smart targeting must turn aim toward acquired target (got ${smartFb.aimAngle})`);
+
+    // 2. Enemy beyond skill range is NOT acquired
+    const outSmart = resolveSkillSmartTarget({
+      spec: fbSpec,
+      playerX: arc.x,
+      playerY: arc.y,
+      fallbackAngle: Math.PI,
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map: room.map,
+      props: room.props,
+      enemies: [farEnemy],
+    });
+    assert.strictEqual(outSmart.target, null, 'Smart targeting must ignore enemies beyond skill reach');
+    assert.strictEqual(outSmart.aimAngle, Math.PI, 'Fallback angle must preserve facing when no enemy is in range');
+
+    // 3. Wall LoS blocks acquisition of closer enemy behind wall, selecting clear enemy instead
+    const wallTileX = Math.floor((origin.x + 100) / TILE_SIZE);
+    const wallTileY = Math.floor(origin.y / TILE_SIZE);
+    room.map.tiles[wallTileY * room.map.width + wallTileX] = 2;
+    const blockedEnemy = makeNeutralDummyEnemy('sm_blocked', origin.x + 170, origin.y, 2000);
+    const clearEnemy = makeNeutralDummyEnemy('sm_clear', origin.x, origin.y - 240, 2000);
+    const smartLos = resolveSkillSmartTarget({
+      spec: fbSpec,
+      playerX: arc.x,
+      playerY: arc.y,
+      fallbackAngle: 0,
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map: room.map,
+      props: room.props,
+      enemies: [blockedEnemy, clearEnemy],
+    });
+    assert.strictEqual(smartLos.target?.id, 'sm_clear', 'Smart targeting must skip wall-occluded enemy and acquire clear enemy');
+    room.map.tiles[wallTileY * room.map.width + wallTileX] = 1;
+
+    // 4. Ground AoE (Arcane Meteor): snaps ground reticle directly onto enemy within range (clamped <= 280u)
+    const metSpec = getAbilityTargetSpec('arcanist', 'tactical', 'arcane_meteor');
+    const metEnemy = makeNeutralDummyEnemy('sm_met', origin.x, origin.y + 295, 2000); // within 280 + 44 buffer
+    const smartMet = resolveSkillSmartTarget({
+      spec: metSpec,
+      playerX: arc.x,
+      playerY: arc.y,
+      fallbackAngle: 0,
+      preferCursorCone: false,
+      allowFullRangeFallback: true,
+      map: room.map,
+      props: room.props,
+      enemies: [metEnemy],
+    });
+    assert.strictEqual(smartMet.target?.id, 'sm_met', 'Arcane Meteor smart targeting must acquire enemy near ground AoE range');
+    assert.strictEqual(smartMet.aimDistance, metSpec.range, 'Ground AoE distance must clamp cleanly to max cast range');
+
+    // 5. Server performAction without explicitAim immediately smart-targets enemy behind player for Cone Lightning
+    arc.pendingScrollChoices = ['chain_lightning'];
+    room.selectArcanistScroll(arc.id, 'chain_lightning');
+    arc.skillCooldownMs = 0;
+    const behindFoe = makeNeutralDummyEnemy('sm_cl_behind', origin.x, origin.y - 250, 2000);
+    room.enemies = [behindFoe];
+    room.performAction(arc.id, 'tactical', 0, { aimDistance: 340, explicitAim: false });
+    assert.ok(behindFoe.hp < 2000, 'Non-explicit tactical skill cast must automatically smart-target enemy within skill range');
+  });
+
+  // --- Test 105: Chest Open / Close / Reopen Mechanics (Relic Vault & Arcanist Scroll Chests) ---
+  await test('105. Chest Open/Close preserves rolled Relics & Scrolls without reroll exploit or duplicate gold', async () => {
+    const room = new GameRoom({
+      roomId: 'R_CHEST_TOGGLE_105',
+      name: 'Chest Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10501,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 16);
+
+    const arc = room.addOrReconnectPlayer('chest_arc', 'ArcOpener', 'arcanist', false, {
+      level: 8, xp: 0, strength: 0, vitality: 15, dexterity: 0, intelligence: 25, faith: 0, attributePoints: 0,
+    });
+    arc.x = origin.x;
+    arc.y = origin.y;
+    arc.gold = 0;
+
+    // 1. Relic Vault Chest: open -> inspect rolled offers -> close -> reopen -> claim
+    const vaultChest: PropState = {
+      id: 'prop_vault_105',
+      kind: 'relic_chest',
+      x: origin.x + 12,
+      y: origin.y,
+      opened: false,
+      value: 0,
+    };
+    room.props.push(vaultChest);
+
+    const openedOk = room.openChest(arc.id, vaultChest);
+    assert.strictEqual(openedOk, true, 'Opening Relic Vault chest should succeed');
+    assert.strictEqual(vaultChest.opened, true, 'Relic Vault chest visually opens while inspecting');
+    assert.strictEqual(arc.activeChestPropId, vaultChest.id, 'Player must track activeChestPropId');
+    assert.ok(arc.pendingRelicChoices.length >= 2, 'Relic Vault must present relic choices on open');
+    const firstRelicRoll = [...arc.pendingRelicChoices];
+
+    // Toggle closed via second 'interact' press (also verifies Escape -> closeChest path)
+    room.performAction(arc.id, 'interact', 0);
+    assert.strictEqual(arc.activeChestPropId, null, 'Closing chest via interact toggle must clear activeChestPropId');
+    assert.strictEqual(arc.pendingRelicChoices.length, 0, 'Closing chest must dismiss relic modal choices');
+    assert.strictEqual(vaultChest.opened, false, 'Chest must close visually when loot remains unclaimed');
+    assert.deepStrictEqual(
+      vaultChest.relicChoicesByPlayer?.[arc.id],
+      firstRelicRoll,
+      'Unclaimed relic roll must remain persisted on chest'
+    );
+
+    // Reopen must restore exact same rolled choices (no infinite reroll exploit)
+    room.performAction(arc.id, 'interact', 0);
+    assert.strictEqual(vaultChest.opened, true, 'Reopening chest opens lid again');
+    assert.strictEqual(arc.activeChestPropId, vaultChest.id, 'Reopening restores activeChestPropId');
+    assert.deepStrictEqual(
+      arc.pendingRelicChoices,
+      firstRelicRoll,
+      'Reopening same chest must restore exact original relic roll'
+    );
+
+    // Explicitly close via closeChest() as triggered by Escape / UI Close button
+    room.closeChest(arc.id);
+    assert.strictEqual(vaultChest.opened, false, 'closeChest must shut lid when loot is still inside');
+    assert.strictEqual(arc.pendingRelicChoices.length, 0);
+
+    // Reopen and claim the relic (also test simultaneous scroll offer if rolled or injected)
+    vaultChest.scrollChoicesByPlayer = { [arc.id]: ['fireball', 'frost_lance'] };
+    room.openChest(arc.id, vaultChest);
+    assert.deepStrictEqual(arc.pendingScrollChoices, ['fireball', 'frost_lance'], 'Stored scroll choices must appear on reopen');
+    room.selectRelic(arc.id, firstRelicRoll[0]);
+    assert.ok(arc.relics.includes(firstRelicRoll[0]), 'Selected relic must be added to player loadout');
+    assert.ok(vaultChest.claimedRelicPlayerIds?.includes(arc.id), 'Chest must record relic claim for player');
+    assert.strictEqual(vaultChest.opened, true, 'Chest remains open while player finishes picking scroll');
+
+    // Close before picking scroll -> chest closes again, then reopen shows only remaining scroll (relic already claimed)
+    room.closeChest(arc.id);
+    assert.strictEqual(vaultChest.opened, false, 'Chest must stay closeable while unclaimed Scroll remains');
+    room.openChest(arc.id, vaultChest);
+    assert.strictEqual(arc.pendingRelicChoices.length, 0, 'Already-claimed relic must not re-appear');
+    assert.deepStrictEqual(arc.pendingScrollChoices, ['fireball', 'frost_lance'], 'Unclaimed scroll must still be inside');
+
+    room.selectArcanistScroll(arc.id, 'fireball');
+    assert.strictEqual(arc.equippedScrollId, 'fireball', 'Selected scroll must equip cleanly');
+    assert.strictEqual(arc.activeChestPropId, null, 'Claiming final item clears activeChestPropId');
+    assert.strictEqual(vaultChest.opened, true, 'Once all loot is claimed, chest remains open');
+
+    // 2. Standard Gold Chest with stored Scroll: gold awarded once only across close/reopen
+    const goldChest: PropState = {
+      id: 'prop_gold_105',
+      kind: 'chest',
+      x: origin.x - 14,
+      y: origin.y,
+      opened: false,
+      value: 35,
+      scrollChoicesByPlayer: { [arc.id]: ['chain_lightning', 'arcane_orb'] },
+    };
+    room.props.push(goldChest);
+
+    arc.gold = 0;
+    room.openChest(arc.id, goldChest);
+    assert.strictEqual(arc.gold, 35, 'Standard chest grants gold on first open');
+    assert.strictEqual(goldChest.chestGoldClaimed, true);
+    assert.deepStrictEqual(arc.pendingScrollChoices, ['chain_lightning', 'arcane_orb']);
+
+    room.closeChest(arc.id);
+    assert.strictEqual(goldChest.opened, false, 'Gold chest with unclaimed scroll must close cleanly');
+    room.openChest(arc.id, goldChest);
+    assert.strictEqual(arc.gold, 35, 'Reopening gold chest to inspect scroll must NOT award gold again');
+    assert.deepStrictEqual(arc.pendingScrollChoices, ['chain_lightning', 'arcane_orb']);
+    room.selectArcanistScroll(arc.id, 'chain_lightning');
+    assert.strictEqual(goldChest.opened, true, 'Gold chest stays open once both gold and scroll are claimed');
+  });
+
+  // --- Test 106: Smart Boss AI (Prediction, Kiting, Hazard Avoidance, Situational Scoring & Void Step LoS) ---
+  await test('106. Smart Boss AI predicts movement, kites as caster, avoids AoE hazards & picks situational skills', async () => {
+    const room = new GameRoom({
+      roomId: 'R_SMART_BOSS_106',
+      name: 'Boss Tactician Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10601,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 20);
+
+    const p = room.addOrReconnectPlayer('boss_hero', 'Dodger', 'ranger', false, {
+      level: 10, xp: 0, strength: 0, vitality: 20, dexterity: 20, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    p.x = origin.x;
+    p.y = origin.y;
+    p.vx = 180;
+    p.vy = 0;
+
+    // 1. Predictive targeting leads moving players and clamps inside walkable bounds
+    const predFn = (room as any).predictTargetPosition.bind(room);
+    const pred = predFn(p, 0.5, undefined);
+    assert.ok(pred.x > p.x + 50 && pred.x < p.x + 90, `Predicted X (${pred.x}) must lead rightward velocity realistically`);
+    assert.strictEqual(pred.y, p.y);
+
+    // 2. Caster Boss (Floor 3 Ignis) kites away when hero rushes melee + sidesteps Fireball Burn hazard
+    room.floor = 3;
+    room.map.biome = 'ember';
+    p.vx = 0;
+    p.vy = 0;
+    const ignis = makeNeutralDummyEnemy('boss_ignis_106', origin.x + 55, origin.y, 4000) as EnemyState;
+    ignis.kind = 'boss';
+    ignis.name = 'Ignis, Cinder Sovereign';
+    ignis.radius = 28;
+    ignis.elite = true;
+    ignis.windupMs = 2000; // isolate movement behavior
+    room.enemies = [ignis];
+
+    // Place a Fireball Burn hazard slightly behind-left of Ignis (still overlaps Ignis) to verify combined kite + hazard avoidance
+    room.zones.push({
+      id: 'hz_burn_106',
+      kind: 'fireball_burn',
+      x: origin.x + 40,
+      y: origin.y - 12,
+      radius: 48,
+      ttlMs: 3000,
+      maxTtlMs: 3000,
+      ownerId: p.id,
+    });
+    const startDist = Math.hypot(ignis.x - p.x, ignis.y - p.y);
+    const startBurnDist = Math.hypot(ignis.x - (origin.x + 40), ignis.y - (origin.y - 12));
+    for (let i = 0; i < 10; i++) room.tick(40);
+    const afterDist = Math.hypot(ignis.x - p.x, ignis.y - p.y);
+    const afterBurnDist = Math.hypot(ignis.x - (origin.x + 40), ignis.y - (origin.y - 12));
+    assert.ok(afterDist > startDist + 10, `Caster boss Ignis must kite away from melee range (${startDist.toFixed(1)} -> ${afterDist.toFixed(1)})`);
+    assert.ok(afterBurnDist > startBurnDist + 20, `Caster boss must sidestep burn zone away (burnDist ${startBurnDist.toFixed(1)} -> ${afterBurnDist.toFixed(1)})`);
+    room.zones = [];
+
+    // 3. Situational Ability Selection:
+    // Floor 1 Malakor (Phase 2) favors War Charge (3) when target is far (>= 190u) with LoS
+    room.floor = 1;
+    room.map.biome = 'courtyard';
+    const malakor = makeNeutralDummyEnemy('boss_mal_106', origin.x + 210, origin.y, 2000) as EnemyState;
+    malakor.kind = 'boss';
+    malakor.name = 'Warden Malakor';
+    malakor.maxHp = 5000;
+    malakor.hp = 2000; // Phase 2
+    malakor.radius = 26;
+    malakor.windupMs = 0;
+    room.enemies = [malakor];
+
+    const pickFn = (room as any).pickSmartBossAbility.bind(room);
+    const metaMal = (room as any).getEnemyMeta(malakor);
+    let warCharges = 0;
+    for (let sample = 0; sample < 25; sample++) {
+      metaMal.lastBossAbility = -1;
+      const picked = pickFn(1, [0, 1, 2, 3], metaMal, malakor, p, 210, [{ state: p }], true, false);
+      if (picked === 3) warCharges++;
+    }
+    assert.ok(warCharges >= 18, `Far clear target should strongly favor Malakor War Charge (got ${warCharges}/25)`);
+
+    // Floor 5 Archon avoids close-range Supernova (0, r=145) when target is 280u away
+    const archon = makeNeutralDummyEnemy('boss_arch_106', origin.x + 280, origin.y, 5000) as EnemyState;
+    archon.kind = 'boss';
+    const metaArch = (room as any).getEnemyMeta(archon);
+    let supernovasAtRange = 0;
+    for (let sample = 0; sample < 25; sample++) {
+      metaArch.lastBossAbility = -1;
+      const picked = pickFn(5, [0, 1, 2, 3], metaArch, archon, p, 280, [{ state: p }], true, false);
+      if (picked === 0) supernovasAtRange++;
+    }
+    assert.strictEqual(supernovasAtRange, 0, 'Archon must not waste point-blank Supernova when hero is 280u away');
+
+    // 4. Floor 4 Malice Void Step flanks safely with verified LoS outside hazards
+    room.floor = 4;
+    room.map.biome = 'void';
+    room.map.rooms = [{ id: 1, x: 5, y: 5, w: 41, h: 41, cx: 25, cy: 25, type: 'boss', cleared: false, discovered: true }];
+    p.aimAngle = 0; // Hero facing East (+X) -> behind hero is West (-X)
+    const malice = makeNeutralDummyEnemy('boss_malice_106', origin.x + 220, origin.y, 1500) as EnemyState;
+    malice.kind = 'boss';
+    malice.name = 'Void-Eater Malice';
+    malice.maxHp = 5000;
+    malice.hp = 1500;
+    malice.radius = 26;
+    malice.windupMs = 0;
+    const metaMalice = (room as any).getEnemyMeta(malice);
+    metaMalice.bossAbilityCooldowns = { 0: 999999, 1: 999999, 3: 999999 }; // Force Void Step (2)
+    metaMalice.lastBossAbility = 1;
+    room.enemies = [malice];
+    room.pendingEvents = [];
+    room.tick(25);
+    assert.ok(malice.x < p.x, `Void Step must flank behind eastward-facing target (malice.x=${malice.x}, p.x=${p.x})`);
+    assert.ok(
+      room.pendingEvents.some((e) => e.kind === 'status' && e.text.includes('VOID STEP')),
+      'Void Step must preserve boss VFX/SFX cue event'
+    );
+  });
+
+  // --- Test 107: Status Floating Text Decluttering & Boss SFX Cue Preservation ---
+  await test('107. Noisy passive floating texts are suppressed and repeated status procs are throttled per entity', async () => {
+    const room = new GameRoom({
+      roomId: 'R_DECLUTTER_107',
+      name: 'HUD Clarity Lab',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 10701,
+    });
+    room.status = 'playing';
+    room.enemies = [];
+    const origin = carveOpenArena(room, 25, 25, 16);
+
+    const vanguard = room.addOrReconnectPlayer('van_107', 'Bulwark', 'vanguard', false, {
+      level: 10, xp: 0, strength: 15, vitality: 20, dexterity: 0, intelligence: 0, faith: 0, attributePoints: 0,
+    });
+    vanguard.x = origin.x;
+    vanguard.y = origin.y;
+    vanguard.shield = 20;
+    vanguard.relics = ['cinder_heart', 'viper_crucible', 'thorned_aegis'];
+
+    const foe = makeNeutralDummyEnemy('foe_107', origin.x + 40, origin.y, 5000);
+    foe.burnedMs = 3000; // Triggers Vanguard Iron Will shield gain on hit
+    room.enemies = [foe];
+    room.trainingDummies = [
+      {
+        id: 'dummy_107',
+        x: origin.x - 40,
+        y: origin.y,
+        hp: 5000,
+        maxHp: 5000,
+        hitAnimMs: 0,
+        totalDamageTaken: 0,
+        lastHitTimerMs: 0,
+      },
+    ];
+
+    room.pendingEvents = [];
+    // Rapidly strike burning foe & dummy, plus take damage (triggers Iron Will -15% & Thorned Aegis stun)
+    for (let i = 0; i < 4; i++) {
+      room.damageEnemy(foe, 35, vanguard, true, 'physical');
+      (room as any).damageDummy(room.trainingDummies[0], 35, vanguard, true);
+    }
+    room.damagePlayer(vanguard, 30, 'physical');
+
+    const statusTexts = room.pendingEvents.filter((e) => e.kind === 'status').map((e) => e.text.trim());
+    assert.strictEqual(
+      statusTexts.some((t) => t.includes('Iron Will') || t === 'ARMORED' || t.includes('THORNED RETALIATION') || t.includes('BLOCKED!')),
+      false,
+      `Noisy passive labels must not spam status events (got: ${statusTexts.join(', ')})`
+    );
+    assert.strictEqual(
+      statusTexts.filter((t) => t === 'POISONED!').length,
+      1,
+      'Repeated POISONED! dummy proc on same target within 3.5s must throttle to 1 event'
+    );
+    assert.strictEqual(
+      statusTexts.filter((t) => t === 'IGNITED!').length,
+      1,
+      'Repeated IGNITED! dummy proc on same target within 3.5s must throttle to 1 event'
+    );
+    assert.ok(vanguard.shield > 0, 'Passive Iron Will shield gain still applies mechanically without floating spam');
+  });
+
+  // --- Test 108: Stat Projection Rank Reassessment (D–S+ Fairness & True Class Performance Accuracy) ---
+  await test('108. Reassessed D–S+ ranks & projections accurately reflect actual performance across all 4 classes', async () => {
+    const { calculatePlayerStatProjections, scoreToStatRank } = await import('./src/shared/statUtils.ts');
+    const makeHero = (
+      cls: HeroClassId,
+      level: number,
+      attrs: Partial<{ strength: number; vitality: number; dexterity: number; intelligence: number; faith: number }> = {},
+      relics: string[] = [],
+      equippedScrollId?: 'fireball' | 'disintegration' | 'arcane_meteor',
+      floorBlessings: string[] = []
+    ) =>
+      ({
+        id: `rank_${cls}_${level}`,
+        username: cls,
+        heroClass: cls,
+        level,
+        xp: 0,
+        nextXp: 100,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        aimAngle: 0,
+        hp: 200,
+        maxHp: 200,
+        shield: 0,
+        gold: 0,
+        potions: 2,
+        relics,
+        storage: [],
+        strength: attrs.strength || 0,
+        vitality: attrs.vitality || 0,
+        dexterity: attrs.dexterity || 0,
+        intelligence: attrs.intelligence || 0,
+        faith: attrs.faith || 0,
+        attributePoints: 0,
+        downed: false,
+        downedTimerMs: 0,
+        reviveProgress: 0,
+        skillCooldownMs: 0,
+        maxSkillCooldownMs: 5000,
+        ultCooldownMs: 0,
+        maxUltCooldownMs: 13000,
+        dashCooldownMs: 0,
+        maxDashCooldownMs: 2600,
+        attackAnimMs: 0,
+        hasteMs: 0,
+        slowedMs: 0,
+        stunnedMs: 0,
+        statuses: [],
+        kills: 0,
+        damageDealt: 0,
+        healingDone: 0,
+        connected: true,
+        ready: false,
+        equippedScrollId: equippedScrollId ?? null,
+        floorBlessings,
+      } as any);
+
+    // 1. Score ladder thresholds: D < 30 <= C < 45 <= B < 63 <= A < 80 <= S < 98 <= S+
+    assert.strictEqual(scoreToStatRank(24).tier, 'D');
+    assert.strictEqual(scoreToStatRank(35).tier, 'C');
+    assert.strictEqual(scoreToStatRank(50).tier, 'B');
+    assert.strictEqual(scoreToStatRank(70).tier, 'A');
+    assert.strictEqual(scoreToStatRank(85).tier, 'S');
+    assert.strictEqual(scoreToStatRank(99).tier, 'S+');
+
+    // 2. All 4 Lv1 starters with 0 pts / 0 relics start in D-RANK consistently
+    for (const cls of ['vanguard', 'ranger', 'arcanist', 'cleric'] as HeroClassId[]) {
+      const lv1Proj = calculatePlayerStatProjections(makeHero(cls, 1), 1);
+      assert.strictEqual(
+        lv1Proj.overallRank.tier,
+        'D',
+        `Fresh Lv1 ${cls} must start at D-RANK (got ${lv1Proj.overallRank.label} @ ${lv1Proj.overallRank.score})`
+      );
+      assert.ok(lv1Proj.effectiveDps > lv1Proj.directDps, `Lv1 ${cls} effectiveDps must include Tactical/Passive output`);
+    }
+
+    // 3. Lv50 Endgame builds in their real class roles ALL achieve S-RANK or S+-RANK (no Tank/Cleric/Scroll penalty)
+    const lv50Vanguard = calculatePlayerStatProjections(
+      makeHero('vanguard', 50, { strength: 80, vitality: 67 }, ['runic_carapace', 'thorned_aegis', 'bastion_pauldron', 'sunfire_signet', 'cinder_heart']),
+      10
+    );
+    assert.ok(lv50Vanguard.effectiveHp >= 2200, `Lv50 Vanguard EHP must reflect Iron Will + Armor (got ${lv50Vanguard.effectiveHp})`);
+    assert.ok(lv50Vanguard.defenseRank.tier === 'S' || lv50Vanguard.defenseRank.tier === 'S+', `Lv50 Tank Vanguard must earn S/S+ Defense (got ${lv50Vanguard.defenseRank.label})`);
+    assert.ok(lv50Vanguard.overallRank.tier === 'S' || lv50Vanguard.overallRank.tier === 'S+', `Lv50 Tank Vanguard must earn S/S+ Overall (got ${lv50Vanguard.overallRank.label})`);
+
+    const lv50Cleric = calculatePlayerStatProjections(
+      makeHero('cleric', 50, { faith: 85, vitality: 62 }, ['hourglass_shard', 'oathbound_censer', 'runic_carapace', 'bastion_pauldron', 'sunfire_signet']),
+      10
+    );
+    assert.ok(lv50Cleric.healingPerSec >= 18, `Lv50 Cleric healingPerSec must reflect Radiant Aura + Pulse + Beacon + Censer (got ${lv50Cleric.healingPerSec})`);
+    assert.ok(lv50Cleric.utilityRank.tier === 'S' || lv50Cleric.utilityRank.tier === 'S+', `Lv50 Support Cleric must earn S/S+ Support/Utility (got ${lv50Cleric.utilityRank.label})`);
+    assert.ok(lv50Cleric.overallRank.tier === 'S' || lv50Cleric.overallRank.tier === 'S+', `Lv50 Support Cleric must earn S/S+ Overall (got ${lv50Cleric.overallRank.label})`);
+
+    const lv50Ranger = calculatePlayerStatProjections(
+      makeHero('ranger', 50, { dexterity: 85, vitality: 62 }, ['twinstring_charm', 'sunfire_signet', 'keen_arrowhead', 'viper_crucible', 'cinder_heart']),
+      10
+    );
+    assert.ok(lv50Ranger.longshotHitDamage > lv50Ranger.scaledHitDamage, 'Ranger Eagle Keenness Longshot hit must exceed base hit by +25%');
+    assert.ok(lv50Ranger.offenseRank.tier === 'S' || lv50Ranger.offenseRank.tier === 'S+', `Lv50 Marksman Ranger must earn S/S+ Offense (got ${lv50Ranger.offenseRank.label})`);
+    assert.ok(lv50Ranger.overallRank.tier === 'S' || lv50Ranger.overallRank.tier === 'S+', `Lv50 Marksman Ranger must earn S/S+ Overall (got ${lv50Ranger.overallRank.label})`);
+
+    // 4. Arcanist equipped Scroll accuracy (cooldown, damage & Star Rift reflected in projections)
+    const arcNoScroll = calculatePlayerStatProjections(
+      makeHero('arcanist', 50, { intelligence: 85, vitality: 62 }, ['sunfire_signet', 'hourglass_shard', 'runic_carapace', 'cinder_heart']),
+      10
+    );
+    const arcFireball = calculatePlayerStatProjections(
+      makeHero('arcanist', 50, { intelligence: 85, vitality: 62 }, ['sunfire_signet', 'hourglass_shard', 'runic_carapace', 'cinder_heart'], 'fireball'),
+      10
+    );
+    assert.strictEqual(arcFireball.activeTacticalLabel, 'Scroll of Fireball');
+    assert.strictEqual(arcFireball.tacticalBaseCooldownMs, 6000, 'Arcanist Fireball Scroll base cooldown must be 6000ms');
+    assert.ok(arcFireball.tacticalAbilityDps > arcNoScroll.tacticalAbilityDps, 'Fireball Scroll must raise tacticalAbilityDps over Astral Nova');
+    assert.ok(arcFireball.effectiveDps > arcNoScroll.effectiveDps, 'Equipped Spell Scroll must raise projected effectiveDps');
+    assert.ok(arcFireball.passiveCombatDps > 0, 'Arcanist Star Rift passive DPS must be projected');
+    assert.ok(arcFireball.overallRank.tier === 'S' || arcFireball.overallRank.tier === 'S+', `Lv50 Scroll Arcanist must earn S/S+ Overall (got ${arcFireball.overallRank.label})`);
+
+    // 5. Extreme Lv50 Min-Maxed Glass Cannon with Blessings reaches S+-RANK cleanly
+    const mythicRanger = calculatePlayerStatProjections(
+      makeHero('ranger', 50, { dexterity: 98, vitality: 49 }, ['twinstring_charm', 'sunfire_signet', 'keen_arrowhead', 'cinder_heart', 'viper_crucible'], undefined, ['fury', 'fury', 'swiftness']),
+      10
+    );
+    assert.strictEqual(mythicRanger.overallRank.tier, 'S+', `Optimized Lv50 build with blessings reaches S+-RANK (got ${mythicRanger.overallRank.label} @ ${mythicRanger.overallRank.score})`);
+
+    // 6. Misbuilt Lv50 (100 STR on a Ranger, 0 relics) scores lower than a proper build
+    const misbuiltRanger = calculatePlayerStatProjections(
+      makeHero('ranger', 50, { strength: 100 }, []),
+      10
+    );
+    assert.ok(
+      misbuiltRanger.overallRank.score < lv50Ranger.overallRank.score - 20,
+      `Off-stat Lv50 Ranger (${misbuiltRanger.overallRank.score}) must rank noticeably below synergistic Ranger (${lv50Ranger.overallRank.score})`
+    );
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);
