@@ -36,6 +36,17 @@ import type {
   UserProfile,
 } from './src/shared/types.ts';
 import { MAX_ATTRIBUTE, MAX_LEVEL } from './src/shared/types.ts';
+import {
+  buildSharedAssertionPayload,
+  DEFAULT_ASSERTION_TTL_SECONDS,
+  hashPassword,
+  MIN_SHARED_IDENTITY_SECRET_LENGTH,
+  normalizeHeroClass,
+  signDungeonsIdentityAssertion,
+  SlidingWindowRateLimiter,
+  verifyPassword,
+  verifySharedIdentityRequestSecret,
+} from './src/server/sharedIdentity.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -65,28 +76,6 @@ if (process.env.DATABASE_URL) {
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
   });
-}
-
-function hashPassword(pw: string, salt?: string): string {
-  if (!salt) {
-    // New scrypt hash: "scrypt:salt:hash"
-    const newSalt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.scryptSync(pw, newSalt, 64).toString('hex');
-    return `scrypt:${newSalt}:${hash}`;
-  }
-  // Verify scrypt
-  const hash = crypto.scryptSync(pw, salt, 64).toString('hex');
-  return hash;
-}
-
-function verifyPassword(pw: string, storedHash: string): boolean {
-  if (storedHash.startsWith('scrypt:')) {
-    const [, salt, hash] = storedHash.split(':');
-    return hashPassword(pw, salt) === hash;
-  }
-  // Legacy SHA-256 fallback
-  const legacyHash = crypto.createHash('sha256').update(`beyond_salt_${pw}`).digest('hex');
-  return legacyHash === storedHash;
 }
 
 function normalizeAccountLevel(acc: AccountRecord): void {
@@ -477,20 +466,15 @@ async function initStorage(): Promise<void> {
   }
 }
 
-function createAccount(
+function buildAccountRecord(
   username: string,
   password: string,
   chosenClass: HeroClassId = 'vanguard',
   isAdmin = false
 ): AccountRecord {
-  const validClass: HeroClassId =
-    chosenClass === 'ranger' || chosenClass === 'arcanist' || chosenClass === 'cleric'
-      ? chosenClass
-      : 'vanguard';
+  const validClass = normalizeHeroClass(chosenClass);
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
-  const lowerName = username.toLowerCase();
-  const isUserAdmin = isAdmin;
-  const rec: AccountRecord = {
+  return {
     id,
     username,
     usernameLower: username.toLowerCase(),
@@ -502,7 +486,7 @@ function createAccount(
     totalKills: 0,
     totalRevives: 0,
     gold: 0,
-    isAdmin: isUserAdmin,
+    isAdmin,
     strength: 0,
     vitality: 0,
     dexterity: 0,
@@ -512,6 +496,15 @@ function createAccount(
     level: 1,
     xp: 0,
   };
+}
+
+function createAccount(
+  username: string,
+  password: string,
+  chosenClass: HeroClassId = 'vanguard',
+  isAdmin = false
+): AccountRecord {
+  const rec = buildAccountRecord(username, password, chosenClass, isAdmin);
   persistAccount(rec);
   return rec;
 }
@@ -916,6 +909,194 @@ async function startServer() {
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
     if (token) sessionsByToken.delete(token);
     res.json({ ok: true });
+  });
+
+  const internalIdentityRateLimiter = new SlidingWindowRateLimiter(120, 60_000);
+  const ssoAssertionRateLimiter = new SlidingWindowRateLimiter(30, 60_000);
+
+  function getConfiguredIdentitySecret(): string {
+    return (process.env.BEYOND_IDENTITY_SECRET || '').trim();
+  }
+
+  function requireInternalIdentityAuth(req: express.Request, res: express.Response): string | null {
+    const clientKey = req.ip || 'unknown';
+    if (!internalIdentityRateLimiter.consume(clientKey)) {
+      res.status(429).json({ error: 'Too many shared identity requests. Please retry shortly.' });
+      return null;
+    }
+    const expectedSecret = getConfiguredIdentitySecret();
+    const xSecretHeader = typeof req.headers['x-beyond-identity-secret'] === 'string'
+      ? req.headers['x-beyond-identity-secret']
+      : undefined;
+    const check = verifySharedIdentityRequestSecret(
+      req.headers.authorization,
+      xSecretHeader,
+      expectedSecret
+    );
+    if (!check.ok) {
+      res.status(check.status).json({ error: check.error });
+      return null;
+    }
+    return expectedSecret;
+  }
+
+  // Authenticated player SSO handoff: mints a short-lived signed assertion for Beyond: Overworld
+  app.post('/api/auth/overworld-assertion', (req, res) => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const session = sessionsByToken.get(token);
+    const userId = session && session.expiresAt > Date.now() ? session.userId : null;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+    if (!ssoAssertionRateLimiter.consume(userId)) {
+      res.status(429).json({ error: 'Rate limit exceeded for Overworld handoff assertions.' });
+      return;
+    }
+    const acc = accountsById.get(userId);
+    if (!acc) {
+      res.status(401).json({ error: 'Account not found.' });
+      return;
+    }
+    const secret = getConfiguredIdentitySecret();
+    if (secret.length < MIN_SHARED_IDENTITY_SECRET_LENGTH) {
+      res.status(503).json({ error: 'Shared Beyond identity integration is not configured.' });
+      return;
+    }
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      expiresInSeconds: DEFAULT_ASSERTION_TTL_SECONDS,
+    });
+  });
+
+  // Server-to-server identity verification for Beyond: Overworld
+  app.post('/api/internal/identity/verify-credentials', async (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+
+    const usernameRaw = String(req.body?.username ?? '').trim();
+    const passwordRaw = String(req.body?.password ?? '');
+
+    if (usernameRaw.length < 2 || usernameRaw.length > 20) {
+      res.status(400).json({ error: 'Username must be 2 to 20 characters.' });
+      return;
+    }
+    if (!passwordRaw) {
+      res.status(400).json({ error: 'Password is required.' });
+      return;
+    }
+
+    const acc = accountsByLower.get(usernameRaw.toLowerCase());
+    if (!acc) {
+      if (isMaintenance) {
+        res.status(503).json({
+          error: `Server is migrating to Singapore for lower latency. Please connect to: ${redirectTarget}`,
+          redirectUrl: redirectTarget,
+        });
+        return;
+      }
+      res.status(401).json({ error: 'No adventurer account found with that name.' });
+      return;
+    }
+    if (!verifyPassword(passwordRaw, acc.passwordHash)) {
+      res.status(401).json({ error: 'Invalid password for this adventurer.' });
+      return;
+    }
+
+    let dirty = false;
+    if (!acc.passwordHash.startsWith('scrypt:')) {
+      acc.passwordHash = hashPassword(passwordRaw);
+      dirty = true;
+    }
+    if (acc.usernameLower === 'aleph' && !acc.isAdmin) {
+      acc.isAdmin = true;
+      dirty = true;
+    }
+    if (dirty) {
+      await persistAccount(acc).catch((err) => {
+        console.error('Failed to persist account upgrade during shared verify:', err);
+      });
+    }
+
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      account: toPublicProfile(acc),
+    });
+  });
+
+  // Server-to-server account registration for Beyond: Overworld (single authoritative Dungeons record)
+  app.post('/api/internal/identity/register', async (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+
+    if (isMaintenance) {
+      res.status(503).json({
+        error: `Server is migrating to Singapore for lower latency. Please register at: ${redirectTarget}`,
+        redirectUrl: redirectTarget,
+      });
+      return;
+    }
+
+    const usernameRaw = String(req.body?.username ?? '').trim();
+    const passwordRaw = String(req.body?.password ?? '');
+    const preferredClass = normalizeHeroClass(req.body?.preferredClass ?? req.body?.heroClass);
+
+    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(usernameRaw)) {
+      res.status(400).json({
+        error: 'Username must be 2–20 letters, numbers, underscores, or hyphens.',
+      });
+      return;
+    }
+    if (passwordRaw.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters.' });
+      return;
+    }
+    if (accountsByLower.has(usernameRaw.toLowerCase())) {
+      res.status(409).json({ error: 'That adventurer name is already claimed.' });
+      return;
+    }
+
+    const isAdmin = usernameRaw.toLowerCase() === 'aleph';
+    const acc = buildAccountRecord(usernameRaw, passwordRaw, preferredClass, isAdmin);
+    try {
+      await persistAccount(acc);
+    } catch (err) {
+      console.error('Failed to persist shared-identity registration:', err);
+      res.status(500).json({ error: 'Failed to persist new adventurer account.' });
+      return;
+    }
+
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.status(201).json({
+      assertion,
+      account: toPublicProfile(acc),
+    });
+  });
+
+  // Server-to-server authoritative identity snapshot lookup by Dungeons accountId
+  app.get('/api/internal/identity/account/:accountId', (req, res) => {
+    const secret = requireInternalIdentityAuth(req, res);
+    if (!secret) return;
+
+    const accountId = String(req.params.accountId ?? '').trim();
+    const acc = accountsById.get(accountId);
+    if (!acc) {
+      res.status(404).json({ error: 'Adventurer account not found.' });
+      return;
+    }
+
+    const payload = buildSharedAssertionPayload(acc, DEFAULT_ASSERTION_TTL_SECONDS);
+    const assertion = signDungeonsIdentityAssertion(payload, secret);
+    res.json({
+      assertion,
+      account: toPublicProfile(acc),
+    });
   });
 
   app.post('/api/voice/token', async (req, res) => {

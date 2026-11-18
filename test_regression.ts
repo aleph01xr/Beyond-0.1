@@ -67,6 +67,15 @@ import {
   hasMovementInput,
   normalizePlayerInputDirection,
 } from './src/shared/playerMovement.ts';
+import {
+  buildSharedAssertionPayload,
+  hashPassword,
+  signDungeonsIdentityAssertion,
+  SlidingWindowRateLimiter,
+  verifyDungeonsIdentityAssertion,
+  verifyPassword,
+  verifySharedIdentityRequestSecret,
+} from './src/server/sharedIdentity.ts';
 
 async function runRegressionTests() {
   console.log('--- STARTING BEYOND REGRESSION TESTS ---');
@@ -7278,6 +7287,93 @@ async function runRegressionTests() {
       isNewSnapshot: true,
     });
     assert.strictEqual(predSusp.x, suspendedClientState.x, 'Client prediction must lock X during Chrono suspension');
+  });
+
+  // --- Test 102: Shared Beyond Identity signing, legacy SHA-256 compatibility, secret checks & rate limiter ---
+  await test('102. Shared identity assertions, constant-time password/secret checks, and rate limiting', async () => {
+    const crypto = await import('node:crypto');
+
+    // Password hashing & legacy SHA-256 verification compatibility
+    const scryptHash = hashPassword('DungeonHero!99');
+    assert.ok(scryptHash.startsWith('scrypt:'));
+    assert.strictEqual(verifyPassword('DungeonHero!99', scryptHash), true);
+    assert.strictEqual(verifyPassword('WrongPass!99', scryptHash), false);
+    assert.strictEqual(verifyPassword('DungeonHero!99', 'scrypt:bad'), false);
+
+    const legacyHash = crypto.createHash('sha256').update('beyond_salt_LegacyPass123').digest('hex');
+    assert.strictEqual(verifyPassword('LegacyPass123', legacyHash), true);
+    assert.strictEqual(verifyPassword('WrongLegacy', legacyHash), false);
+
+    // Assertion payload normalization & HMAC signature verification
+    const secret = 'beyond_shared_test_secret_min_32_chars!';
+    const sampleAcc: AccountRecord = {
+      id: 'usr_abc123def456',
+      username: 'Aleph',
+      usernameLower: 'aleph',
+      passwordHash: scryptHash,
+      lockedClass: 'arcanist',
+      preferredClass: 'arcanist',
+      runsCompleted: 12,
+      highestFloor: 9,
+      totalKills: 420,
+      totalRevives: 15,
+      gold: 9999,
+      isAdmin: true,
+      level: 55, // over MAX_LEVEL -> clamps to 50 with 0 xp
+      xp: 1234,
+      strength: 5,
+      vitality: 20,
+      dexterity: 10,
+      intelligence: 140, // over MAX_ATTRIBUTE -> clamps to 100
+      faith: -2, // negative -> clamps to 0
+      attributePoints: 4,
+    };
+
+    const payload = buildSharedAssertionPayload(sampleAcc, 60);
+    assert.strictEqual(payload.iss, 'beyond-dungeons');
+    assert.strictEqual(payload.aud, 'beyond-overworld');
+    assert.strictEqual(payload.accountId, 'usr_abc123def456');
+    assert.strictEqual(payload.isAdmin, true);
+    assert.strictEqual(payload.level, MAX_LEVEL);
+    assert.strictEqual(payload.xp, 0);
+    assert.strictEqual(payload.intelligence, 100);
+    assert.strictEqual(payload.faith, 0);
+    assert.ok(payload.jti.length >= 16);
+
+    const token = signDungeonsIdentityAssertion(payload, secret);
+    const verified = verifyDungeonsIdentityAssertion(token, secret);
+    assert.strictEqual(verified.ok, true);
+    if (verified.ok) {
+      assert.strictEqual(verified.payload.accountId, 'usr_abc123def456');
+      assert.strictEqual(verified.payload.isAdmin, true);
+    }
+
+    // Tampered / wrong secret / expired assertions must fail
+    const [b64, sig] = token.split('.');
+    assert.strictEqual(verifyDungeonsIdentityAssertion(`${b64}.tampered_${sig}`, secret).ok, false);
+    assert.strictEqual(verifyDungeonsIdentityAssertion(token, 'different_secret_min_32_chars_long').ok, false);
+    const expiredPayload = buildSharedAssertionPayload(sampleAcc, 60, Date.now() - 120_000);
+    const expiredToken = signDungeonsIdentityAssertion(expiredPayload, secret);
+    assert.strictEqual(verifyDungeonsIdentityAssertion(expiredToken, secret).ok, false);
+
+    // Server-to-server secret checks
+    const unconfigured = verifySharedIdentityRequestSecret(`Bearer ${secret}`, undefined, '');
+    assert.strictEqual(unconfigured.ok, false);
+    if (!unconfigured.ok) assert.strictEqual(unconfigured.status, 503);
+
+    const wrongSecret = verifySharedIdentityRequestSecret('Bearer wrong_secret_123456', undefined, secret);
+    assert.strictEqual(wrongSecret.ok, false);
+    if (!wrongSecret.ok) assert.strictEqual(wrongSecret.status, 403);
+
+    assert.strictEqual(verifySharedIdentityRequestSecret(`Bearer ${secret}`, undefined, secret).ok, true);
+    assert.strictEqual(verifySharedIdentityRequestSecret(undefined, secret, secret).ok, true);
+
+    // Rate limiter
+    const limiter = new SlidingWindowRateLimiter(2, 1000);
+    assert.strictEqual(limiter.consume('10.0.0.1', 100), true);
+    assert.strictEqual(limiter.consume('10.0.0.1', 200), true);
+    assert.strictEqual(limiter.consume('10.0.0.1', 300), false);
+    assert.strictEqual(limiter.consume('10.0.0.1', 1500), true);
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

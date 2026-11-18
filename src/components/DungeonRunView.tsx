@@ -770,7 +770,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </button>
 
             {/* Exclusive Developer Admin Menu Button */}
-            {me && (me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph') && (
+            {me && Boolean(me.isAdmin) && (
               <button
                 type="button"
                 onClick={() => {
@@ -1650,7 +1650,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             }
           }}
           onLeaveRoom={onLeaveRoom}
-          isAdmin={Boolean(me.isAdmin || me.username.toLowerCase() === 'admin' || me.username.toLowerCase() === 'aleph')}
+          isAdmin={Boolean(me.isAdmin)}
         />
       )}
 

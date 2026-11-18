@@ -4917,7 +4917,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         });
 
         // Player Name Tag (Username Lvl X without border box; Green for players, Purple for admin)
-        const isPlayerAdmin = Boolean(p.isAdmin || p.username.toLowerCase() === 'admin' || p.username.toLowerCase() === 'aleph');
+        const isPlayerAdmin = Boolean(p.isAdmin);
         const displayLevel = Math.max(1, p.level || 1);
         const displayLabel = `${p.username} Lvl ${displayLevel}`;
 
