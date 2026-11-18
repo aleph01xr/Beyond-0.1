@@ -2099,6 +2099,24 @@ export class GameRoom {
     this.pushSystemChat(`${p.username} inscribed ${scrollDef.scrollName}, replacing Astral Nova.`);
   }
 
+  public adminEquipScroll(playerId: string, scrollId: string): void {
+    const pr = this.players.get(playerId);
+    if (!pr) return;
+    const p = pr.state;
+    const scrollDef = getArcanistScrollDef(scrollId as ArcanistScrollId);
+    if (!scrollDef) return;
+    if (p.disintegrationState?.active) {
+      p.disintegrationState = null;
+    }
+    p.spellCastState = null;
+    p.equippedScrollId = scrollId as ArcanistScrollId;
+    const cdrMult = this.getPlayerCdrMult(p);
+    p.maxSkillCooldownMs = Math.round(scrollDef.cooldownMs * cdrMult);
+    p.skillCooldownMs = 0;
+    this.emitEvent('status', p.x, p.y - 26, `Admin Scroll: ${scrollDef.tacticalTitle}`, scrollDef.accentColor);
+    this.pushSystemChat(`[ADMIN] ${p.username} equipped ${scrollDef.scrollName}.`);
+  }
+
   private getPlayerCdrMult(p: PlayerState): number {
     const intCdr = Math.min(0.20, (p.intelligence || 0) * 0.002);
     const relicCdr = p.relics.includes('hourglass_shard') ? 0.25 : 0;

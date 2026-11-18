@@ -131,8 +131,8 @@ export function generateDungeonFloor(
   });
 
   // Dedicated Grand Boss Arena (always substantially larger than regular rooms)
-  const bossW = 16 + Math.floor(rng() * 3); // 16 to 18 tiles wide
-  const bossH = 13 + Math.floor(rng() * 3); // 13 to 15 tiles high
+  const bossW = 24 + Math.floor(rng() * 6); // 24 to 29 tiles wide
+  const bossH = 20 + Math.floor(rng() * 6); // 20 to 25 tiles high
   const bossX = width - bossW - 4;
   const bossY = Math.max(
     4,
@@ -199,9 +199,9 @@ export function generateDungeonFloor(
     const bossRoom = sortedByDist[sortedByDist.length - 1];
     bossRoom.type = 'boss';
     // Guarantee boss room is always large even under custom seeds
-    if (bossRoom.w < 16 || bossRoom.h < 13) {
-      bossRoom.w = Math.max(16, bossRoom.w);
-      bossRoom.h = Math.max(13, bossRoom.h);
+    if (bossRoom.w < 24 || bossRoom.h < 20) {
+      bossRoom.w = Math.max(24, bossRoom.w);
+      bossRoom.h = Math.max(20, bossRoom.h);
       if (bossRoom.x + bossRoom.w >= width - 2) {
         bossRoom.x = Math.max(2, width - bossRoom.w - 2);
       }

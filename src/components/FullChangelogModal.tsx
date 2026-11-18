@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { sfx } from '../client/sound.ts';
+import { MarkdownText } from './MarkdownText.tsx';
 import {
   CATEGORY_ORDER,
   CATEGORY_STYLES,
@@ -262,7 +263,7 @@ export const FullChangelogModal: React.FC<FullChangelogModalProps> = ({
 
                   {/* Summary Description */}
                   <p className="text-xs sm:text-sm text-[#D4D2DE] leading-relaxed font-sans">
-                    {entry.description}
+                    <MarkdownText content={entry.description} />
                   </p>
 
                   {/* Categorized Changes */}
@@ -296,7 +297,7 @@ export const FullChangelogModal: React.FC<FullChangelogModalProps> = ({
                                   ▸
                                 </span>
                                 <span className="font-sans">
-                                  {item}
+                                  <MarkdownText content={item} />
                                 </span>
                               </li>
                             ))}

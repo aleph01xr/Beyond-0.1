@@ -1600,6 +1600,10 @@ async function startServer() {
         if (acc.isAdmin && msg.relicId) {
           room.addPlayerRelic(acc.id, String(msg.relicId));
         }
+      } else if (msg.type === 'admin:equip_scroll') {
+        if (acc.isAdmin && msg.scrollId) {
+          room.adminEquipScroll(acc.id, String(msg.scrollId));
+        }
       } else if (msg.type === 'admin:spawn_dummy') {
         if (acc.isAdmin) {
           room.spawnDummyAtPlayer(acc.id);

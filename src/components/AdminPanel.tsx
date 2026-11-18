@@ -11,6 +11,7 @@ import {
   type HeroClassId,
   type PlayerState,
 } from '../shared/types.ts';
+import { ARCANIST_SPELL_ORDER, ARCANIST_SPELLS } from '../shared/arcanist.ts';
 
 interface AdminPanelProps {
   me: PlayerState;
@@ -19,7 +20,7 @@ interface AdminPanelProps {
   onSendAdminCommand: (msg: ClientMessage) => void;
 }
 
-type AdminTab = 'classes' | 'cheats' | 'relics' | 'spawner' | 'teleport' | 'management' | 'world' | 'audio';
+type AdminTab = 'classes' | 'cheats' | 'relics' | 'scrolls' | 'spawner' | 'teleport' | 'management' | 'world' | 'audio';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   me,
@@ -95,6 +96,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             ['cheats', 'Cheats & Stats'],
             ['classes', 'Hero Classes'],
             ['relics', 'Relic Vault'],
+            ['scrolls', 'Spell Scrolls'],
             ['spawner', 'Entity Spawner'],
             ['teleport', 'Teleport'],
             ['management', 'Management'],
@@ -482,6 +484,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             EQUIPPED IN INVENTORY
                           </span>
                         )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: SPELL SCROLLS */}
+          {activeTab === 'scrolls' && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                  Spell Scroll Arsenal (Instant Tactical Equip)
+                </h3>
+                <p className="text-xs text-[#A19FAF] mb-3 font-mono">
+                  Admin privilege allows instantly equipping any Arcanist tactical spell scroll to your hero.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {ARCANIST_SPELL_ORDER.map((scrollId) => {
+                  const scroll = ARCANIST_SPELLS[scrollId];
+                  const isEquipped = me.equippedScrollId === scrollId;
+
+                  return (
+                    <button
+                      key={scrollId}
+                      type="button"
+                      onClick={() =>
+                        handleCommand({
+                          type: 'admin:equip_scroll',
+                          scrollId: scroll.id,
+                        })
+                      }
+                      className={`stone-plaque p-3 text-left border transition-all cursor-pointer relative flex items-start gap-3 ${
+                        isEquipped
+                          ? 'border-[#38BDF8] bg-[#17303F]'
+                          : 'border-[#383548] hover:border-[#D9AA52]/60 bg-[#252332]'
+                      }`}
+                    >
+                      <div
+                        className="w-3.5 h-3.5 rounded mt-0.5 shrink-0 border border-white/40 shadow-sm"
+                        style={{ backgroundColor: scroll.accentColor }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="font-display font-bold text-xs text-white truncate">
+                            {scroll.scrollName}
+                          </span>
+                          <span className="text-[9px] font-mono text-[#38BDF8] px-1.5 py-0.2 bg-[#1A1926] border border-[#383548]">
+                            {scroll.role}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[#A19FAF] leading-tight mb-1">
+                          {scroll.summary}
+                        </p>
+                        <div className="flex items-center justify-between text-[10px] font-mono">
+                          <span className="text-[#FCD34D]">
+                            Base Dmg: {scroll.baseDamage} • CD: {(scroll.cooldownMs / 1000).toFixed(1)}s
+                          </span>
+                          {isEquipped ? (
+                            <span className="text-[9px] font-mono font-bold text-[#38BDF8] bg-[#38BDF8]/20 border border-[#38BDF8]/60 px-1.5 py-0.2 rounded">
+                              EQUIPPED TACTICAL
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-mono text-[#A19FAF] hover:text-white">
+                              [Click to Equip]
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </button>
                   );

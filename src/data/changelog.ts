@@ -86,6 +86,29 @@ export const CATEGORY_ORDER: ChangelogCategory[] = [
 
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
+    version: 'v1.9.0',
+    releaseDate: 'November 18, 2026',
+    title: 'Chest Inspection & Reopening, Smart Boss AI & Combat Clarity Update',
+    description:
+      '**Major gameplay and quality-of-life update!** Players can now **open and close chests and Relic Vaults** to inspect loot and leave uncollected items inside for later; all **10 floor bosses** have received smarter combat AI with kiting, hazard avoidance, and tactical abilities; combat screen clutter has been heavily **decluttered** by removing passive spam popups; and character stat projections have been reassessed with a fair **D–S+ grading system**.',
+    categories: {
+      'NEW FEATURES': [
+        '**Chest Open & Close Mechanics**: Interacting with unopened chests or Relic Vaults lets you inspect relics and Arcanist scrolls; closing the chest (via **ESC** or toggle) leaves uncollected loot inside so you can return and reopen it later without losing items or rerolling offers.',
+      ],
+      IMPROVEMENTS: [
+        '**Smart Boss AI Overhaul**: Upgraded boss combat AI across all 10 floors! Bosses now actively **kite** when cornered, **sidestep player AoE hazards** (Fireball burns, Star Rifts, Meteors), lead moving targets, and pick tactical abilities based on distance and line of sight.',
+        '**Character Stat Projections & D–S+ Ranks**: Reassessed player stat projections and ranks (**D to S+**) with a 3-pillar evaluation (**Offense, Defense/EHP, and Support/Utility**) reflecting actual class performance across all 4 heroes.',
+      ],
+      'QUALITY OF LIFE': [
+        '**Combat HUD Declutter**: Removed noisy passive status popups (such as **Iron Will**, **Armored**, and **Blocked**) while keeping all underlying combat effects fully active, and throttled repeated DoT/status proc tags to keep the screen clean and legible.',
+      ],
+      'BUG FIXES': [
+        '**World Decorator Fix**: Restored chest rendering logic after totem decorations in floor generation.',
+        '**Boss Aggro Rotation**: Improved multiplayer boss target rotation so bosses dynamically share threat across active party members.',
+      ],
+    },
+  },
+  {
     version: 'v1.7.0',
     releaseDate: 'November 16, 2026',
     title: 'Progression, Combat & Healing Balance Overhaul',

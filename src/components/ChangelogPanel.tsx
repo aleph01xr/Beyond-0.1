@@ -1,5 +1,6 @@
 import React from 'react';
 import { sfx } from '../client/sound.ts';
+import { MarkdownText } from './MarkdownText.tsx';
 import {
   CATEGORY_ORDER,
   CATEGORY_STYLES,
@@ -75,7 +76,7 @@ export const ChangelogPanel: React.FC<ChangelogPanelProps> = ({
 
         {/* Short Description */}
         <p className="text-xs sm:text-[13px] text-[#D4D2DE] leading-relaxed font-sans px-1">
-          {latest.description}
+          <MarkdownText content={latest.description} />
         </p>
 
         {/* Categorized Changes List (Only non-empty categories) */}
@@ -111,7 +112,7 @@ export const ChangelogPanel: React.FC<ChangelogPanelProps> = ({
                         ▸
                       </span>
                       <span className="font-sans text-[11.5px] sm:text-xs">
-                        {item}
+                        <MarkdownText content={item} />
                       </span>
                     </li>
                   ))}
