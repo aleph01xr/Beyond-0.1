@@ -32,7 +32,18 @@ import {
   drawWardenEnforcerSprite,
   drawGenericEnemySprite,
 } from '../client/enemySprites.ts';
-import { drawHumanoidBoss } from '../client/npcSprites.ts';
+import {
+  createBossAnimRuntime,
+  drawFirstFiveBossByKey,
+  drawHumanoidBoss,
+  resolveFirstFiveBossKey,
+  stepBossAnimRuntime,
+  triggerBossAbilityAnim,
+  triggerBossEventAnim,
+  type BossAnimRuntime,
+  type BossVisualAnimState,
+  type DyingBossEntry,
+} from '../client/npcSprites.ts';
 import { drawFallenAndGhostPlayer } from '../client/fallenPlayerSprite.ts';
 import { drawHeroSprite, type HeroSwingKind } from '../client/heroSprites.ts';
 import {
@@ -71,6 +82,7 @@ import {
   type ClientMessage,
   type DungeonMap,
   type EnemyKind,
+  type EnemyState,
   type FieldZoneState,
   type FloatingEvent,
   type GameSnapshot,
@@ -1081,7 +1093,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
     const smoothedPlayers = new Map<string, SmoothedPos>();
     const smoothedEnemies = new Map<string, SmoothedPos>();
-    const prevEnemiesMap = new Map<string, { hp: number; kind: EnemyKind; x: number; y: number }>();
+    const prevEnemiesMap = new Map<
+      string,
+      { hp: number; kind: EnemyKind; x: number; y: number; enemy: EnemyState }
+    >();
     const prevPlayersMap = new Map<
       string,
       {
@@ -1121,6 +1136,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const clericPulses: { x: number; y: number; bornAt: number }[] = [];
     const playerFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
     const enemyFacingMap = new Map<string, { dir: Direction8; facingLeft: boolean }>();
+    const bossAnimMap = new Map<string, BossAnimRuntime>();
+    const dyingBosses: DyingBossEntry[] = [];
     const seenEventIds = new Set<string>();
     const particleManager = new ParticleManager();
     const localPredictor = new LocalPredictionController();
@@ -1188,8 +1205,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
+      let activeBossRuntime: BossAnimRuntime | null = null;
       let bossAimAngle = 0;
       if (activeBoss) {
+        const activeBossKey = resolveFirstFiveBossKey(activeBoss.name, map.floor, map.biome);
+        if (activeBossKey) {
+          activeBossRuntime = bossAnimMap.get(activeBoss.id) ?? null;
+          if (!activeBossRuntime || activeBossRuntime.bossKey !== activeBossKey) {
+            activeBossRuntime = createBossAnimRuntime(activeBossKey, activeBoss, now);
+            bossAnimMap.set(activeBoss.id, activeBossRuntime);
+          }
+        }
         let bestPlayerDist = Infinity;
         for (const pr of snap.players) {
           if (pr.downed) continue;
@@ -1251,6 +1277,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             clericPulses.push({ x: ev.x, y: ev.y, bornAt: now });
             particleManager.spawnClericHealBurst(ev.x, ev.y, now);
           } else if (ev.kind === 'damage') {
+            if (activeBossRuntime) {
+              triggerBossEventAnim(activeBossRuntime, ev.kind, ev.text, bossAimAngle, now);
+            }
             if (ev.text.toUpperCase().includes('SOUL SIPHON')) {
               sfx.playBossAbility('vaelor', 'soul_siphon_tether');
               particleManager.spawnVaelorSoulSiphonTether(
@@ -1274,6 +1303,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           } else if (ev.text.includes('Relic')) {
             sfx.playRelicChime();
           } else if (ev.kind === 'status') {
+            if (activeBossRuntime) {
+              triggerBossEventAnim(activeBossRuntime, ev.kind, ev.text, bossAimAngle, now);
+            }
             const txt = ev.text.trim().toUpperCase();
             const bx = activeBoss ? activeBoss.x : ev.x;
             const by = activeBoss ? activeBoss.y : ev.y + 38;
@@ -1422,10 +1454,54 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       // Check for defeated enemies & newly marked Hunter Quarry targets
+      const pushDyingBossIfApplicable = (deadEnemy: EnemyState, dx: number, dy: number) => {
+        if (deadEnemy.kind !== 'boss') return;
+        if (dyingBosses.some((d) => d.id === deadEnemy.id)) return;
+        const bossKey = resolveFirstFiveBossKey(deadEnemy.name, map.floor, map.biome);
+        if (!bossKey) return;
+        const prevFacing = enemyFacingMap.get(deadEnemy.id);
+        const pose = resolveEnemyDirection8(
+          deadEnemy,
+          prevFacing?.dir ?? 'S',
+          prevFacing?.facingLeft ?? false
+        );
+        const rt = bossAnimMap.get(deadEnemy.id);
+        const lastAnim: BossVisualAnimState = rt
+          ? stepBossAnimRuntime(rt, deadEnemy, pose, now)
+          : {
+              bossKey,
+              action: 'death',
+              abilityKey: 'none',
+              progress: 0,
+              prevAction: 'idle',
+              blend: 1,
+              moveSpeedNorm: 0,
+              walkCycle: 0,
+              facingAngle: pose.angleRad,
+              hitFlash: 0,
+              hitRecoilX: 0,
+              hitRecoilY: 0,
+              deathProgress: 0,
+            };
+        dyingBosses.push({
+          id: deadEnemy.id,
+          enemy: deadEnemy,
+          bossKey,
+          x: dx,
+          y: dy,
+          pose,
+          lastAnim,
+          bornAt: now,
+          durationMs: 850,
+        });
+        bossAnimMap.delete(deadEnemy.id);
+      };
+
       for (const en of snap.enemies) {
         const prev = prevEnemiesMap.get(en.id);
         if (prev && prev.hp > 0 && en.hp <= 0) {
           particleManager.spawnEnemyDeathBurst(en.x, en.y, en.kind, now);
+          pushDyingBossIfApplicable(en, en.x, en.y);
         }
         if (en.markedMs > 0 && !prevMarkedEnemyIds.has(en.id)) {
           particleManager.spawnRangerQuarryMark(en.x, en.y, now);
@@ -1434,12 +1510,13 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       for (const [id, prev] of prevEnemiesMap.entries()) {
         if (!snap.enemies.some((e) => e.id === id) && prev.hp > 0) {
           particleManager.spawnEnemyDeathBurst(prev.x, prev.y, prev.kind, now);
+          pushDyingBossIfApplicable(prev.enemy, prev.x, prev.y);
         }
       }
       prevEnemiesMap.clear();
       prevMarkedEnemyIds.clear();
       for (const en of snap.enemies) {
-        prevEnemiesMap.set(en.id, { hp: en.hp, kind: en.kind, x: en.x, y: en.y });
+        prevEnemiesMap.set(en.id, { hp: en.hp, kind: en.kind, x: en.x, y: en.y, enemy: en });
         if (en.markedMs > 0) {
           prevMarkedEnemyIds.add(en.id);
         }
@@ -1694,6 +1771,9 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         Math.hypot(activeBoss.x - prevBossState.x, activeBoss.y - prevBossState.y) > 50
       ) {
         particleManager.spawnMaliceVoidStep(prevBossState.x, prevBossState.y, activeBoss.x, activeBoss.y, now);
+        if (activeBossRuntime) {
+          triggerBossAbilityAnim(activeBossRuntime, 'teleport', 'void_step', 850, bossAimAngle, now);
+        }
       }
 
       // Track newly fired melee cleave arcs, spell scroll launches, boss nova spreads & projectile impacts
@@ -1704,7 +1784,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (!prevProjectilesMap.has(proj.id)) {
           if (proj.ownerType === 'player') {
             if (proj.style === 'slash') {
-              particleManager.spawnVanguardCleave(proj.x, proj.y, proj.angle, Boolean(proj.crit), now);
+              particleManager.spawnVanguardCleave(proj.x, proj.y, proj.angle, Boolean(proj.crit), now, proj.weaponId);
             } else if (proj.style === 'fireball') {
               particleManager.spawnFireballCastBurst(proj.x, proj.y, proj.angle, now);
             } else if (proj.style === 'arcane_barrage') {
@@ -1720,8 +1800,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           particleManager.spawnVaelorDeathRing(activeBoss.x, activeBoss.y, now);
         } else if (map.biome === 'void' || map.floor === 4) {
           particleManager.spawnMaliceAbyssalNova(activeBoss.x, activeBoss.y, now);
-        } else if (map.biome === 'astral' || map.floor === 5) {
+        } else if (map.biome === 'astral' || map.floor === 5 || activeBossRuntime?.bossKey === 'archon') {
           particleManager.spawnArchonConstellationSpiral(activeBoss.x, activeBoss.y, now);
+          if (activeBossRuntime) {
+            triggerBossAbilityAnim(activeBossRuntime, 'spin', 'radial_burst', 950, bossAimAngle, now);
+          }
         }
       }
       if (hasInitWorldEffects) {
@@ -1740,12 +1823,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
                 if (prevProj.slowOnHit) {
                   particleManager.spawnRangerFrostArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
                 } else {
-                  particleManager.spawnRangerArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now);
+                  particleManager.spawnRangerArrowHit(prevProj.x, prevProj.y, prevProj.angle, Boolean(prevProj.crit), now, prevProj.weaponId);
                 }
               } else if (prevProj.style === 'arcane') {
-                particleManager.spawnArcanistBoltHit(prevProj.x, prevProj.y, now);
+                particleManager.spawnArcanistBoltHit(prevProj.x, prevProj.y, now, prevProj.weaponId);
               } else if (prevProj.style === 'radiant') {
-                particleManager.spawnClericSmiteHit(prevProj.x, prevProj.y, Boolean(prevProj.crit), now);
+                particleManager.spawnClericSmiteHit(prevProj.x, prevProj.y, Boolean(prevProj.crit), now, prevProj.weaponId);
               } else if (prevProj.style === 'frost_lance') {
                 particleManager.spawnFrostLanceImpact(prevProj.x, prevProj.y, prevProj.angle, now);
               } else if (prevProj.style === 'arcane_orb') {
@@ -3742,12 +3825,28 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // Dying boss collapse/dissolution visual sequences
+      for (let i = dyingBosses.length - 1; i >= 0; i--) {
+        const db = dyingBosses[i];
+        const elapsed = now - db.bornAt;
+        if (elapsed >= db.durationMs) {
+          dyingBosses.splice(i, 1);
+          continue;
+        }
+        const dp = Math.max(0, Math.min(1, elapsed / db.durationMs));
+        drawFirstFiveBossByKey(ctx, db.x, db.y, db.bossKey, now, db.enemy, db.pose, {
+          ...db.lastAnim,
+          action: 'death',
+          progress: dp,
+          deathProgress: dp,
+        });
+      }
+
       // Enemies
       for (const en of snap.enemies) {
         const pos = smoothedEnemies.get(en.id) || { x: en.x, y: en.y };
         const ex = Math.round(pos.x);
         const ey = Math.round(pos.y);
-        const walkBob = en.state === 'chase' ? Math.sin(now * 0.014 + ex * 0.1) * 2 : Math.sin(now * 0.003 + ex * 0.1) * 1.5;
         const prevEnemyFacing = enemyFacingMap.get(en.id);
         const enemyPose = resolveEnemyDirection8(
           en,
@@ -3953,662 +4052,28 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             particleManager.spawnBossShieldSparks(ex, ey, now);
           }
 
-          const bossMirrorX = !enemyPose.isPureVertical && enemyPose.facingLeft;
-          const bossIsBack = enemyPose.verticalPlane === 'back';
-
-          if (map.floor >= 6) {
-            drawHumanoidBoss(ctx, ex, ey, en.name, now, en, enemyPose);
-          } else {
-            ctx.save();
-            if (bossMirrorX) {
-              ctx.translate(ex, 0);
-              ctx.scale(-1, 1);
-              ctx.translate(-ex, 0);
+          const firstFiveKey = resolveFirstFiveBossKey(en.name, map.floor, map.biome);
+          let bossAnimState: BossVisualAnimState | undefined;
+          if (firstFiveKey) {
+            let rt = bossAnimMap.get(en.id);
+            if (!rt || rt.bossKey !== firstFiveKey) {
+              rt = createBossAnimRuntime(firstFiveKey, en, now);
+              bossAnimMap.set(en.id, rt);
             }
-            if (isCatacombs) {
-            // ==============================================================
-            // FLOOR 2 BOSS: Archlich Vaelor (The Sunken Crypt Archlich)
-            // Floating Skeletal Necromancer Lord with floating silk shrouds,
-            // 8-gem ivory crown, Dread Soul Lantern emitting cyan spirit wisps,
-            // floating bone vertebrae, and orbiting frost soul wisps
-            // ==============================================================
-            const lichFloat = Math.sin(now * 0.004) * 7;
-            const by = ey - 6 + lichFloat;
-
-            // 1. Ethereal Dual Cyan & Necrotic Violet Ground Sanctuary Aura
-            const auraPulse = 32 + Math.sin(now * 0.006) * 6;
-            const auraGrad = ctx.createRadialGradient(ex, ey + 18, 4, ex, ey + 18, auraPulse);
-            auraGrad.addColorStop(0, 'rgba(34, 211, 238, 0.45)');
-            auraGrad.addColorStop(0.45, 'rgba(126, 34, 206, 0.3)');
-            auraGrad.addColorStop(0.85, 'rgba(59, 130, 246, 0.15)');
-            auraGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
-            ctx.fillStyle = auraGrad;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 18, auraPulse, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Concentric Crypt Rune Ground Circle
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 18, 26, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // 2. Floating Tattered Dark Obsidian Shroud & Trailing Frost Silk
-            ctx.fillStyle = '#0F091F';
-            ctx.fillRect(ex - 24, by - 14, 48, 46);
-            // Tattered frayed trailing edge
-            for (let t = 0; t < 7; t++) {
-              const toothH = 8 + ((t * 7) % 9) + Math.sin(now * 0.008 + t) * 3;
-              ctx.fillRect(ex - 24 + t * 7, by + 32, 6, toothH);
-            }
-
-            // Inner Royal Necrotic Purple Robe with silver lining
-            ctx.fillStyle = '#3B0764';
-            ctx.fillRect(ex - 18, by - 10, 36, 42);
-            ctx.fillStyle = '#581C87';
-            ctx.fillRect(ex - 14, by - 8, 28, 38);
-
-            // Frost Runic Spine Embroidery (Cyan Glint)
-            ctx.fillStyle = '#22D3EE';
-            ctx.fillRect(ex - 2, by - 6, 4, 32);
-            ctx.fillRect(ex - 10, by, 20, 2);
-            ctx.fillRect(ex - 8, by + 10, 16, 2);
-            ctx.fillRect(ex - 6, by + 20, 12, 2);
-            ctx.fillStyle = '#E0F2FE';
-            ctx.fillRect(ex - 1, by + 2, 2, 2);
-            ctx.fillRect(ex - 1, by + 12, 2, 2);
-
-            // Skeletal Shoulder Pauldron Plates (Horned Bone Clavicle)
-            ctx.fillStyle = '#E2E8F0';
-            ctx.fillRect(ex - 22, by - 18, 44, 7);
-            ctx.fillStyle = '#94A3B8';
-            ctx.fillRect(ex - 24, by - 16, 8, 10);
-            ctx.fillRect(ex + 16, by - 16, 8, 10);
-            // Bone Spikes on shoulders
-            ctx.fillStyle = '#F8FAFC';
-            ctx.fillRect(ex - 22, by - 24, 4, 7);
-            ctx.fillRect(ex + 18, by - 24, 4, 7);
-
-            // Floating Skeletal Skull Face
-            ctx.fillStyle = '#F1F5F9';
-            ctx.fillRect(ex - 11, by - 34, 22, 17);
-            // Cheekbone hollows & nasal cavity
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 11, by - 21, 4, 4);
-            ctx.fillRect(ex + 7, by - 21, 4, 4);
-            ctx.fillRect(ex - 1, by - 23, 2, 4);
-            // Sunken orbital sockets
-            ctx.fillStyle = '#090514';
-            ctx.fillRect(ex - 8, by - 30, 6, 6);
-            ctx.fillRect(ex + 2, by - 30, 6, 6);
-
-            // Piercing Frost Cyan Soul Eyes with white core flare
-            ctx.fillStyle = '#22D3EE';
-            ctx.fillRect(ex - 7, by - 29, 4, 4);
-            ctx.fillRect(ex + 3, by - 29, 4, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 6, by - 28, 2, 2);
-            ctx.fillRect(ex + 4, by - 28, 2, 2);
-
-            // Ancient Horned Bone Crown with 3 Ivory Spires & Soul Gem
-            ctx.fillStyle = '#B45309';
-            ctx.fillRect(ex - 13, by - 38, 26, 5);
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 11, by - 39, 22, 2);
-            // Triple Horned Ivory Spires
-            ctx.fillStyle = '#F8FAFC';
-            ctx.fillRect(ex - 13, by - 48, 4, 11);
-            ctx.fillRect(ex - 2, by - 53, 4, 16);
-            ctx.fillRect(ex + 9, by - 48, 4, 11);
-            ctx.fillStyle = '#E2E8F0';
-            ctx.fillRect(ex - 11, by - 45, 2, 7);
-            ctx.fillRect(ex, by - 50, 2, 12);
-            ctx.fillRect(ex + 11, by - 45, 2, 7);
-            // Crown Soul Diamond
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex - 2, by - 37, 4, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 1, by - 36, 2, 2);
-
-            // Left Hand: Dread Soul Staff & Suspended Soul Lantern
-            const staffX = ex - 28;
-            ctx.fillStyle = '#292524';
-            ctx.fillRect(staffX, by - 46, 5, 66);
-            // Lantern Cage
-            ctx.fillStyle = '#D97706';
-            ctx.fillRect(staffX - 4, by - 50, 13, 4);
-            ctx.fillRect(staffX - 3, by - 46, 11, 10);
-            // Pulsating Soul Flame inside Lantern
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(staffX - 2, by - 44, 9, 7);
-            ctx.fillStyle = '#E0F2FE';
-            ctx.fillRect(staffX, by - 42, 5, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(staffX + 1, by - 41, 3, 2);
-
-            // Right Hand: Skeletal Claw holding Orbiting Necrotic Orb
-            ctx.fillStyle = '#E2E8F0';
-            ctx.fillRect(ex + 18, by - 6, 7, 5);
-            const orbBob = Math.sin(now * 0.009) * 3.5;
-            ctx.fillStyle = '#6D28D9';
-            ctx.fillRect(ex + 22, by - 20 + orbBob, 10, 10);
-            ctx.fillStyle = '#A855F7';
-            ctx.fillRect(ex + 24, by - 18 + orbBob, 6, 6);
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex + 25, by - 17 + orbBob, 4, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex + 26, by - 16 + orbBob, 2, 2);
-
-            // 4 Orbiting Frost Soul Wisps (Concentric Orbiting Phantoms)
-            for (let i = 0; i < 4; i++) {
-              const ang = now * 0.0035 + (i * Math.PI * 2) / 4;
-              const wx = ex + Math.cos(ang) * 36;
-              const wy = by + Math.sin(ang) * 18;
-              ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
-              ctx.fillRect(wx - 3.5, wy - 3.5, 7, 7);
-              ctx.fillStyle = '#E0F2FE';
-              ctx.fillRect(wx - 2, wy - 2, 4, 4);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(wx - 1, wy - 1, 2, 2);
-            }
-          } else if (isEmber) {
-            // ==============================================================
-            // FLOOR 3 BOSS: Ignis, Cinder Sovereign (The Molten Magma Sovereign)
-            // Hulking Volcanic Behemoth of cooled obsidian rock, pulsating
-            // lava veins, sweeping demonic horns, blazing flame hair, and greataxe
-            // ==============================================================
-            const lavaThrob = 0.85 + Math.sin(now * 0.008) * 0.18;
-            const breathBob = Math.sin(now * 0.005) * 2;
-
-            // 1. Scorched Ground Caldera & Molten Lava Reservoir
-            ctx.fillStyle = 'rgba(234, 88, 12, 0.4)';
-            ctx.beginPath();
-            ctx.arc(ex, ey + 18, 42 * lavaThrob, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.strokeStyle = 'rgba(251, 146, 60, 0.65)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 18, 32, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // 2. Colossal Charred Basalt Demon Torso & Obsidian Pauldrons
-            ctx.fillStyle = '#18181B';
-            ctx.fillRect(ex - 28, ey - 30 + walkBob + breathBob, 56, 52);
-            ctx.fillStyle = '#27272A';
-            ctx.fillRect(ex - 24, ey - 26 + walkBob + breathBob, 48, 44);
-
-            // 3. Glowing Molten Lava Core Fissures & White-Hot Furnace
-            ctx.fillStyle = '#991B1B';
-            ctx.fillRect(ex - 19, ey - 22 + walkBob + breathBob, 38, 36);
-            ctx.fillStyle = '#EA580C';
-            ctx.fillRect(ex - 13, ey - 16 + walkBob + breathBob, 26, 24);
-            // Incandescent White-Hot Furnace Chest
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 7, ey - 10 + walkBob + breathBob, 14, 12);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 4, ey - 7 + walkBob + breathBob, 8, 6);
-
-            // Branching glowing lava fissures across armor plates
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 26, ey - 8 + walkBob, 10, 3);
-            ctx.fillRect(ex + 16, ey - 8 + walkBob, 10, 3);
-            ctx.fillRect(ex - 18, ey + 8 + walkBob, 36, 4);
-            ctx.fillRect(ex - 2, ey + 12 + walkBob, 4, 10);
-            ctx.fillRect(ex - 14, ey - 24 + walkBob, 28, 3);
-
-            // Heavy Obsidian Spiked Pauldrons
-            ctx.fillStyle = '#27272A';
-            ctx.fillRect(ex - 34, ey - 32 + walkBob, 14, 18);
-            ctx.fillRect(ex + 20, ey - 32 + walkBob, 14, 18);
-            // Pauldron magma fissures
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 32, ey - 28 + walkBob, 10, 3);
-            ctx.fillRect(ex + 22, ey - 28 + walkBob, 10, 3);
-
-            // 4. Demon Head & Obsidian Horns
-            ctx.fillStyle = '#18181B';
-            ctx.fillRect(ex - 15, ey - 48 + walkBob, 30, 20);
-            // Sweeping Demonic Basalt Horns with glowing magma tips
-            ctx.fillStyle = '#27272A';
-            ctx.fillRect(ex - 27, ey - 60 + walkBob, 10, 20);
-            ctx.fillRect(ex + 17, ey - 60 + walkBob, 10, 20);
-            ctx.fillRect(ex - 33, ey - 72 + walkBob, 10, 14);
-            ctx.fillRect(ex + 23, ey - 72 + walkBob, 10, 14);
-            // Horn magma glowing tips
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(ex - 33, ey - 76 + walkBob, 7, 7);
-            ctx.fillRect(ex + 26, ey - 76 + walkBob, 7, 7);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 31, ey - 74 + walkBob, 3, 3);
-            ctx.fillRect(ex + 28, ey - 74 + walkBob, 3, 3);
-
-            // Flickering Flame Hair Crown
-            for (let f = 0; f < 5; f++) {
-              const flameH = 12 + Math.sin(now * 0.02 + f * 1.5) * 5;
-              ctx.fillStyle = f % 2 === 0 ? '#F97316' : '#FEF08A';
-              ctx.fillRect(ex - 12 + f * 5, ey - 48 - flameH + walkBob, 4, flameH);
-            }
-
-            // Blazing Lava Eyes
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 9, ey - 40 + walkBob, 6, 4);
-            ctx.fillRect(ex + 3, ey - 40 + walkBob, 6, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 7, ey - 39 + walkBob, 2, 2);
-            ctx.fillRect(ex + 5, ey - 39 + walkBob, 2, 2);
-
-            // 5. Colossal Magma Greataxe (Right Hand)
-            const axeSway = Math.sin(now * 0.006) * 0.1;
-            ctx.save();
-            ctx.translate(ex + 30, ey - 18 + walkBob);
-            ctx.rotate(axeSway);
-            // Ashwood Haft
-            ctx.fillStyle = '#44403C';
-            ctx.fillRect(-3, -48, 6, 72);
-            // Double-Bitted Obsidian Axe Blades with Molten Edge
-            ctx.fillStyle = '#18181B';
-            ctx.fillRect(-22, -46, 19, 28);
-            ctx.fillRect(3, -46, 19, 28);
-            // Molten cutting edges
-            ctx.fillStyle = '#F97316';
-            ctx.fillRect(-24, -48, 4, 32);
-            ctx.fillRect(20, -48, 4, 32);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(-23, -44, 2, 24);
-            ctx.fillRect(21, -44, 2, 24);
-            ctx.restore();
-
-            // Rising Embers
-            for (let i = 0; i < 6; i++) {
-              const sparkT = (now * 0.0016 + i * 0.2) % 1;
-              const sx = ex - 26 + ((i * 19 + 7) % 52) + Math.sin(now * 0.01 + i) * 6;
-              const sy = ey + 10 - sparkT * 70;
-              const sz = sparkT > 0.7 ? 1.5 : 2.5;
-              ctx.fillStyle = sparkT > 0.5 ? '#F97316' : '#FEF08A';
-              ctx.fillRect(Math.round(sx), Math.round(sy), sz, sz);
-            }
-          } else if (isVoid) {
-            // ==============================================================
-            // FLOOR 4 BOSS: Void-Eater Malice (The Abyssal Singularity Dragon)
-            // Colossal Void Dragon with undulating dark matter tendrils,
-            // pulsating magenta event horizon core, obsidian spires, and crimson eye glare
-            // ==============================================================
-            const voidPulse = Math.sin(now * 0.005) * 7;
-            const vy = ey - 6 + voidPulse;
-
-            // 1. Swirling Dark Void Singularity Ground Accretion Disk
-            const diskRot = now * 0.002;
-            const voidGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 48);
-            voidGrad.addColorStop(0, 'rgba(147, 51, 234, 0.65)');
-            voidGrad.addColorStop(0.4, 'rgba(88, 28, 135, 0.45)');
-            voidGrad.addColorStop(0.8, 'rgba(244, 63, 94, 0.2)');
-            voidGrad.addColorStop(1, 'rgba(15, 7, 24, 0)');
-            ctx.fillStyle = voidGrad;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 16, 48, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Concentric Accretion Horizon Lines
-            ctx.strokeStyle = 'rgba(232, 121, 249, 0.6)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 16, 34, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // 2. Rotating Accretion Dust Particles
-            for (let d = 0; d < 8; d++) {
-              const dAngle = diskRot + (d * Math.PI) / 4;
-              const dDist = 28 + Math.sin(now * 0.004 + d) * 14;
-              const dx = ex + Math.cos(dAngle) * dDist;
-              const dy = ey + 16 + Math.sin(dAngle) * (dDist * 0.45);
-              ctx.fillStyle = d % 2 === 0 ? '#F43F5E' : '#C084FC';
-              ctx.fillRect(dx - 2, dy - 2, 4, 4);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(dx - 1, dy - 1, 2, 2);
-            }
-
-            // 3. Undulating Void Tendrils (6 articulated shadowy appendages)
-            for (let i = 0; i < 6; i++) {
-              const tAng = now * 0.0035 + (i * Math.PI * 2) / 6;
-              const tDist = 34 + Math.sin(now * 0.006 + i) * 8;
-              const tx = ex + Math.cos(tAng) * tDist;
-              const ty = vy + Math.sin(tAng * 1.6) * 20;
-              ctx.fillStyle = '#3B0764';
-              ctx.fillRect(tx - 6, ty - 6, 12, 12);
-              ctx.fillStyle = '#7C3AED';
-              ctx.fillRect(tx - 4, ty - 4, 8, 8);
-              ctx.fillStyle = '#F43F5E';
-              ctx.fillRect(tx - 1.5, ty - 1.5, 3, 3);
-            }
-
-            // 4. Dark Obsidian Abyssal Dragon Torso & Wings
-            ctx.fillStyle = '#0F0718';
-            ctx.fillRect(ex - 30, vy - 28, 60, 52);
-            ctx.fillStyle = '#2E1065';
-            ctx.fillRect(ex - 24, vy - 22, 48, 42);
-
-            // Dragon Wing Ribs with Crimson Energy Lines
-            ctx.fillStyle = '#E11D48';
-            ctx.fillRect(ex - 28, vy - 24, 8, 2);
-            ctx.fillRect(ex + 20, vy - 24, 8, 2);
-            ctx.fillRect(ex - 30, vy - 16, 10, 2);
-            ctx.fillRect(ex + 20, vy - 16, 10, 2);
-            ctx.fillRect(ex - 26, vy - 8, 8, 2);
-            ctx.fillRect(ex + 18, vy - 8, 8, 2);
-
-            // 5. Pulsating Void Core (Magenta Singularity Event Horizon)
-            const coreThrob = 1 + Math.sin(now * 0.009) * 0.18;
-            ctx.fillStyle = '#581C87';
-            ctx.fillRect(ex - 15 * coreThrob, vy - 15 * coreThrob, 30 * coreThrob, 30 * coreThrob);
-            ctx.fillStyle = '#9333EA';
-            ctx.fillRect(ex - 10 * coreThrob, vy - 10 * coreThrob, 20 * coreThrob, 20 * coreThrob);
-            ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 6, vy - 6, 12, 12);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 2.5, vy - 2.5, 5, 5);
-
-            // Horned Dragon Skull with Armored Brow
-            ctx.fillStyle = '#1E1B4B';
-            ctx.fillRect(ex - 18, vy - 44, 36, 24);
-            ctx.fillStyle = '#311042';
-            ctx.fillRect(ex - 14, vy - 40, 28, 18);
-
-            // Sweeping Void Horns with Glowing Tips
-            ctx.fillStyle = '#1E1B4B';
-            ctx.fillRect(ex - 28, vy - 54, 11, 18);
-            ctx.fillRect(ex + 17, vy - 54, 11, 18);
-            ctx.fillRect(ex - 34, vy - 66, 11, 14);
-            ctx.fillRect(ex + 23, vy - 66, 11, 14);
-            // Horn glowing tips
-            ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 34, vy - 70, 7, 7);
-            ctx.fillRect(ex + 27, vy - 70, 7, 7);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 32, vy - 68, 3, 3);
-            ctx.fillRect(ex + 29, vy - 68, 3, 3);
-
-            // Glowing Crimson Spectral Eyes (Double Slits)
-            ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 11, vy - 36, 8, 4);
-            ctx.fillRect(ex + 3, vy - 36, 8, 4);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 9, vy - 35, 3, 2);
-            ctx.fillRect(ex + 5, vy - 35, 3, 2);
-
-            // Fanged Abyssal Maw
-            ctx.fillStyle = '#0F0718';
-            ctx.fillRect(ex - 10, vy - 28, 20, 6);
-            ctx.fillStyle = '#F43F5E';
-            ctx.fillRect(ex - 8, vy - 27, 3, 4);
-            ctx.fillRect(ex - 2, vy - 27, 4, 4);
-            ctx.fillRect(ex + 5, vy - 27, 3, 4);
-
-            // 4 Orbiting Abyssal Void Shards
-            for (let i = 0; i < 4; i++) {
-              const ang = now * 0.003 + (i * Math.PI) / 2;
-              const ox = ex + Math.cos(ang) * 40;
-              const oy = vy + Math.sin(ang) * 22;
-              ctx.fillStyle = '#9333EA';
-              ctx.fillRect(ox - 3.5, oy - 3.5, 7, 7);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(ox - 1.5, oy - 1.5, 3, 3);
-            }
-            } else if (isAstral) {
-            // ==============================================================
-            // FLOOR 5 BOSS: Archon of Nothingness (The Celestial Cosmic Titan)
-            // Towering Celestial Entity with rotating zodiac rune halo,
-            // starlight crystal quad-wings, star-forged cobalt armor, and cosmic greatblade
-            // ==============================================================
-            const starFloat = Math.sin(now * 0.0035) * 7;
-            const ay = ey - 8 + starFloat;
-
-            // 1. Radiant Multilayer Starlight Ground Aura
-            const starGrad = ctx.createRadialGradient(ex, ey + 16, 6, ex, ey + 16, 52);
-            starGrad.addColorStop(0, 'rgba(56, 189, 248, 0.65)');
-            starGrad.addColorStop(0.4, 'rgba(14, 165, 233, 0.45)');
-            starGrad.addColorStop(0.8, 'rgba(254, 240, 138, 0.22)');
-            starGrad.addColorStop(1, 'rgba(7, 18, 28, 0)');
-            ctx.fillStyle = starGrad;
-            ctx.beginPath();
-            ctx.arc(ex, ey + 16, 52, 0, Math.PI * 2);
-            ctx.fill();
-
-            // 2. Concentric Rotating Celestial Zodiac Halo (Behind Head)
-            const haloRot = now * 0.0015;
-            ctx.save();
-            ctx.translate(ex, ay - 42);
-            ctx.rotate(haloRot);
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(0, 0, 36, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // Inner Astrolabe Ring
-            ctx.strokeStyle = 'rgba(254, 240, 138, 0.7)';
-            ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            ctx.arc(0, 0, 24, 0, Math.PI * 2);
-            ctx.stroke();
-
-            // 8 Star Points on Halo
-            for (let h = 0; h < 8; h++) {
-              const hAng = (h * Math.PI) / 4;
-              const hx = Math.cos(hAng) * 36;
-              const hy = Math.sin(hAng) * 36;
-              ctx.fillStyle = h % 2 === 0 ? '#FEF08A' : '#38BDF8';
-              ctx.fillRect(hx - 2.5, hy - 2.5, 5, 5);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(hx - 1, hy - 1, 2, 2);
-            }
-            ctx.restore();
-
-            // 3. Celestial Cosmic Quad-Wings
-            const wingFlap = Math.sin(now * 0.004) * 5;
-            // Upper Large Starlight Wings
-            ctx.fillStyle = 'rgba(56, 189, 248, 0.8)';
-            ctx.fillRect(ex - 46, ay - 40 + wingFlap, 22, 46);
-            ctx.fillRect(ex + 24, ay - 40 - wingFlap, 22, 46);
-            ctx.fillStyle = 'rgba(254, 240, 138, 0.95)';
-            ctx.fillRect(ex - 38, ay - 34 + wingFlap, 14, 32);
-            ctx.fillRect(ex + 26, ay - 34 - wingFlap, 14, 32);
-            // Lower Small Wings
-            ctx.fillStyle = 'rgba(2, 132, 199, 0.7)';
-            ctx.fillRect(ex - 36, ay - 2 + wingFlap * 0.5, 16, 26);
-            ctx.fillRect(ex + 20, ay - 2 - wingFlap * 0.5, 16, 26);
-
-            // 4. Star-Forged Heavy Armor Torso & Pauldrons
-            ctx.fillStyle = '#0B1A30';
-            ctx.fillRect(ex - 24, ay - 26, 48, 48);
-            ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 18, ay - 20, 36, 38);
-
-            // Cosmic Shoulder Pauldrons with Gold Filigree
-            ctx.fillStyle = '#0369A1';
-            ctx.fillRect(ex - 30, ay - 28, 12, 18);
-            ctx.fillRect(ex + 18, ay - 28, 12, 18);
-            ctx.fillStyle = '#EAB308';
-            ctx.fillRect(ex - 29, ay - 26, 10, 4);
-            ctx.fillRect(ex + 19, ay - 26, 10, 4);
-
-            // Pulsating Celestial Core (Solar Diamond Star)
-            ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 11, ay - 13, 22, 22);
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(ex - 8, ay - 10, 16, 16);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 5, ay - 7, 10, 10);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(ex - 2.5, ay - 4.5, 5, 5);
-
-            // Celestial Crown Helmet
-            ctx.fillStyle = '#0F172A';
-            ctx.fillRect(ex - 15, ay - 42, 30, 20);
-            ctx.fillStyle = '#0284C7';
-            ctx.fillRect(ex - 12, ay - 38, 24, 14);
-            // Triple Golden Spire Crown
-            ctx.fillStyle = '#EAB308';
-            ctx.fillRect(ex - 13, ay - 48, 26, 7);
-            ctx.fillRect(ex - 13, ay - 55, 4, 9);
-            ctx.fillRect(ex - 2, ay - 60, 4, 14);
-            ctx.fillRect(ex + 9, ay - 55, 4, 9);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 1, ay - 58, 2, 5);
-
-            // Piercing Radiant Gold Starlight Eyes (hidden when facing North)
-            if (!bossIsBack) {
-              ctx.fillStyle = '#FEF08A';
-              ctx.fillRect(ex - 9, ay - 34, 6, 4);
-              ctx.fillRect(ex + 3, ay - 34, 6, 4);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(ex - 7, ay - 33, 3, 2);
-              ctx.fillRect(ex + 5, ay - 33, 3, 2);
-            }
-
-            // Star-Forged Celestial Greatblade (Right Hand) with Shimmering Glow
-            const bladeSway = Math.sin(now * 0.005) * 0.08;
-            ctx.save();
-            ctx.translate(ex + 28, ay - 22);
-            ctx.rotate(bladeSway);
-            // Gold Hilt & Crossguard
-            ctx.fillStyle = '#EAB308';
-            ctx.fillRect(-7, 0, 16, 5);
-            ctx.fillStyle = '#A16207';
-            ctx.fillRect(-1.5, 5, 5, 9);
-            // Radiant Crystal Blade
-            ctx.fillStyle = '#0284C7';
-            ctx.fillRect(-3, -58, 8, 58);
-            ctx.fillStyle = '#38BDF8';
-            ctx.fillRect(-2, -56, 6, 54);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(-0.5, -54, 3, 50);
-            ctx.restore();
-
-            // Rising Celestial Stardust Sparks
-            for (let s = 0; s < 6; s++) {
-              const sparkT = (now * 0.0014 + s * 0.17) % 1;
-              const sx = ex - 30 + ((s * 21 + 5) % 60) + Math.sin(now * 0.008 + s) * 7;
-              const sy = ay + 12 - sparkT * 75;
-              ctx.fillStyle = s % 2 === 0 ? '#38BDF8' : '#FEF08A';
-              ctx.fillRect(Math.round(sx), Math.round(sy), 2.5, 2.5);
-            }
-          } else {
-            // ==============================================================
-            // FLOOR 1 BOSS: Warden Malakor (Highkeep Bastion Warden Knight)
-            // Heavy steel plate armor, red heraldic battle cape with gold filigree,
-            // winged great-helm, glowing amber visor, lion crest tower shield,
-            // and shimmering runic broadsword
-            // ==============================================================
-            const capeWave = Math.sin(now * 0.006) * 2.5;
-
-            // 1. Bastion Sanctuary Ground Disc
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
-            ctx.beginPath();
-            ctx.arc(ex, ey + 18, 30, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-
-            // 2. Flowing Crimson War Mantle draped behind
-            ctx.fillStyle = '#881337';
-            ctx.fillRect(ex - 26, ey - 20 + walkBob, 52, 46);
-            ctx.fillStyle = '#BE123C';
-            ctx.fillRect(ex - 22, ey - 16 + walkBob + capeWave, 44, 40);
-            // Gold Mantle Hem
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 24, ey + 22 + walkBob + capeWave, 48, 3);
-
-            // 3. Heavy Steel Plate Torso & Armor Plates
-            ctx.fillStyle = '#1E293B';
-            ctx.fillRect(ex - 22, ey - 24 + walkBob, 44, 42);
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 18, ey - 20 + walkBob, 36, 36);
-            ctx.fillStyle = '#475569';
-            ctx.fillRect(ex - 14, ey - 16 + walkBob, 28, 30);
-
-            // Golden Highkeep Heraldry & Belt
-            ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex - 14, ey + walkBob, 28, 7);
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 5, ey - 10 + walkBob, 10, 10); // Lion chest emblem
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 3, ey - 8 + walkBob, 6, 6);
-
-            // Spiked Steel Pauldrons with Gold Trim
-            ctx.fillStyle = '#64748B';
-            ctx.fillRect(ex - 28, ey - 26 + walkBob, 14, 16);
-            ctx.fillRect(ex + 14, ey - 26 + walkBob, 14, 16);
-            ctx.fillStyle = '#D97706';
-            ctx.fillRect(ex - 26, ey - 24 + walkBob, 10, 4);
-            ctx.fillRect(ex + 16, ey - 24 + walkBob, 10, 4);
-            ctx.fillStyle = '#94A3B8';
-            ctx.fillRect(ex - 28, ey - 32 + walkBob, 5, 7); // Shoulder Spikes
-            ctx.fillRect(ex + 23, ey - 32 + walkBob, 5, 7);
-
-            // Winged Great-Helm with Golden Crest
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 15, ey - 38 + walkBob, 30, 20);
-            // Golden Helm Wings / Crest
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 20, ey - 46 + walkBob, 7, 14);
-            ctx.fillRect(ex - 4, ey - 48 + walkBob, 8, 12);
-            ctx.fillRect(ex + 13, ey - 46 + walkBob, 7, 14);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 18, ey - 44 + walkBob, 3, 10);
-            ctx.fillRect(ex - 2, ey - 46 + walkBob, 4, 8);
-            ctx.fillRect(ex + 15, ey - 44 + walkBob, 3, 10);
-
-            if (!bossIsBack) {
-              // Steel visor faceplate
-              ctx.fillStyle = '#0F172A';
-              ctx.fillRect(ex - 11, ey - 32 + walkBob, 22, 10);
-              // Glowing Amber Visor Slits
-              ctx.fillStyle = '#FEF08A';
-              ctx.fillRect(ex - 9, ey - 30 + walkBob, 7, 4);
-              ctx.fillRect(ex + 2, ey - 30 + walkBob, 7, 4);
-              ctx.fillStyle = '#FFFFFF';
-              ctx.fillRect(ex - 7, ey - 29 + walkBob, 3, 2);
-              ctx.fillRect(ex + 4, ey - 29 + walkBob, 3, 2);
-            } else {
-              // Rear crimson mantle draped across Malakor's back & solid rear greathelm plate
-              ctx.fillStyle = '#9F1239';
-              ctx.fillRect(ex - 20, ey - 18 + walkBob, 40, 38);
-              ctx.fillStyle = '#F59E0B';
-              ctx.fillRect(ex - 20, ey + 17 + walkBob, 40, 3);
-              ctx.fillStyle = '#475569';
-              ctx.fillRect(ex - 12, ey - 34 + walkBob, 24, 14);
-            }
-
-            // Left Hand: Tower Kite Greatshield
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(ex - 32, ey - 18 + walkBob, 16, 38);
-            ctx.fillStyle = '#991B1B';
-            ctx.fillRect(ex - 30, ey - 16 + walkBob, 12, 34);
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(ex - 27, ey - 10 + walkBob, 6, 20); // Lion heraldry on shield
-            ctx.fillRect(ex - 29, ey - 4 + walkBob, 10, 6);
-            ctx.fillStyle = '#FEF08A';
-            ctx.fillRect(ex - 26, ey - 8 + walkBob, 4, 14);
-
-            // Right Hand: Heavy Broadsword with Shimmering Fuller
-            const swordX = ex + 22;
-            ctx.fillStyle = '#475569';
-            ctx.fillRect(swordX, ey - 50 + walkBob, 8, 60);
-            ctx.fillStyle = '#CBD5E1';
-            ctx.fillRect(swordX + 2, ey - 48 + walkBob, 4, 54);
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillRect(swordX + 3, ey - 46 + walkBob, 2, 50);
-            // Gold Crossguard & Pommel
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillRect(swordX - 6, ey - 8 + walkBob, 20, 6);
-            ctx.fillStyle = '#D97706';
-            ctx.fillRect(swordX + 2, ey + 10 + walkBob, 4, 7);
+            bossAnimState = stepBossAnimRuntime(rt, en, enemyPose, now);
           }
-          ctx.restore();
-          }
+          drawHumanoidBoss(
+            ctx,
+            ex,
+            ey,
+            en.name,
+            now,
+            en,
+            enemyPose,
+            bossAnimState,
+            map.floor,
+            map.biome
+          );
         } else {
           // Safe visible fallback for any undefined or custom enemy kinds
           drawGenericEnemySprite(ctx, en, ex, ey, now, enemyPose);
@@ -5022,16 +4487,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillStyle = 'rgba(0,0,0,0.5)';
         ctx.fillRect(hx - 10, hy + 10, 20, 5);
 
-        // Class-specific Subtle Aura / Motion Effects (no obstructive rings on character)
+        // Class & Armament-Aware Aura / Motion Effects
         if (p.heroClass === 'ranger') {
           const isSwift = p.hasteMs > 0 || moving;
           if (isSwift) {
-            // Swiftness wind motion lines drifting behind movement
+            // Swiftness wind motion lines drifting behind movement (tinted by Vestment)
             const swiftAngle =
               moving && Math.hypot(moveX, moveY) > 0.05 ? Math.atan2(moveY, moveX) : ang;
             const windOffX = -Math.cos(swiftAngle) * 14;
             const windOffY = -Math.sin(swiftAngle) * 14;
-            ctx.strokeStyle = 'rgba(134, 239, 172, 0.7)';
+            ctx.strokeStyle =
+              p.equippedVestment === 'ranger_windrunner_mantle'
+                ? 'rgba(56, 189, 248, 0.78)'
+                : p.equippedVestment === 'ranger_briarheart_leather'
+                  ? 'rgba(16, 185, 129, 0.78)'
+                  : 'rgba(134, 239, 172, 0.7)';
             ctx.lineWidth = 1.8;
             ctx.beginPath();
             ctx.moveTo(hx + windOffX, hy + windOffY);
@@ -5042,13 +4512,30 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             }
           }
         } else if (p.heroClass === 'arcanist') {
-          // Arcanist: Astral Resonance 3 Orbiting Celestial Starlight Diamonds
+          // Arcanist: Astral Resonance 3 Orbiting Diamonds themed by equipped Vestment & Weapon
           const orbAngleBase = now * 0.003 + hx;
+          const isChronoLook =
+            p.equippedVestment === 'arcanist_chronomancer_shroud' ||
+            p.equippedWeapon === 'arcanist_chronostar_scepter';
+          const isVoidLook = p.equippedVestment === 'arcanist_voidward_robes';
+          const isCinderLook = p.equippedWeapon === 'arcanist_cinderflare_rod';
           for (let orbIdx = 0; orbIdx < 3; orbIdx++) {
             const a = orbAngleBase + (orbIdx * Math.PI * 2) / 3;
             const ox = hx + Math.cos(a) * 20;
             const oy = hy + 4 + Math.sin(a) * 8;
-            ctx.fillStyle = '#38BDF8';
+            ctx.fillStyle = isChronoLook
+              ? orbIdx % 2 === 0
+                ? '#FBBF24'
+                : '#38BDF8'
+              : isVoidLook
+                ? orbIdx % 2 === 0
+                  ? '#A855F7'
+                  : '#E879F9'
+                : isCinderLook
+                  ? orbIdx % 2 === 0
+                    ? '#F97316'
+                    : '#FDE047'
+                  : '#38BDF8';
             ctx.beginPath();
             ctx.moveTo(ox, oy - 3.5);
             ctx.lineTo(ox + 2.8, oy);
@@ -5056,18 +4543,28 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.lineTo(ox - 2.8, oy);
             ctx.closePath();
             ctx.fill();
-            ctx.fillStyle = '#E0F2FE';
+            ctx.fillStyle = '#FFFFFF';
             ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
           }
         } else if (p.heroClass === 'cleric') {
-          // Cleric: Radiant Aura 140px Translucent Green Warmth Halo
+          // Cleric: Radiant Aura 140px Warmth Halo (enhanced by Martyr & Templar vestments)
           const auraPulse = Math.sin(now * 0.004 + hx) * 3;
-          ctx.fillStyle = 'rgba(34, 197, 94, 0.08)';
+          const isTemplar = p.equippedVestment === 'cleric_templar_cassock';
+          const isMartyr = p.equippedVestment === 'cleric_martyr_surplice';
+          ctx.fillStyle = isTemplar
+            ? 'rgba(250, 204, 21, 0.08)'
+            : isMartyr
+              ? 'rgba(52, 211, 153, 0.1)'
+              : 'rgba(34, 197, 94, 0.08)';
           ctx.beginPath();
           ctx.arc(hx, hy, 140, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+          ctx.strokeStyle = isTemplar
+            ? 'rgba(250, 204, 21, 0.48)'
+            : isMartyr
+              ? 'rgba(52, 211, 153, 0.48)'
+              : 'rgba(34, 197, 94, 0.4)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
@@ -5075,6 +4572,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
           particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
         }
+
+        // Subtle ambient motes for equipped Forged/Ascendant Vestments & Weapons
+        particleManager.spawnArmamentAmbientMotes(
+          p.id,
+          p.heroClass,
+          p.equippedWeapon,
+          p.equippedVestment,
+          hx,
+          hy,
+          now
+        );
 
       // Render and update Cleric passive green pulse waves
       for (let i = clericPulses.length - 1; i >= 0; i--) {

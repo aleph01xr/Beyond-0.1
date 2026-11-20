@@ -12,6 +12,8 @@ import {
   type PlayerState,
 } from '../shared/types.ts';
 import { ARCANIST_SPELL_ORDER, ARCANIST_SPELLS } from '../shared/arcanist.ts';
+import { VESTMENT_CATALOG, WEAPON_CATALOG, type ArmamentDef } from '../shared/armaments.ts';
+import { ArmamentIcon } from './ArmamentIcon.tsx';
 
 interface AdminPanelProps {
   me: PlayerState;
@@ -20,7 +22,7 @@ interface AdminPanelProps {
   onSendAdminCommand: (msg: ClientMessage) => void;
 }
 
-type AdminTab = 'classes' | 'cheats' | 'relics' | 'scrolls' | 'spawner' | 'teleport' | 'management' | 'world' | 'audio';
+type AdminTab = 'classes' | 'armaments' | 'cheats' | 'relics' | 'scrolls' | 'spawner' | 'teleport' | 'management' | 'world' | 'audio';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   me,
@@ -95,6 +97,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {[
             ['cheats', 'Cheats & Stats'],
             ['classes', 'Hero Classes'],
+            ['armaments', 'Armaments'],
             ['relics', 'Relic Vault'],
             ['scrolls', 'Spell Scrolls'],
             ['spawner', 'Entity Spawner'],
@@ -428,6 +431,134 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* TAB: PERMANENT ARMAMENTS */}
+          {activeTab === 'armaments' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-display text-xs font-bold text-[#FCD34D] uppercase tracking-wider mb-1">
+                  Permanent Class Armaments Armory
+                </h3>
+                <p className="text-xs text-[#A19FAF] font-mono">
+                  Grant any Weapon or Vestment to your account armory, or equip items matching your active class ({HERO_CLASSES[me.heroClass]?.name || me.heroClass}).
+                </p>
+              </div>
+
+              {(['weapon', 'vestment'] as const).map((slotType) => {
+                const items: readonly ArmamentDef[] =
+                  slotType === 'weapon' ? WEAPON_CATALOG : VESTMENT_CATALOG;
+                const ownedSet = new Set(
+                  slotType === 'weapon' ? me.ownedWeapons || [] : me.ownedVestments || []
+                );
+                const equippedId =
+                  slotType === 'weapon' ? me.equippedWeapon : me.equippedVestment;
+
+                return (
+                  <div key={slotType} className="space-y-2">
+                    <h4 className="font-mono text-xs font-bold uppercase text-[#38BDF8] border-b border-[#383548] pb-1">
+                      {slotType === 'weapon' ? 'Permanent Weapons' : 'Permanent Vestments'}
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {items.map((item) => {
+                        const isOwned = ownedSet.has(item.id);
+                        const isEquipped = equippedId === item.id;
+                        const matchesClass = item.heroClass === me.heroClass;
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`stone-plaque p-3 border flex flex-col justify-between gap-2 ${
+                              isEquipped
+                                ? 'border-[#FACC15] bg-[#332E1F]'
+                                : 'border-[#383548] bg-[#252332]'
+                            }`}
+                          >
+                            <div className="space-y-1.5">
+                              <div className="flex items-start gap-2.5">
+                                <div
+                                  className="w-9 h-9 bg-[#181722] border flex items-center justify-center shrink-0"
+                                  style={{ borderColor: item.accent }}
+                                >
+                                  <ArmamentIcon itemId={item.id} slot={item.slot} size={28} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-display font-bold text-xs truncate" style={{ color: item.accent }}>
+                                      {item.name}
+                                    </span>
+                                  </div>
+                                  <span className="text-[9px] font-mono text-[#A19FAF] block">
+                                    {HERO_CLASSES[item.heroClass].name} · {item.rarity}
+                                  </span>
+                                </div>
+                              </div>
+                              <ul className="text-[10px] font-mono text-[#CBD5E1] space-y-0.5">
+                                {item.effectLines.map((line, i) => (
+                                  <li key={i}>· {line}</li>
+                                ))}
+                              </ul>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#383548]">
+                              {!isOwned && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleCommand({
+                                      type: 'admin:grant_armament',
+                                      slot: item.slot,
+                                      itemId: item.id,
+                                    })
+                                  }
+                                  className="stone-button stone-button-blue py-1 px-2.5 text-[10px] font-mono font-bold"
+                                >
+                                  Grant
+                                </button>
+                              )}
+                              {isOwned && matchesClass && !isEquipped && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleCommand({
+                                      type: 'player:equip_armament',
+                                      slot: item.slot,
+                                      itemId: item.id,
+                                    })
+                                  }
+                                  className="stone-button stone-button-gold py-1 px-2.5 text-[10px] font-mono font-bold text-black"
+                                >
+                                  Equip
+                                </button>
+                              )}
+                              {isEquipped && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleCommand({
+                                      type: 'player:unequip_armament',
+                                      slot: item.slot,
+                                    })
+                                  }
+                                  className="stone-button stone-button-dark py-1 px-2.5 text-[10px] font-mono font-bold text-[#F87171]"
+                                >
+                                  Unequip
+                                </button>
+                              )}
+                              {isOwned && !matchesClass && (
+                                <span className="text-[10px] font-mono text-[#A19FAF]">
+                                  Owned ({HERO_CLASSES[item.heroClass].name})
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 

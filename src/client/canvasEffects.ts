@@ -574,6 +574,7 @@ export class ParticleManager {
   private pool: CombatParticle[] = [];
   private budget: ParticleBudgetConfig;
   private projectileLastSpawn = new Map<string, number>();
+  private armamentMoteLastSpawn = new Map<string, number>();
 
   constructor(budgetConfig: Partial<ParticleBudgetConfig> = {}) {
     this.budget = {
@@ -600,6 +601,7 @@ export class ParticleManager {
       if (p) this.recycleParticle(p);
     }
     this.projectileLastSpawn.clear();
+    this.armamentMoteLastSpawn.clear();
   }
 
   private recycleParticle(p: CombatParticle): void {
@@ -1340,21 +1342,61 @@ export class ParticleManager {
     let maxAgeMs = 220 + Math.random() * 120;
 
     if (proj.style === 'arcane') {
-      color = Math.random() > 0.5 ? '#38BDF8' : '#818CF8';
-      secondaryColor = '#E0F2FE';
-      colorEnd = '#4C1D95';
-      shape = Math.random() > 0.4 ? 'rune' : 'diamond';
-      size = 2.4;
-      curveDrift = (Math.random() - 0.5) * 28;
-      maxAgeMs = 300 + Math.random() * 140;
+      if (proj.weaponId === 'arcanist_cinderflare_rod') {
+        color = Math.random() > 0.35 ? '#F97316' : '#FBBF24';
+        secondaryColor = '#FEF08A';
+        colorEnd = '#9A3412';
+        shape = Math.random() > 0.45 ? 'flame' : 'spark';
+        size = 2.8;
+        gravity = -20;
+        wander = 10;
+        maxAgeMs = 310 + Math.random() * 140;
+      } else if (proj.weaponId === 'arcanist_chronostar_scepter') {
+        color = Math.random() > 0.45 ? '#FDE047' : '#38BDF8';
+        secondaryColor = '#FFFFFF';
+        colorEnd = '#1D4ED8';
+        shape = Math.random() > 0.45 ? 'diamond' : 'starburst';
+        size = 2.5;
+        curveDrift = (Math.random() - 0.5) * 42;
+        maxAgeMs = 320 + Math.random() * 140;
+      } else {
+        color = Math.random() > 0.5 ? '#38BDF8' : '#818CF8';
+        secondaryColor = '#E0F2FE';
+        colorEnd = '#4C1D95';
+        shape = Math.random() > 0.4 ? 'rune' : 'diamond';
+        size = 2.4;
+        curveDrift = (Math.random() - 0.5) * 28;
+        maxAgeMs = 300 + Math.random() * 140;
+      }
     } else if (proj.style === 'radiant') {
-      color = '#FDE047';
-      secondaryColor = '#FEF08A';
-      colorEnd = '#F59E0B';
-      shape = Math.random() > 0.4 ? 'cross' : 'starburst';
-      size = 2.2;
-      gravity = -14; // Upward floating holy sparkle
-      maxAgeMs = 280 + Math.random() * 140;
+      if (proj.weaponId === 'cleric_solaris_censer') {
+        color = Math.random() > 0.35 ? '#34D399' : '#FDE047';
+        secondaryColor = '#ECFDF5';
+        colorEnd = '#059669';
+        shape = Math.random() > 0.45 ? 'cross' : 'diamond';
+        size = 2.3;
+        gravity = -18;
+        wander = 10;
+        maxAgeMs = 300 + Math.random() * 140;
+      } else if (proj.weaponId === 'cleric_seraphim_crozier') {
+        color = Math.random() > 0.35 ? '#FEF08A' : '#F59E0B';
+        secondaryColor = '#FFFFFF';
+        colorEnd = '#B45309';
+        shape = Math.random() > 0.4 ? 'starburst' : 'streak';
+        size = 2.5;
+        stretchWithVelocity = true;
+        stretchFactor = 0.008;
+        gravity = -12;
+        maxAgeMs = 300 + Math.random() * 140;
+      } else {
+        color = '#FDE047';
+        secondaryColor = '#FEF08A';
+        colorEnd = '#F59E0B';
+        shape = Math.random() > 0.4 ? 'cross' : 'starburst';
+        size = 2.2;
+        gravity = -14; // Upward floating holy sparkle
+        maxAgeMs = 280 + Math.random() * 140;
+      }
     } else if (proj.style === 'arrow') {
       if (proj.slowOnHit) {
         // Ranger Frost Volley crystalline ice-arrow trail
@@ -1364,6 +1406,26 @@ export class ParticleManager {
         shape = Math.random() > 0.45 ? 'shard' : 'diamond';
         size = 2.0;
         wander = 8;
+        maxAgeMs = 260 + Math.random() * 120;
+      } else if (proj.weaponId === 'ranger_galewind_twinbow') {
+        color = Math.random() > 0.4 ? '#22D3EE' : '#BAE6FD';
+        secondaryColor = '#FFFFFF';
+        colorEnd = '#0E7490';
+        shape = Math.random() > 0.45 ? 'streak' : 'crescent';
+        size = 1.9;
+        stretchWithVelocity = true;
+        stretchFactor = 0.01;
+        curveDrift = (Math.random() - 0.5) * 20;
+        maxAgeMs = 230 + Math.random() * 110;
+      } else if (proj.weaponId === 'ranger_eclipse_longbow') {
+        color = Math.random() > 0.35 ? '#A855F7' : '#FBBF24';
+        secondaryColor = '#FEF08A';
+        colorEnd = '#3B0764';
+        shape = Math.random() > 0.45 ? 'shard' : 'diamond';
+        size = 2.2;
+        stretchWithVelocity = true;
+        stretchFactor = 0.009;
+        wander = 5;
         maxAgeMs = 260 + Math.random() * 120;
       } else {
         // Standard Ashwood Arrow emerald wind wake
@@ -1430,9 +1492,21 @@ export class ParticleManager {
       curveDrift = (Math.random() - 0.5) * 32;
       maxAgeMs = 220 + Math.random() * 100;
     } else if (proj.style === 'slash') {
-      color = proj.crit ? '#FDE047' : Math.random() > 0.5 ? '#F59E0B' : '#E2E8F0';
-      secondaryColor = '#FFFFFF';
-      shape = Math.random() > 0.5 ? 'crescent' : 'streak';
+      if (proj.weaponId === 'vanguard_crimson_halberd') {
+        color = proj.crit ? '#FEF2F2' : '#EF4444';
+        secondaryColor = '#FCA5A5';
+        colorEnd = '#7F1D1D';
+        shape = Math.random() > 0.45 ? 'crescent' : 'streak';
+      } else if (proj.weaponId === 'vanguard_stormbreaker_flail') {
+        color = proj.crit ? '#FEF08A' : '#38BDF8';
+        secondaryColor = '#E0F2FE';
+        colorEnd = '#0284C7';
+        shape = Math.random() > 0.45 ? 'starburst' : 'streak';
+      } else {
+        color = proj.crit ? '#FDE047' : Math.random() > 0.5 ? '#F59E0B' : '#E2E8F0';
+        secondaryColor = '#FFFFFF';
+        shape = Math.random() > 0.5 ? 'crescent' : 'streak';
+      }
       size = proj.crit ? 2.6 : 2.0;
       stretchWithVelocity = true;
       stretchFactor = 0.009;
@@ -1475,6 +1549,214 @@ export class ParticleManager {
       if (!activeProjectileIds.has(id)) {
         this.projectileLastSpawn.delete(id);
       }
+    }
+  }
+
+  /**
+   * Emits subtle rate-limited ambient pixel motes tailored to the hero's equipped
+   * permanent Vestment and Weapon so Forged & Ascendant gear visibly radiates in-world.
+   */
+  public spawnArmamentAmbientMotes(
+    playerId: string,
+    _heroClass: HeroClassId,
+    weaponId: string | null | undefined,
+    vestmentId: string | null | undefined,
+    x: number,
+    y: number,
+    now: number = performance.now()
+  ): void {
+    const last = this.armamentMoteLastSpawn.get(playerId) || 0;
+    if (now - last < 240) return;
+    this.armamentMoteLastSpawn.set(playerId, now);
+
+    const ang = Math.random() * Math.PI * 2;
+    const rad = 8 + Math.random() * 9;
+    const mx = x + Math.cos(ang) * rad;
+    const my = y + Math.sin(ang) * rad * 0.6;
+
+    // Vestment ambient motes
+    if (vestmentId === 'vanguard_obsidian_juggernaut') {
+      this.acquireParticle({
+        x: mx,
+        y: my + 4,
+        vx: (Math.random() - 0.5) * 12,
+        vy: -14 - Math.random() * 14,
+        color: Math.random() > 0.4 ? '#FB923C' : '#94A3B8',
+        secondaryColor: '#FEF08A',
+        colorEnd: '#7C2D12',
+        size: 1.8,
+        bornAt: now,
+        maxAgeMs: 420,
+        gravity: -18,
+        shape: 'spark',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'vanguard_aegis_sovereign_mail') {
+      this.acquireParticle({
+        x: mx,
+        y: my,
+        vx: (Math.random() - 0.5) * 10,
+        vy: -18 - Math.random() * 12,
+        color: '#FDE047',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#B45309',
+        size: 2.0,
+        bornAt: now,
+        maxAgeMs: 440,
+        shape: 'starburst',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'ranger_windrunner_mantle') {
+      this.acquireParticle({
+        x: mx,
+        y: my,
+        vx: Math.cos(ang) * 26,
+        vy: Math.sin(ang) * 14 - 8,
+        color: '#38BDF8',
+        secondaryColor: '#E0F2FE',
+        colorEnd: '#0E7490',
+        size: 1.8,
+        bornAt: now,
+        maxAgeMs: 360,
+        stretchWithVelocity: true,
+        stretchFactor: 0.008,
+        shape: 'streak',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'ranger_briarheart_leather') {
+      this.acquireParticle({
+        x: mx,
+        y: my - 4,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -14 - Math.random() * 10,
+        color: '#34D399',
+        secondaryColor: '#ECFDF5',
+        colorEnd: '#065F46',
+        size: 2.0,
+        bornAt: now,
+        maxAgeMs: 460,
+        wander: 14,
+        shape: 'diamond',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'arcanist_chronomancer_shroud') {
+      this.acquireParticle({
+        x: mx,
+        y: my - 2,
+        vx: -Math.sin(ang) * 24,
+        vy: Math.cos(ang) * 16 - 10,
+        color: Math.random() > 0.5 ? '#FBBF24' : '#38BDF8',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#1E3A8A',
+        size: 2.0,
+        bornAt: now,
+        maxAgeMs: 420,
+        shape: 'rune',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'arcanist_voidward_robes') {
+      this.acquireParticle({
+        x: mx,
+        y: my,
+        vx: -Math.sin(ang) * 20,
+        vy: Math.cos(ang) * 12 - 12,
+        color: Math.random() > 0.5 ? '#C084FC' : '#E879F9',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#3B0764',
+        size: 2.1,
+        bornAt: now,
+        maxAgeMs: 440,
+        shape: 'hexagon',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'cleric_martyr_surplice') {
+      this.acquireParticle({
+        x: mx,
+        y: my,
+        vx: (Math.random() - 0.5) * 10,
+        vy: -18 - Math.random() * 12,
+        color: '#34D399',
+        secondaryColor: '#FEF08A',
+        colorEnd: '#065F46',
+        size: 2.0,
+        bornAt: now,
+        maxAgeMs: 460,
+        shape: 'cross',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (vestmentId === 'cleric_templar_cassock') {
+      this.acquireParticle({
+        x: mx,
+        y: my - 2,
+        vx: (Math.random() - 0.5) * 12,
+        vy: -16 - Math.random() * 12,
+        color: '#FACC15',
+        secondaryColor: '#FFFFFF',
+        colorEnd: '#991B1B',
+        size: 2.1,
+        bornAt: now,
+        maxAgeMs: 440,
+        shape: 'starburst',
+        glow: true,
+        priority: 'low',
+      });
+    }
+
+    // Signature weapon ambient glints (Stormbreaker sparks & Cinderflare embers)
+    if (weaponId === 'vanguard_stormbreaker_flail') {
+      this.acquireParticle({
+        x: x + 10 + (Math.random() - 0.5) * 6,
+        y: y - 10 + (Math.random() - 0.5) * 6,
+        vx: (Math.random() - 0.5) * 32,
+        vy: (Math.random() - 0.5) * 32,
+        color: '#38BDF8',
+        secondaryColor: '#FEF08A',
+        size: 1.7,
+        bornAt: now,
+        maxAgeMs: 220,
+        shape: 'spark',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (weaponId === 'arcanist_cinderflare_rod') {
+      this.acquireParticle({
+        x: x + 12 + (Math.random() - 0.5) * 4,
+        y: y - 18,
+        vx: (Math.random() - 0.5) * 14,
+        vy: -22 - Math.random() * 12,
+        color: '#F97316',
+        secondaryColor: '#FEF08A',
+        colorEnd: '#7F1D1D',
+        size: 1.9,
+        bornAt: now,
+        maxAgeMs: 320,
+        shape: 'flame',
+        glow: true,
+        priority: 'low',
+      });
+    } else if (weaponId === 'cleric_solaris_censer') {
+      this.acquireParticle({
+        x: x - 10 + (Math.random() - 0.5) * 5,
+        y: y + 2,
+        vx: (Math.random() - 0.5) * 10,
+        vy: -16 - Math.random() * 10,
+        color: '#34D399',
+        secondaryColor: '#ECFDF5',
+        size: 1.7,
+        bornAt: now,
+        maxAgeMs: 360,
+        wander: 10,
+        shape: 'circle',
+        glow: true,
+        priority: 'low',
+      });
     }
   }
 
@@ -2022,20 +2304,35 @@ export class ParticleManager {
     y: number,
     angle: number,
     isCrit: boolean = false,
-    now: number = performance.now()
+    now: number = performance.now(),
+    weaponId?: string | null
   ): void {
-    const count = isCrit ? 12 : 7;
+    const isHalberd = weaponId === 'vanguard_crimson_halberd';
+    const isFlail = weaponId === 'vanguard_stormbreaker_flail';
+    const count = isCrit ? 12 : 8;
+    const ringColor = isHalberd
+      ? isCrit
+        ? '#FCA5A5'
+        : '#EF4444'
+      : isFlail
+        ? isCrit
+          ? '#FEF08A'
+          : '#38BDF8'
+        : isCrit
+          ? '#FDE047'
+          : '#F59E0B';
+
     // 1. Kinetic shockwave ring
     this.acquireParticle({
       x,
       y,
       vx: 0,
       vy: 0,
-      color: isCrit ? '#FDE047' : '#F59E0B',
+      color: ringColor,
       secondaryColor: '#FFFFFF',
       size: 3,
       ringRadius: 4,
-      ringMaxRadius: isCrit ? 38 : 26,
+      ringMaxRadius: isHalberd ? (isCrit ? 44 : 32) : isCrit ? 38 : 26,
       ringLineWidth: isCrit ? 2.4 : 1.8,
       bornAt: now,
       maxAgeMs: 220,
@@ -2044,37 +2341,48 @@ export class ParticleManager {
       glow: true,
     });
 
-    if (isCrit) {
+    if (isCrit || isFlail) {
       this.acquireParticle({
         x,
         y,
         vx: 0,
         vy: 0,
-        color: '#FFFFFF',
-        secondaryColor: '#F59E0B',
-        size: 4.5,
+        color: isFlail ? '#7DD3FC' : '#FFFFFF',
+        secondaryColor: isHalberd ? '#EF4444' : isFlail ? '#FDE047' : '#F59E0B',
+        size: isCrit ? 4.6 : 3.4,
         bornAt: now,
         maxAgeMs: 190,
         rotation: angle,
-        angularVelocity: 6,
+        angularVelocity: isFlail ? 10 : 6,
         shape: 'starburst',
-        priority: 'critical',
+        priority: isCrit ? 'critical' : 'high',
         glow: true,
       });
     }
 
     // 2. Heavy steel shards, sweeping crescents & directional spark streaks
     for (let i = 0; i < count; i++) {
-      const spread = angle + (Math.random() - 0.5) * 1.15;
+      const spread = angle + (Math.random() - 0.5) * (isHalberd ? 1.35 : 1.15);
       const sp = (isCrit ? 145 : 95) + Math.random() * 80;
+      const pColor = isHalberd
+        ? i % 2 === 0
+          ? '#EF4444'
+          : '#FCA5A5'
+        : isFlail
+          ? i % 2 === 0
+            ? '#38BDF8'
+            : '#FDE047'
+          : i % 2 === 0
+            ? '#F59E0B'
+            : '#E2E8F0';
       this.acquireParticle({
         x: x + Math.cos(spread) * 6,
         y: y + Math.sin(spread) * 6,
         vx: Math.cos(spread) * sp,
         vy: Math.sin(spread) * sp,
-        color: i % 2 === 0 ? '#F59E0B' : '#E2E8F0',
-        secondaryColor: '#FEF08A',
-        colorEnd: '#94A3B8',
+        color: pColor,
+        secondaryColor: isHalberd ? '#FFFFFF' : isFlail ? '#E0F2FE' : '#FEF08A',
+        colorEnd: isHalberd ? '#7F1D1D' : isFlail ? '#0284C7' : '#94A3B8',
         size: 2.3 + Math.random() * 1.6,
         bornAt: now,
         maxAgeMs: 240 + Math.random() * 120,
@@ -2083,7 +2391,15 @@ export class ParticleManager {
         angularVelocity: (Math.random() - 0.5) * 12,
         stretchWithVelocity: true,
         stretchFactor: 0.008,
-        shape: i % 3 === 0 ? 'crescent' : i % 3 === 1 ? 'shard' : 'streak',
+        shape: isFlail
+          ? i % 2 === 0
+            ? 'spark'
+            : 'streak'
+          : i % 3 === 0
+            ? 'crescent'
+            : i % 3 === 1
+              ? 'shard'
+              : 'streak',
         glow: true,
         priority: isCrit ? 'critical' : 'high',
       });
@@ -2399,36 +2715,53 @@ export class ParticleManager {
     y: number,
     angle: number,
     isCrit: boolean = false,
-    now: number = performance.now()
+    now: number = performance.now(),
+    weaponId?: string | null
   ): void {
-    if (isCrit) {
+    const isTwinbow = weaponId === 'ranger_galewind_twinbow';
+    const isEclipse = weaponId === 'ranger_eclipse_longbow';
+    if (isCrit || isEclipse || isTwinbow) {
       this.acquireParticle({
         x,
         y,
         vx: 0,
         vy: 0,
-        color: '#FEF08A',
-        secondaryColor: '#34D399',
-        size: 4,
+        color: isEclipse ? '#C084FC' : isTwinbow ? '#38BDF8' : '#FEF08A',
+        secondaryColor: isEclipse ? '#FDE047' : isTwinbow ? '#BAE6FD' : '#34D399',
+        size: isCrit ? 4.2 : 3.2,
         bornAt: now,
         maxAgeMs: 180,
-        shape: 'starburst',
+        shape: isTwinbow ? 'ring' : 'starburst',
+        ringRadius: isTwinbow ? 3 : undefined,
+        ringMaxRadius: isTwinbow ? 20 : undefined,
+        ringLineWidth: isTwinbow ? 1.6 : undefined,
         glow: true,
-        priority: 'critical',
+        priority: isCrit ? 'critical' : 'high',
       });
     }
-    const count = isCrit ? 10 : 6;
+    const count = isCrit ? 10 : 7;
     for (let i = 0; i < count; i++) {
-      const spread = angle + (Math.random() - 0.5) * 1.2;
-      const sp = 85 + Math.random() * 100;
+      const spread = angle + (Math.random() - 0.5) * 1.25;
+      const sp = 85 + Math.random() * 105;
+      const color = isTwinbow
+        ? i % 2 === 0
+          ? '#22D3EE'
+          : '#BAE6FD'
+        : isEclipse
+          ? i % 2 === 0
+            ? '#A855F7'
+            : '#FDE047'
+          : i % 2 === 0
+            ? '#34D399'
+            : '#86EFAC';
       this.acquireParticle({
         x,
         y,
         vx: Math.cos(spread) * sp,
         vy: Math.sin(spread) * sp,
-        color: i % 2 === 0 ? '#34D399' : '#86EFAC',
+        color,
         secondaryColor: '#FFFFFF',
-        colorEnd: '#059669',
+        colorEnd: isTwinbow ? '#0E7490' : isEclipse ? '#3B0764' : '#059669',
         size: 2.1 + Math.random() * 1.4,
         bornAt: now,
         maxAgeMs: 240 + Math.random() * 120,
@@ -2436,7 +2769,15 @@ export class ParticleManager {
         wander: 8,
         stretchWithVelocity: true,
         stretchFactor: 0.007,
-        shape: i % 3 === 0 ? 'triangle' : i % 3 === 1 ? 'diamond' : 'streak',
+        shape: isEclipse
+          ? i % 2 === 0
+            ? 'shard'
+            : 'diamond'
+          : i % 3 === 0
+            ? 'triangle'
+            : i % 3 === 1
+              ? 'diamond'
+              : 'streak',
         glow: true,
         priority: isCrit ? 'critical' : 'high',
       });
@@ -2820,8 +3161,52 @@ export class ParticleManager {
   public spawnArcanistBoltHit(
     x: number,
     y: number,
-    now: number = performance.now()
+    now: number = performance.now(),
+    weaponId?: string | null
   ): void {
+    const isCinder = weaponId === 'arcanist_cinderflare_rod';
+    const isChrono = weaponId === 'arcanist_chronostar_scepter';
+
+    if (isCinder) {
+      // Ember Splash ring
+      this.acquireParticle({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        color: '#F97316',
+        secondaryColor: '#FEF08A',
+        size: 3,
+        ringRadius: 4,
+        ringMaxRadius: 28,
+        ringLineWidth: 2,
+        bornAt: now,
+        maxAgeMs: 240,
+        shape: 'ring',
+        glow: true,
+        priority: 'high',
+      });
+    } else if (isChrono) {
+      // Temporal astrolabe ring
+      this.acquireParticle({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        color: '#FDE047',
+        secondaryColor: '#38BDF8',
+        size: 3,
+        ringRadius: 3,
+        ringMaxRadius: 22,
+        ringLineWidth: 1.6,
+        bornAt: now,
+        maxAgeMs: 240,
+        shape: 'ring',
+        glow: true,
+        priority: 'high',
+      });
+    }
+
     // 1. Central starburst flash
     this.acquireParticle({
       x,
@@ -2829,7 +3214,7 @@ export class ParticleManager {
       vx: 0,
       vy: 0,
       color: '#FFFFFF',
-      secondaryColor: '#38BDF8',
+      secondaryColor: isCinder ? '#FB923C' : isChrono ? '#FDE047' : '#38BDF8',
       size: 4,
       bornAt: now,
       maxAgeMs: 180,
@@ -2838,27 +3223,43 @@ export class ParticleManager {
       priority: 'high',
     });
 
-    // 2. Spiraling arcane glyphs & diamonds
+    // 2. Spiraling arcane glyphs, embers & diamonds
     for (let i = 0; i < 7; i++) {
       const a = (i * Math.PI * 2) / 7;
-      const sp = 50 + Math.random() * 40;
+      const sp = 50 + Math.random() * 45;
       this.acquireParticle({
         x,
         y,
         vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp,
-        color: i % 2 === 0 ? '#38BDF8' : '#818CF8',
+        color: isCinder
+          ? i % 2 === 0
+            ? '#F97316'
+            : '#FDE047'
+          : isChrono
+            ? i % 2 === 0
+              ? '#FDE047'
+              : '#38BDF8'
+            : i % 2 === 0
+              ? '#38BDF8'
+              : '#818CF8',
         secondaryColor: '#E0F2FE',
-        colorEnd: '#4C1D95',
+        colorEnd: isCinder ? '#7F1D1D' : isChrono ? '#1E3A8A' : '#4C1D95',
         size: 2.6 + Math.random() * 1.4,
         bornAt: now,
         maxAgeMs: 380 + Math.random() * 180,
         friction: 0.93,
-        spiralSpeed: 3.0,
-        spiralTangentialVelocity: 45,
+        spiralSpeed: isCinder ? 1.5 : 3.0,
+        spiralTangentialVelocity: isCinder ? 20 : 45,
         rotation: a,
         angularVelocity: 6,
-        shape: i % 2 === 0 ? 'rune' : 'diamond',
+        shape: isCinder
+          ? i % 2 === 0
+            ? 'flame'
+            : 'spark'
+          : i % 2 === 0
+            ? 'rune'
+            : 'diamond',
         glow: true,
         priority: 'high',
       });
@@ -3649,20 +4050,24 @@ export class ParticleManager {
     x: number,
     y: number,
     isCrit: boolean = false,
-    now: number = performance.now()
+    now: number = performance.now(),
+    weaponId?: string | null
   ): void {
+    const isCenser = weaponId === 'cleric_solaris_censer';
+    const isCrozier = weaponId === 'cleric_seraphim_crozier';
+
     // 1. Divine halo ring
     this.acquireParticle({
       x,
       y,
       vx: 0,
       vy: 0,
-      color: '#FDE047',
+      color: isCenser ? '#34D399' : isCrozier ? '#FEF08A' : '#FDE047',
       secondaryColor: '#FFFFFF',
       size: 4,
       ringRadius: 3,
-      ringMaxRadius: isCrit ? 32 : 22,
-      ringLineWidth: 2,
+      ringMaxRadius: isCrozier ? (isCrit ? 36 : 28) : isCrit ? 32 : 22,
+      ringLineWidth: isCrozier ? 2.4 : 2,
       bornAt: now,
       maxAgeMs: 250,
       shape: 'ring',
@@ -3670,8 +4075,29 @@ export class ParticleManager {
       priority: 'high',
     });
 
+    if (isCrozier) {
+      // Secondary judgment brand ring
+      this.acquireParticle({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        color: '#F59E0B',
+        secondaryColor: '#FEF9C3',
+        size: 3,
+        ringRadius: 6,
+        ringMaxRadius: 18,
+        ringLineWidth: 1.4,
+        bornAt: now,
+        maxAgeMs: 280,
+        shape: 'ring',
+        glow: true,
+        priority: 'high',
+      });
+    }
+
     // 2. Radiant sunburst crosses & glints
-    const count = isCrit ? 10 : 6;
+    const count = isCrit ? 10 : 7;
     for (let i = 0; i < count; i++) {
       const a = (i * Math.PI * 2) / count + (Math.random() - 0.5) * 0.3;
       const sp = 70 + Math.random() * 70;
@@ -3680,7 +4106,17 @@ export class ParticleManager {
         y,
         vx: Math.cos(a) * sp,
         vy: Math.sin(a) * sp - 15,
-        color: i % 2 === 0 ? '#FACC15' : '#FEF08A',
+        color: isCenser
+          ? i % 2 === 0
+            ? '#34D399'
+            : '#FDE047'
+          : isCrozier
+            ? i % 2 === 0
+              ? '#FFFFFF'
+              : '#FACC15'
+            : i % 2 === 0
+              ? '#FACC15'
+              : '#FEF08A',
         secondaryColor: '#FFFFFF',
         size: 2.5 + Math.random() * 1.5,
         bornAt: now,
@@ -6991,8 +7427,11 @@ export function drawEnhancedProjectile(
   ctx.rotate(proj.angle);
 
   if (proj.style === 'slash') {
-    // Custom animated SlashFX sprite sheet extracted from user archive
     const isCrit = Boolean(proj.crit);
+    const wId = proj.weaponId;
+    const isHalberd = wId === 'vanguard_crimson_halberd';
+    const isFlail = wId === 'vanguard_stormbreaker_flail';
+
     const sheetFilename = isCrit
       ? 'slash_combo1.png'
       : (proj.id.charCodeAt(proj.id.length - 1) % 3 === 0)
@@ -7000,10 +7439,10 @@ export function drawEnhancedProjectile(
         : (proj.id.charCodeAt(proj.id.length - 1) % 3 === 1)
           ? 'slash_simple2.png'
           : 'slash_simple3.png';
-    
+
     const sheetImg = getSlashSheet(sheetFilename);
 
-    if (sheetImg) {
+    if (sheetImg && !isHalberd && !isFlail) {
       const totalFrames = Math.max(1, Math.floor(sheetImg.naturalWidth / 128));
       const lifeProgress = Math.max(0, Math.min(0.999, 1 - proj.ttlMs / 140));
       const frameIdx = Math.min(totalFrames - 1, Math.floor(lifeProgress * totalFrames));
@@ -7019,8 +7458,60 @@ export function drawEnhancedProjectile(
         drawSize,
         drawSize
       );
+    } else if (isHalberd) {
+      // Crimson War Halberd: Wide sweeping crimson crescent with razor tipper outer edge
+      const rOuter = Math.max(24, proj.radius * 0.85);
+      ctx.strokeStyle = 'rgba(220, 38, 38, 0.45)';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.arc(0, 0, rOuter, -1.05, 1.05);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#EF4444';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, rOuter + 1, -0.95, 0.95);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, rOuter + 3, -0.8, 0.8);
+      ctx.stroke();
+
+      // Crimson tipper edge flare ticks
+      ctx.fillStyle = '#FCA5A5';
+      ctx.fillRect(rOuter + 1, -7, 3, 2);
+      ctx.fillRect(rOuter + 2, -1, 3.5, 2);
+      ctx.fillRect(rOuter + 1, 5, 3, 2);
+    } else if (isFlail) {
+      // Stormbreaker Flail: Crackling azure-gold tempest arc with jagged lightning glints
+      const rArc = Math.max(21, proj.radius * 0.78);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.48)';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(0, 0, rArc, -1.0, 1.0);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#38BDF8';
+      ctx.lineWidth = 3.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, rArc, -0.9, 0.9);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#FDE047';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(rArc - 4, -10);
+      ctx.lineTo(rArc + 4, -3);
+      ctx.lineTo(rArc - 2, 2);
+      ctx.lineTo(rArc + 5, 9);
+      ctx.stroke();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(rArc + 2, -2, 3, 4);
     } else {
-      // Vector fallback arc while sprite sheet loads
+      // Sunforged Claymore vector fallback arc
       const pulse = Math.sin(now * 0.02) * 2;
       ctx.strokeStyle = 'rgba(253, 224, 71, 0.4)';
       ctx.lineWidth = 6;
@@ -7042,8 +7533,11 @@ export function drawEnhancedProjectile(
     }
 
     if (isCrit) {
-      // Subtle golden kinetic crescent aura behind critical slashes
-      ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+      ctx.strokeStyle = isHalberd
+        ? 'rgba(254, 202, 202, 0.75)'
+        : isFlail
+          ? 'rgba(224, 242, 254, 0.8)'
+          : 'rgba(251, 191, 36, 0.55)';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(0, 0, Math.max(22, proj.radius * 0.8), -0.85, 0.85);
@@ -7055,26 +7549,67 @@ export function drawEnhancedProjectile(
       // Ranger Frost Volley: Crystalline frosted arrow with icy aura
       ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
       ctx.fillRect(-13, -3.5, 29, 7);
-      // Crystalline shaft
       ctx.fillStyle = '#0284C7';
       ctx.fillRect(-10, -1.5, 18, 3);
-      // Frosted diamond broadhead tip
       ctx.fillStyle = '#38BDF8';
       ctx.fillRect(8, -4, 6, 8);
       ctx.fillStyle = '#E0F2FE';
       ctx.fillRect(10, -2.5, 4, 5);
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(14, -1, 3, 2);
-      // Icy cyan fletching
       ctx.fillStyle = '#BAE6FD';
       ctx.fillRect(-11, -3.5, 4, 2);
       ctx.fillRect(-11, 1.5, 4, 2);
-      // Frost wake streaks
       ctx.fillStyle = 'rgba(186, 230, 253, 0.65)';
       ctx.fillRect(-17, -0.5, 6, 1);
       ctx.fillRect(-21, -0.5, 3, 1);
+    } else if (proj.weaponId === 'ranger_galewind_twinbow') {
+      // Galewind Twinbow: Cyan wind-charged arrow with aqua slipstream cone
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.28)';
+      ctx.fillRect(-14, -3, 30, 6);
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.72)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(6, 0, 7, -0.85, 0.85);
+      ctx.stroke();
+      ctx.fillStyle = '#0E7490';
+      ctx.fillRect(-10, -1.5, 18, 3);
+      ctx.fillStyle = '#22D3EE';
+      ctx.fillRect(8, -3.5, 6, 7);
+      ctx.fillStyle = '#E0F2FE';
+      ctx.fillRect(11, -2, 4, 4);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(14, -0.5, 3, 1);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(-12, -3.5, 5, 2);
+      ctx.fillRect(-12, 1.5, 5, 2);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.75)';
+      ctx.fillRect(-20, -2.5, 7, 1);
+      ctx.fillRect(-20, 1.5, 7, 1);
+    } else if (proj.weaponId === 'ranger_eclipse_longbow') {
+      // Eclipse Siege Longbow: Heavy obsidian-violet armor-piercing bodkin with golden eclipse ring
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.34)';
+      ctx.fillRect(-15, -3.5, 34, 7);
+      ctx.strokeStyle = 'rgba(253, 224, 71, 0.78)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(5, 0, 5.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#4C1D95';
+      ctx.fillRect(-12, -1.5, 22, 3);
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillRect(10, -4, 7, 8);
+      ctx.fillStyle = '#FEF08A';
+      ctx.fillRect(13, -2, 5, 4);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(17, -1, 3, 2);
+      ctx.fillStyle = '#C084FC';
+      ctx.fillRect(-13, -4, 5, 2.2);
+      ctx.fillRect(-13, 1.8, 5, 2.2);
+      ctx.fillStyle = 'rgba(216, 180, 254, 0.78)';
+      ctx.fillRect(-22, -0.5, 8, 1);
     } else {
-      // Sharp ironwood arrow with steel broadhead and emerald fletching
+      // Ashwood Recurve: Sharp ironwood arrow with steel broadhead and emerald fletching
       ctx.fillStyle = '#92400E';
       ctx.fillRect(-10, -1.5, 18, 3);
       ctx.fillStyle = '#E2E8F0';
@@ -7094,65 +7629,178 @@ export function drawEnhancedProjectile(
     }
 
   } else if (proj.style === 'arcane') {
-    // Pulsating astral star with counter-rotating diamond rings
     const spin = now * 0.009;
-    // Outer cosmic violet aura
-    ctx.fillStyle = 'rgba(129, 140, 248, 0.24)';
-    ctx.beginPath();
-    ctx.arc(0, 0, 9, 0, Math.PI * 2);
-    ctx.fill();
+    if (proj.weaponId === 'arcanist_cinderflare_rod') {
+      // Cinderflare Catalyst: Blazing orange-amber pyromancy star-bolt with molten ring & flame wake
+      ctx.fillStyle = 'rgba(249, 115, 22, 0.36)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 10.5, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Counter-rotating outer astral diamond frame
-    ctx.save();
-    ctx.rotate(-spin * 0.7);
-    ctx.strokeStyle = 'rgba(192, 132, 252, 0.85)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(-5.5, -5.5, 11, 11);
-    ctx.restore();
+      ctx.save();
+      ctx.rotate(-spin * 0.9);
+      ctx.strokeStyle = 'rgba(251, 146, 60, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-5.5, -5.5, 11, 11);
+      ctx.restore();
 
-    // Rotating diamond energy core
-    ctx.save();
-    ctx.rotate(spin);
-    ctx.fillStyle = '#38BDF8';
-    ctx.fillRect(-4.5, -4.5, 9, 9);
-    ctx.fillStyle = '#818CF8';
-    ctx.fillRect(-6, -1, 12, 2);
-    ctx.fillRect(-1, -6, 2, 12);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(-2, -2, 4, 4);
-    ctx.restore();
+      ctx.save();
+      ctx.rotate(spin);
+      ctx.fillStyle = '#EA580C';
+      ctx.fillRect(-4.5, -4.5, 9, 9);
+      ctx.fillStyle = '#FDE047';
+      ctx.fillRect(-6, -1, 12, 2);
+      ctx.fillRect(-1, -6, 2, 12);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-2, -2, 4, 4);
+      ctx.restore();
 
-    // Comet tail sparks
-    ctx.fillStyle = '#38BDF8';
-    ctx.fillRect(-11, -1.5, 4, 3);
-    ctx.fillStyle = '#C084FC';
-    ctx.fillRect(-15, -1, 3, 2);
+      ctx.fillStyle = '#FDE047';
+      ctx.fillRect(-10, -2, 4, 4);
+      ctx.fillStyle = '#F97316';
+      ctx.fillRect(-14, -1.5, 5, 3);
+      ctx.fillStyle = '#EF4444';
+      ctx.fillRect(-18, -1, 4, 2);
+    } else if (proj.weaponId === 'arcanist_chronostar_scepter') {
+      // Chronostar Scepter: Seeking golden astrolabe star-orb with orbiting clockwork ticks
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.3)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.rotate(spin * 0.8);
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#FEF08A';
+      ctx.fillRect(6, -1, 2, 2);
+      ctx.fillRect(-8, -1, 2, 2);
+      ctx.restore();
+
+      ctx.save();
+      ctx.rotate(-spin);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(-4, -4, 8, 8);
+      ctx.fillStyle = '#FDE047';
+      ctx.fillRect(-6, -1, 12, 2);
+      ctx.fillRect(-1, -6, 2, 12);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-2, -2, 4, 4);
+      ctx.restore();
+
+      ctx.fillStyle = '#FDE047';
+      ctx.fillRect(-12, -1.5, 4, 3);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(-16, -1, 3, 2);
+    } else {
+      // Runebound Spire: Pulsating astral star with counter-rotating diamond rings
+      ctx.fillStyle = 'rgba(129, 140, 248, 0.24)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 9, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.rotate(-spin * 0.7);
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(-5.5, -5.5, 11, 11);
+      ctx.restore();
+
+      ctx.save();
+      ctx.rotate(spin);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(-4.5, -4.5, 9, 9);
+      ctx.fillStyle = '#818CF8';
+      ctx.fillRect(-6, -1, 12, 2);
+      ctx.fillRect(-1, -6, 2, 12);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-2, -2, 4, 4);
+      ctx.restore();
+
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(-11, -1.5, 4, 3);
+      ctx.fillStyle = '#C084FC';
+      ctx.fillRect(-15, -1, 3, 2);
+    }
 
   } else if (proj.style === 'radiant') {
-    // Solar sunburst cross projectile with rotating radiant glint rays
     const spin = now * 0.006;
-    ctx.fillStyle = 'rgba(250, 204, 21, 0.28)';
-    ctx.beginPath();
-    ctx.arc(0, 0, 10, 0, Math.PI * 2);
-    ctx.fill();
+    if (proj.weaponId === 'cleric_solaris_censer') {
+      // Solaris War-Censer: Emerald-jade & gold mending sunburst cross + orbiting emerald motes
+      ctx.fillStyle = 'rgba(52, 211, 153, 0.34)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 11, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Rotating outer diagonal solar rays
-    ctx.save();
-    ctx.rotate(spin);
-    ctx.fillStyle = '#F59E0B';
-    ctx.fillRect(-6, -1, 12, 2);
-    ctx.fillRect(-1, -6, 2, 12);
-    ctx.restore();
+      ctx.save();
+      ctx.rotate(spin);
+      ctx.fillStyle = '#34D399';
+      ctx.fillRect(-6.5, -1.2, 13, 2.4);
+      ctx.fillRect(-1.2, -6.5, 2.4, 13);
+      ctx.fillStyle = '#A7F3D0';
+      ctx.fillRect(6, -1, 2, 2);
+      ctx.fillRect(-8, -1, 2, 2);
+      ctx.restore();
 
-    // Cardinal radiant sun cross
-    ctx.fillStyle = '#FACC15';
-    ctx.fillRect(-7.5, -2, 15, 4);
-    ctx.fillRect(-2, -7.5, 4, 15);
-    // Pure white solar core
-    ctx.fillStyle = '#FEF9C3';
-    ctx.fillRect(-3, -3, 6, 6);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(-1.5, -1.5, 3, 3);
+      ctx.fillStyle = '#FACC15';
+      ctx.fillRect(-7.5, -2, 15, 4);
+      ctx.fillRect(-2, -7.5, 4, 15);
+      ctx.fillStyle = '#A7F3D0';
+      ctx.fillRect(-3, -3, 6, 6);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-1.5, -1.5, 3, 3);
+    } else if (proj.weaponId === 'cleric_seraphim_crozier') {
+      // Seraphim Judgment Crozier: Elongated sunlit lance-cross with radiant golden wings
+      ctx.fillStyle = 'rgba(254, 240, 138, 0.36)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 11.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.rotate(-spin);
+      ctx.strokeStyle = '#FDE047';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Winged golden silhouette
+      ctx.fillStyle = '#FDE047';
+      ctx.fillRect(-5, -10.5, 3, 3);
+      ctx.fillRect(-5, 7.5, 3, 3);
+      ctx.fillStyle = '#F59E0B';
+      ctx.fillRect(-9, -2.5, 19, 5);
+      ctx.fillRect(-2.5, -8.5, 5, 17);
+      ctx.fillStyle = '#FEF9C3';
+      ctx.fillRect(-7, -1.5, 16, 3);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-2, -2, 4, 4);
+    } else {
+      // Dawnstar Flanged Mace: Solar sunburst cross projectile
+      ctx.fillStyle = 'rgba(250, 204, 21, 0.28)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.save();
+      ctx.rotate(spin);
+      ctx.fillStyle = '#F59E0B';
+      ctx.fillRect(-6, -1, 12, 2);
+      ctx.fillRect(-1, -6, 2, 12);
+      ctx.restore();
+
+      ctx.fillStyle = '#FACC15';
+      ctx.fillRect(-7.5, -2, 15, 4);
+      ctx.fillRect(-2, -7.5, 4, 15);
+      ctx.fillStyle = '#FEF9C3';
+      ctx.fillRect(-3, -3, 6, 6);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(-1.5, -1.5, 3, 3);
+    }
 
   } else if (proj.style === 'bone') {
     // Jagged whirling bone projectile

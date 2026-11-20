@@ -4,6 +4,45 @@ import {
   resolveEnemyDirection8,
   type DirectionalPose,
 } from './directionalFacing.ts';
+import {
+  resolveFirstFiveBossKey,
+  drawFirstFiveBossByKey,
+  drawMalakorBoss,
+  drawVaelorBoss,
+  drawIgnisBoss,
+  drawMaliceBoss,
+  drawArchonBoss,
+  createBossAnimRuntime,
+  stepBossAnimRuntime,
+  triggerBossAbilityAnim,
+  triggerBossEventAnim,
+  deriveStatelessBossAnim,
+  type BossVisualAnimState,
+  type BossAnimRuntime,
+  type BossActionKind,
+  type FirstFiveBossKey,
+  type DyingBossEntry,
+} from './firstFiveBosses.ts';
+
+export {
+  resolveFirstFiveBossKey,
+  drawFirstFiveBossByKey,
+  drawMalakorBoss,
+  drawVaelorBoss,
+  drawIgnisBoss,
+  drawMaliceBoss,
+  drawArchonBoss,
+  createBossAnimRuntime,
+  stepBossAnimRuntime,
+  triggerBossAbilityAnim,
+  triggerBossEventAnim,
+  deriveStatelessBossAnim,
+  type BossVisualAnimState,
+  type BossAnimRuntime,
+  type BossActionKind,
+  type FirstFiveBossKey,
+  type DyingBossEntry,
+};
 
 function getNpcGazeShift(facing?: DirectionalPose): {
   pose: DirectionalPose;
@@ -2731,7 +2770,8 @@ function drawHumanoidBossBackOverlay(
 }
 
 /**
- * Humanoid boss sprite dispatcher for Floors 6-10
+ * Unified boss sprite dispatcher for Floors 1-5 (overhauled 8-way + ability animations)
+ * and Floors 6-10 humanoid sanctuary bosses.
  */
 export function drawHumanoidBoss(
   ctx: CanvasRenderingContext2D,
@@ -2740,9 +2780,18 @@ export function drawHumanoidBoss(
   bossName: string,
   now: number,
   en?: EnemyState,
-  facing?: DirectionalPose
+  facing?: DirectionalPose,
+  animState?: BossVisualAnimState,
+  floor?: number,
+  biome?: string
 ): void {
   const pose = facing ?? (en ? resolveEnemyDirection8(en) : direction8ToPose('S', false));
+  const firstFiveKey = resolveFirstFiveBossKey(bossName, floor, biome);
+  if (firstFiveKey) {
+    drawFirstFiveBossByKey(ctx, x, y, firstFiveKey, now, en, pose, animState);
+    return;
+  }
+
   const mirrorX = !pose.isPureVertical && pose.facingLeft;
   const isBack = pose.verticalPlane === 'back';
 

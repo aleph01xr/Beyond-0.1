@@ -322,7 +322,12 @@ export const PartyLobbyView: React.FC<PartyLobbyViewProps> = ({
                       }`}
                     >
                       <div className="p-1.5 bg-[#14131D] border border-[#343246] shrink-0">
-                        <PixelHeroPreview heroClass={member.heroClass} size={48} />
+                        <PixelHeroPreview
+                          heroClass={member.heroClass}
+                          equippedWeapon={member.equippedWeapon}
+                          equippedVestment={member.equippedVestment}
+                          size={48}
+                        />
                       </div>
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex items-center gap-1.5 flex-wrap">

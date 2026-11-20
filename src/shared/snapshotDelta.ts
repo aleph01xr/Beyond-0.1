@@ -260,6 +260,8 @@ export function cloneSnapshotBaseline(snap: GameSnapshot): GameSnapshot {
         copy.disintegrationState = p.disintegrationState ? { ...p.disintegrationState } : null;
       }
       if (p.pendingScrollChoices) copy.pendingScrollChoices = [...p.pendingScrollChoices];
+      if (p.ownedWeapons) copy.ownedWeapons = [...p.ownedWeapons];
+      if (p.ownedVestments) copy.ownedVestments = [...p.ownedVestments];
       return copy;
     }),
     enemies: snap.enemies.map((e) => {

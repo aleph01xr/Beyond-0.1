@@ -76,6 +76,24 @@ import {
   verifyPassword,
   verifySharedIdentityRequestSecret,
 } from './src/server/sharedIdentity.ts';
+import {
+  DEFAULT_VESTMENT_BY_CLASS,
+  DEFAULT_WEAPON_BY_CLASS,
+  VESTMENT_CATALOG,
+  WEAPON_CATALOG,
+  applyAccountArmamentMigration,
+  getClassVestments,
+  getClassWeapons,
+  normalizeArmamentLoadout,
+  resolveEquippedVestmentForClass,
+  resolveEquippedWeaponForClass,
+} from './src/shared/armaments.ts';
+import { calculatePlayerStatProjections } from './src/shared/statUtils.ts';
+import {
+  applySnapshotDelta,
+  cloneSnapshotBaseline,
+  computeSnapshotDelta,
+} from './src/shared/snapshotDelta.ts';
 
 async function runRegressionTests() {
   console.log('--- STARTING BEYOND REGRESSION TESTS ---');
@@ -8111,6 +8129,1252 @@ async function runRegressionTests() {
       misbuiltRanger.overallRank.score < lv50Ranger.overallRank.score - 20,
       `Off-stat Lv50 Ranger (${misbuiltRanger.overallRank.score}) must rank noticeably below synergistic Ranger (${lv50Ranger.overallRank.score})`
     );
+  });
+
+  // --- Test 109: First Five Bosses Visual Overhaul (8-way directions, abilities, transitions, hit/death) ---
+  await test('109. First five bosses render 8 directions without crude mirroring and animate all abilities, hits, and deaths', async () => {
+    const {
+      DIRECTION8_LIST,
+      direction8ToPose,
+      resolveEnemyDirection8,
+    } = await import('./src/client/directionalFacing.ts');
+    const {
+      drawHumanoidBoss,
+      resolveFirstFiveBossKey,
+      createBossAnimRuntime,
+      stepBossAnimRuntime,
+      triggerBossAbilityAnim,
+      triggerBossEventAnim,
+    } = await import('./src/client/npcSprites.ts');
+
+    const createBossMockCtx = () => {
+      const scales: Array<[number, number]> = [];
+      const rotates: number[] = [];
+      let drawOps = 0;
+      const ctx = {
+        fillStyle: '#000',
+        strokeStyle: '#000',
+        lineWidth: 1,
+        font: '',
+        textAlign: 'center',
+        textBaseline: 'middle',
+        globalAlpha: 1,
+        save: () => {},
+        restore: () => {},
+        translate: () => {},
+        rotate: (a: number) => { rotates.push(a); },
+        scale: (sx: number, sy: number) => { scales.push([sx, sy]); },
+        beginPath: () => {},
+        closePath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        quadraticCurveTo: () => {},
+        bezierCurveTo: () => {},
+        arc: () => {},
+        ellipse: () => {},
+        fillRect: () => { drawOps++; },
+        strokeRect: () => { drawOps++; },
+        fill: () => { drawOps++; },
+        stroke: () => { drawOps++; },
+        fillText: () => { drawOps++; },
+        createRadialGradient: () => ({ addColorStop: () => {} }),
+      } as unknown as CanvasRenderingContext2D;
+      return {
+        ctx,
+        getStats: () => ({ drawOps, scales: [...scales], rotates: [...rotates] }),
+      };
+    };
+
+    const firstFive: Array<{
+      name: string;
+      key: string;
+      events: Array<[string, string, string]>;
+    }> = [
+      {
+        name: 'Warden Malakor',
+        key: 'malakor',
+        events: [
+          ['status', ' SHIELD WALL!', 'shield'],
+          ['status', ' CLEAVE!', 'attack'],
+          ['status', ' GROUND SLAM!', 'heavy_slam'],
+          ['status', 'WAR CHARGE!', 'windup'],
+        ],
+      },
+      {
+        name: 'Archlich Vaelor',
+        key: 'vaelor',
+        events: [
+          ['status', ' FROST NOVA!', 'aoe'],
+          ['damage', 'SOUL SIPHONED!', 'cast'],
+          ['status', ' SIPHON VOLLEY!', 'cast'],
+          ['status', ' SOUL HAIL!', 'attack'],
+          ['status', ' DEATH RING!', 'spin'],
+          ['status', ' REINFORCEMENTS!', 'summon'],
+        ],
+      },
+      {
+        name: 'Ignis, Cinder Sovereign',
+        key: 'ignis',
+        events: [
+          ['status', ' MAGMA ERUPTION!', 'heavy_slam'],
+          ['status', ' FISSURE WAVE!', 'attack'],
+          ['status', ' CINDER SPIRAL!', 'spin'],
+          ['status', ' CORE DETONATION!', 'aoe'],
+          ['status', ' REINFORCEMENTS!', 'summon'],
+        ],
+      },
+      {
+        name: 'Void-Eater Malice',
+        key: 'malice',
+        events: [
+          ['status', ' SINGULARITY!', 'aoe'],
+          ['status', ' TENDRIL FLURRY!', 'attack'],
+          ['status', ' VOID STEP!', 'teleport'],
+          ['status', ' VOID SCYTHE!', 'teleport'],
+          ['status', ' ABYSSAL NOVA!', 'spin'],
+        ],
+      },
+      {
+        name: 'Archon of Nothingness',
+        key: 'archon',
+        events: [
+          ['status', ' SUPERNOVA!', 'aoe'],
+          ['status', ' STARBEAM CASCADE!', 'cast'],
+          ['status', ' COSMIC VOLLEY!', 'attack'],
+          ['status', ' REINFORCEMENTS!', 'summon'],
+        ],
+      },
+    ];
+
+    // Confirm F6-F10 bosses are NOT altered or intercepted by F1-F5 key resolution
+    for (const f6Name of [
+      'Elyndor, Keeper of the Last Hymn',
+      'Zadkiel, Keeper of the Ashen Reliquary',
+      'Sariel, Warden of the Veiled Scripture',
+      'Seraphel, Sentinel of the Final Seal',
+      'Oriphiel, The Last Warden',
+    ]) {
+      assert.strictEqual(resolveFirstFiveBossKey(f6Name, 1, 'highkeep'), null);
+    }
+
+    const baseBoss: EnemyState = {
+      id: 'b_test',
+      kind: 'boss',
+      name: 'Warden Malakor',
+      roomId: 1,
+      x: 300,
+      y: 300,
+      vx: 0,
+      vy: 0,
+      hp: 2000,
+      maxHp: 2000,
+      radius: 28,
+      state: 'idle',
+      windupMs: 0,
+      targetX: 300,
+      targetY: 360,
+      markedMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
+      elite: true,
+    };
+
+    for (const bossDef of firstFive) {
+      assert.strictEqual(resolveFirstFiveBossKey(bossDef.name, 9, 'nave'), bossDef.key);
+      const bossEn: EnemyState = { ...baseBoss, id: `boss_${bossDef.key}`, name: bossDef.name };
+
+      // 1. All 8 directions (idle & moving), verifying non-mirrored intentional anatomy
+      for (const dir of DIRECTION8_LIST) {
+        const pose = direction8ToPose(dir, false);
+        for (const moving of [false, true]) {
+          const st: EnemyState = {
+            ...bossEn,
+            state: moving ? 'chase' : 'idle',
+            vx: moving ? pose.dirX * 120 : 0,
+            vy: moving ? pose.dirY * 120 : 0,
+            targetX: bossEn.x + pose.dirX * 80,
+            targetY: bossEn.y + pose.dirY * 80,
+          };
+          const resolved = resolveEnemyDirection8(st, dir, pose.facingLeft);
+          assert.strictEqual(resolved.dir, dir);
+          const rt = createBossAnimRuntime(bossDef.key as any, st, 10000);
+          const anim = stepBossAnimRuntime(rt, st, resolved, 10050);
+          assert.strictEqual(anim.action, moving ? 'move' : 'idle');
+
+          const tracker = createBossMockCtx();
+          assert.doesNotThrow(() =>
+            drawHumanoidBoss(tracker.ctx, 200, 200, bossDef.name, 10050, st, resolved, anim)
+          );
+          const stats = tracker.getStats();
+          assert.ok(stats.drawOps > 18, `${bossDef.name} ${dir} moving=${moving} should emit rich geometry`);
+          const usedCrudeMirror = stats.scales.some(([sx]) => sx === -1);
+          assert.strictEqual(usedCrudeMirror, false, `${bossDef.name} ${dir} must not use crude ctx.scale(-1, 1)`);
+        }
+      }
+
+      // 2. Every server ability event + mid-action rendering + return to idle
+      const rt = createBossAnimRuntime(bossDef.key as any, bossEn, 20000);
+      for (let idx = 0; idx < bossDef.events.length; idx++) {
+        const [evKind, evText, expectedAction] = bossDef.events[idx];
+        const t0 = 20000 + idx * 3000;
+        const matched = triggerBossEventAnim(rt, evKind, evText, Math.PI / 4, t0);
+        assert.strictEqual(matched, true, `${bossDef.name} should match event ${evText}`);
+        const pose = direction8ToPose('SE', false);
+        const mid = stepBossAnimRuntime(rt, bossEn, pose, t0 + 350);
+        assert.strictEqual(mid.action, expectedAction, `${bossDef.name} ${evText} -> ${expectedAction}`);
+        assert.ok(mid.progress > 0 && mid.progress < 1);
+        const tracker = createBossMockCtx();
+        assert.doesNotThrow(() =>
+          drawHumanoidBoss(tracker.ctx, 200, 200, bossDef.name, t0 + 350, bossEn, pose, mid)
+        );
+        if (bossDef.key === 'ignis' && evText.includes('CINDER SPIRAL')) {
+          assert.ok(
+            tracker.getStats().rotates.some((r) => Math.abs(r) > 0.5),
+            'Ignis Cinder Spiral must visibly rotate body silhouette'
+          );
+        }
+        // After duration expires -> transitions cleanly back to idle
+        const settled = stepBossAnimRuntime(rt, bossEn, pose, t0 + 1800);
+        assert.strictEqual(settled.action, 'idle');
+      }
+
+      // 3. Server-driven Charge Windup -> Charge -> Recover (Malakor), Radial Burst (Archon), & Silent Void Step (Malice)
+      if (bossDef.key === 'malakor') {
+        const poseE = direction8ToPose('E', false);
+        const windupSt: EnemyState = { ...bossEn, charging: true, chargeWindupMs: 280, chargeAngle: 0, state: 'windup' };
+        assert.strictEqual(stepBossAnimRuntime(rt, windupSt, poseE, 40000).action, 'windup');
+        const chargeSt: EnemyState = { ...bossEn, charging: true, chargeWindupMs: 0, chargeTimerMs: 300, chargeAngle: 0, state: 'charge' };
+        assert.strictEqual(stepBossAnimRuntime(rt, chargeSt, poseE, 40200).action, 'charge');
+        const recSt: EnemyState = { ...bossEn, charging: false, state: 'recover', windupMs: 500 };
+        assert.strictEqual(stepBossAnimRuntime(rt, recSt, poseE, 40500).action, 'recover');
+      } else if (bossDef.key === 'archon') {
+        triggerBossAbilityAnim(rt, 'spin', 'radial_burst', 950, 0, 40000);
+        const mid = stepBossAnimRuntime(rt, bossEn, direction8ToPose('S', false), 40400);
+        assert.strictEqual(mid.action, 'spin');
+        assert.strictEqual(mid.abilityKey, 'radial_burst');
+      } else if (bossDef.key === 'malice') {
+        const teleported: EnemyState = { ...bossEn, x: bossEn.x + 120, y: bossEn.y + 40 };
+        const tpAnim = stepBossAnimRuntime(rt, teleported, direction8ToPose('E', false), 41000);
+        assert.strictEqual(tpAnim.action, 'teleport');
+      }
+
+      // 4. Hit reaction on HP drop & Death animation rendering
+      const hitEn: EnemyState = { ...bossEn, hp: bossEn.hp - 120 };
+      const hitAnim = stepBossAnimRuntime(rt, hitEn, direction8ToPose('S', false), 45000);
+      assert.ok(hitAnim.hitFlash > 0.5, `${bossDef.name} should trigger hitFlash on HP drop`);
+      const deathTracker = createBossMockCtx();
+      for (const dp of [0.1, 0.5, 0.9]) {
+        assert.doesNotThrow(() =>
+          drawHumanoidBoss(deathTracker.ctx, 200, 200, bossDef.name, 46000, hitEn, direction8ToPose('S', false), {
+            ...hitAnim,
+            action: 'death',
+            progress: dp,
+            deathProgress: dp,
+          })
+        );
+      }
+      assert.ok(deathTracker.getStats().drawOps > 20);
+    }
+  });
+
+  // --- Test 110: Permanent Armament Defaults, Class Compatibility & Ownership Enforcement ---
+  await test('110. Permanent Class Armaments initialize defaults and enforce class & ownership rules', () => {
+    const classes: HeroClassId[] = ['vanguard', 'ranger', 'arcanist', 'cleric'];
+    assert.strictEqual(WEAPON_CATALOG.length, 12);
+    assert.strictEqual(VESTMENT_CATALOG.length, 12);
+
+    const room = new GameRoom({
+      roomId: 'ARM_T110',
+      name: 'Armory Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 101,
+    });
+    for (const cls of classes) {
+      assert.strictEqual(getClassWeapons(cls).length, 3);
+      assert.strictEqual(getClassVestments(cls).length, 3);
+      const defWpn = resolveEquippedWeaponForClass(cls, DEFAULT_WEAPON_BY_CLASS[cls]);
+      const defVest = resolveEquippedVestmentForClass(cls, DEFAULT_VESTMENT_BY_CLASS[cls]);
+      assert.ok(defWpn, `${cls} should have a valid default weapon`);
+      assert.ok(defVest, `${cls} should have a valid default vestment`);
+      assert.strictEqual(defWpn!.name, HERO_CLASSES[cls].weapon, `${cls} default weapon must match HERO_CLASSES weapon`);
+
+      const p = room.addOrReconnectPlayer(`p_${cls}`, `hero_${cls}`, cls);
+      assert.strictEqual(p.heroClass, cls);
+      assert.strictEqual(p.equippedWeapon, DEFAULT_WEAPON_BY_CLASS[cls]);
+      assert.strictEqual(p.equippedVestment, DEFAULT_VESTMENT_BY_CLASS[cls]);
+      assert.ok(p.ownedWeapons?.includes(DEFAULT_WEAPON_BY_CLASS[cls]));
+      assert.ok(p.ownedVestments?.includes(DEFAULT_VESTMENT_BY_CLASS[cls]));
+    }
+
+    // Reject unowned weapon/vestment even of same class
+    const unownedRes = room.equipArmament('p_vanguard', 'weapon', 'vanguard_crimson_halberd');
+    assert.strictEqual(unownedRes.ok, false);
+
+    // Reject cross-class equipment even if granted/owned
+    room.grantArmament('p_vanguard', 'weapon', 'arcanist_cinderflare_rod');
+    const crossClassWpn = room.equipArmament('p_vanguard', 'weapon', 'arcanist_cinderflare_rod');
+    assert.strictEqual(crossClassWpn.ok, false);
+
+    room.grantArmament('p_ranger', 'vestment', 'cleric_templar_cassock');
+    const crossClassVest = room.equipArmament('p_ranger', 'vestment', 'cleric_templar_cassock');
+    assert.strictEqual(crossClassVest.ok, false);
+
+    // Grant & equip valid class armaments, then unequip cleanly
+    const grantWpn = room.grantArmament('p_vanguard', 'weapon', 'vanguard_crimson_halberd');
+    assert.strictEqual(grantWpn.ok, true);
+    assert.strictEqual(grantWpn.added, true);
+    const eqWpn = room.equipArmament('p_vanguard', 'weapon', 'vanguard_crimson_halberd');
+    assert.strictEqual(eqWpn.ok, true);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedWeapon, 'vanguard_crimson_halberd');
+
+    const baseHp = room.getPlayerState('p_vanguard')!.maxHp;
+    room.grantArmament('p_vanguard', 'vestment', 'vanguard_obsidian_juggernaut');
+    const eqVest = room.equipArmament('p_vanguard', 'vestment', 'vanguard_obsidian_juggernaut');
+    assert.strictEqual(eqVest.ok, true);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.maxHp, baseHp + 28);
+
+    const uneqWpn = room.unequipArmament('p_vanguard', 'weapon');
+    assert.strictEqual(uneqWpn.ok, true);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedWeapon, null);
+
+    const uneqVest = room.unequipArmament('p_vanguard', 'vestment');
+    assert.strictEqual(uneqVest.ok, true);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedVestment, null);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.maxHp, baseHp);
+  });
+
+  // --- Test 111: Legacy Account Migration & Tamper Normalization ---
+  await test('111. Account armament migration preserves existing progression, vault relics, and intentional null unequip', () => {
+    const legacyAcc: AccountRecord = {
+      id: 'acc_legacy_ranger',
+      username: 'LegacyRanger',
+      usernameLower: 'legacyranger',
+      passwordHash: 'hash',
+      preferredClass: 'ranger',
+      lockedClass: 'ranger',
+      level: 14,
+      xp: 320,
+      gold: 875,
+      attributePoints: 11,
+      strength: 4,
+      vitality: 6,
+      dexterity: 18,
+      intelligence: 2,
+      faith: 1,
+      storedRelics: ['keen_arrowhead', 'sunfire_signet'],
+      runsCompleted: 5,
+      highestFloor: 4,
+      totalKills: 240,
+      totalRevives: 3,
+    };
+
+    const changed = applyAccountArmamentMigration(legacyAcc, true);
+    assert.strictEqual(changed, true);
+    assert.strictEqual(legacyAcc.equippedWeapon, DEFAULT_WEAPON_BY_CLASS.ranger);
+    assert.strictEqual(legacyAcc.equippedVestment, DEFAULT_VESTMENT_BY_CLASS.ranger);
+    assert.deepStrictEqual(legacyAcc.ownedWeapons, [DEFAULT_WEAPON_BY_CLASS.ranger]);
+    assert.deepStrictEqual(legacyAcc.ownedVestments, [DEFAULT_VESTMENT_BY_CLASS.ranger]);
+    // Existing progression & stash preserved untouched
+    assert.strictEqual(legacyAcc.level, 14);
+    assert.strictEqual(legacyAcc.xp, 320);
+    assert.strictEqual(legacyAcc.gold, 875);
+    assert.strictEqual(legacyAcc.attributePoints, 11);
+    assert.strictEqual(legacyAcc.dexterity, 18);
+    assert.deepStrictEqual(legacyAcc.storedRelics, ['keen_arrowhead', 'sunfire_signet']);
+    assert.strictEqual(legacyAcc.runsCompleted, 5);
+
+    // Post-migration intentional unequip (`null`) must be preserved on subsequent logins/restarts
+    legacyAcc.equippedWeapon = null;
+    legacyAcc.equippedVestment = null;
+    const secondRun = applyAccountArmamentMigration(legacyAcc, false);
+    assert.strictEqual(secondRun, false);
+    assert.strictEqual(legacyAcc.equippedWeapon, null);
+    assert.strictEqual(legacyAcc.equippedVestment, null);
+
+    // Tampered / spoofed / cross-class entries are stripped server-side
+    const sanitized = normalizeArmamentLoadout('cleric', {
+      ownedWeapons: ['fake_god_sword', 'cleric_solaris_censer'],
+      ownedVestments: ['invalid_robe'],
+      equippedWeapon: 'vanguard_stormbreaker_flail',
+      equippedVestment: 'cleric_templar_cassock', // not owned
+    });
+    assert.ok(sanitized.ownedWeapons.includes(DEFAULT_WEAPON_BY_CLASS.cleric));
+    assert.ok(sanitized.ownedWeapons.includes('cleric_solaris_censer'));
+    assert.strictEqual(sanitized.ownedWeapons.includes('fake_god_sword'), false);
+    assert.strictEqual(sanitized.equippedWeapon, DEFAULT_WEAPON_BY_CLASS.cleric);
+    assert.strictEqual(sanitized.equippedVestment, DEFAULT_VESTMENT_BY_CLASS.cleric);
+  });
+
+  // --- Test 112: Server-Authoritative Unique Weapon Gameplay Effects Across All 12 Weapons ---
+  await test('112. All 12 permanent weapons deliver unique server-authoritative gameplay mechanics without Twinstring reuse', () => {
+    const origRandom = Math.random;
+    try {
+      Math.random = () => 0.99;
+
+      const makeEnemy = (id: string, kind: EnemyState['kind'], x: number, y: number): EnemyState => ({
+        id,
+        kind,
+        name: kind,
+        roomId: 0,
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        hp: 1000,
+        maxHp: 1000,
+        radius: 14,
+        state: 'idle',
+        windupMs: 5000,
+        targetX: x,
+        targetY: y,
+        markedMs: 0,
+        slowedMs: 0,
+        stunnedMs: 0,
+        burnedMs: 0,
+        frozenMs: 0,
+        shockedMs: 0,
+        poisonedMs: 0,
+        bleedingMs: 0,
+        silencedMs: 0,
+        elite: false,
+      });
+
+      // 1. VANGUARD: Sunforged Claymore (Guard-Edge when shielded), Crimson Halberd (Tipper >= 28px + Bleed), Stormbreaker Flail (Chain Lightning Arc + Shield + Shock)
+      const vRoom = new GameRoom({
+        roomId: 'WPN_V',
+        name: 'Vanguard Armory Combat',
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 202,
+      });
+      vRoom.addOrReconnectPlayer('v1', 'Knight', 'vanguard');
+      vRoom.startExpedition();
+      const vpLive = vRoom.getPlayerState('v1')!;
+      vpLive.aimAngle = 0;
+
+      // Claymore Guard-Edge (+12% while holding Shield)
+      const clayTarget = makeEnemy('v_clay', 'goblin', vpLive.x + 28, vpLive.y);
+      vRoom.enemies = [clayTarget];
+      vpLive.shield = 0;
+      vRoom.projectiles = [];
+      vRoom.firePrimaryAttack(vpLive);
+      const clayHp0 = clayTarget.hp;
+      vRoom.tick(30);
+      const claymoreUnshieldedDmg = clayHp0 - clayTarget.hp;
+
+      vpLive.shield = 20;
+      vRoom.projectiles = [];
+      vRoom.firePrimaryAttack(vpLive);
+      const clayHp1 = clayTarget.hp;
+      vRoom.tick(30);
+      const claymoreShieldedDmg = clayHp1 - clayTarget.hp;
+      assert.ok(claymoreShieldedDmg > claymoreUnshieldedDmg, `Claymore Guard-Edge must boost hit damage when shielded (${claymoreShieldedDmg} vs ${claymoreUnshieldedDmg})`);
+
+      const stepRoom = (rm: GameRoom, totalMs: number) => {
+        let rem = totalMs;
+        while (rem > 0) {
+          const dt = Math.min(25, rem);
+          rm.tick(dt);
+          rem -= dt;
+        }
+      };
+
+      // Halberd Tipper (+20% at >= 28px reach) & Bleed
+      vRoom.grantArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+      vRoom.equipArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+      const closeSkeleton = makeEnemy('v_close', 'skeleton', vpLive.x + 14, vpLive.y);
+      const tipperSkeleton = makeEnemy('v_tip', 'skeleton', vpLive.x + 42, vpLive.y);
+      vRoom.enemies = [closeSkeleton];
+      vRoom.projectiles = [];
+      vRoom.firePrimaryAttack(vpLive);
+      assert.strictEqual(vRoom.projectiles[0].weaponId, 'vanguard_crimson_halberd');
+      const closeHp0 = closeSkeleton.hp;
+      stepRoom(vRoom, 30);
+      const closeDealt = closeHp0 - closeSkeleton.hp;
+
+      vRoom.enemies = [tipperSkeleton];
+      Math.random = () => 0.2; // triggers 45% bleedChance
+      vRoom.projectiles = [];
+      vRoom.firePrimaryAttack(vpLive);
+      const tipHp0 = tipperSkeleton.hp;
+      stepRoom(vRoom, 30);
+      const tipDealt = tipHp0 - tipperSkeleton.hp;
+      assert.ok(tipDealt > closeDealt, `Halberd Tipper (${tipDealt}) must exceed close hit (${closeDealt})`);
+      assert.ok(tipperSkeleton.bleedingMs > 0, 'Crimson Halberd primary hit should inflict Bleed');
+
+      // Stormbreaker Flail (Instant Chain Lightning arc to 2 nearby enemies within 105px + zone + Shock + +4 Shield)
+      Math.random = () => 0.2; // triggers 25% shockChance cleanly
+      vRoom.grantArmament('v1', 'weapon', 'vanguard_stormbreaker_flail');
+      vRoom.equipArmament('v1', 'weapon', 'vanguard_stormbreaker_flail');
+      const flailMain = makeEnemy('v_flail_0', 'goblin', vpLive.x + 28, vpLive.y);
+      const flailChain1 = makeEnemy('v_flail_1', 'goblin', vpLive.x + 78, vpLive.y + 15);
+      const flailChain2 = makeEnemy('v_flail_2', 'goblin', vpLive.x + 95, vpLive.y - 20);
+      vRoom.enemies = [flailMain, flailChain1, flailChain2];
+      vpLive.shield = 10;
+      vRoom.projectiles = [];
+      vRoom.zones = [];
+      vRoom.firePrimaryAttack(vpLive);
+      stepRoom(vRoom, 30);
+      assert.ok(vpLive.shield >= 14, `Expected +4 shield on Stormbreaker hit, got ${vpLive.shield}`);
+      assert.ok(flailMain.shockedMs > 0, 'Stormbreaker Flail primary hit should Shock enemy');
+      assert.ok(flailChain1.hp < 1000 && flailChain2.hp < 1000, 'Stormbreaker Tempest Arc must chain lightning to 2 nearby enemies');
+      assert.ok(vRoom.zones.some((z) => z.kind === 'chain_lightning_arc'), 'Stormbreaker Tempest Arc must spawn visual chain_lightning_arc zone');
+
+      // 2. RANGER: Ashwood Recurve (Barbed Broadheads +15% vs Slowed), Galewind Twinbow (sequential straight double-tap + knockback + crit haste, NOT angled twinstring), Eclipse Longbow (Overpenetration escalating pierce dmg)
+      Math.random = () => 0.99;
+      const rRoom = new GameRoom({
+        roomId: 'WPN_R',
+        name: 'Ranger Armory Combat',
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 303,
+      });
+      rRoom.addOrReconnectPlayer('r1', 'Scout', 'ranger');
+      rRoom.startExpedition();
+      const rp = rRoom.getPlayerState('r1')!;
+      rp.aimAngle = 0;
+
+      // Ashwood vs clean vs slowed
+      const cleanGoblin = makeEnemy('r_clean', 'goblin', rp.x + 48, rp.y);
+      const slowedGoblin = makeEnemy('r_slow', 'goblin', rp.x + 48, rp.y);
+      slowedGoblin.slowedMs = 3000;
+      rRoom.enemies = [cleanGoblin];
+      rRoom.projectiles = [];
+      rRoom.firePrimaryAttack(rp);
+      const cleanBefore = cleanGoblin.hp;
+      stepRoom(rRoom, 100);
+      const cleanDealt = cleanBefore - cleanGoblin.hp;
+
+      rRoom.enemies = [slowedGoblin];
+      rRoom.projectiles = [];
+      rRoom.firePrimaryAttack(rp);
+      const slowBefore = slowedGoblin.hp;
+      stepRoom(rRoom, 100);
+      const slowDealt = slowBefore - slowedGoblin.hp;
+      assert.ok(slowDealt > cleanDealt, `Ashwood Barbed Broadheads vs slowed (${slowDealt}) must exceed clean (${cleanDealt})`);
+
+      // Galewind Twinbow sequential follow-up burst (NOT angled Twinstring clone)
+      rRoom.enemies = [];
+      rRoom.grantArmament('r1', 'weapon', 'ranger_galewind_twinbow');
+      rRoom.equipArmament('r1', 'weapon', 'ranger_galewind_twinbow');
+      rRoom.projectiles = [];
+      rRoom.firePrimaryAttack(rp);
+      assert.strictEqual(rRoom.projectiles.length, 1, 'Galewind Twinbow must launch 1 initial straight arrow (no Twinstring spread clone)');
+      assert.strictEqual(Math.abs(rRoom.projectiles[0].angle), 0, 'Initial Galewind shaft must travel straight along aimAngle');
+      stepRoom(rRoom, 80);
+      assert.strictEqual(rRoom.projectiles.length, 2, 'Galewind Twinbow must fire its 2nd sequential straight tailwind arrow after 75ms');
+      assert.strictEqual(Math.abs(rRoom.projectiles[1].angle), 0, '2nd Galewind shaft must travel straight along aimAngle');
+
+      // 2nd Galewind shaft knocks non-boss back 12px & crits grant Galewind Haste
+      const kbGoblin = makeEnemy('r_kb', 'goblin', rp.x + 65, rp.y);
+      kbGoblin.stunnedMs = 1000;
+      const kbStartX = kbGoblin.x;
+      rRoom.enemies = [kbGoblin];
+      rRoom.projectiles = [];
+      Math.random = () => 0.01; // force crit
+      rp.hasteMs = 0;
+      rRoom.firePrimaryAttack(rp);
+      stepRoom(rRoom, 100); // 1st arrow hits + triggers haste, 2nd follow-up spawns
+      assert.ok(rp.hasteMs >= 600, 'Galewind Twinbow crit must grant Galewind Haste');
+      stepRoom(rRoom, 125); // 2nd follow-up shaft hits -> knockback
+      assert.ok(kbGoblin.x >= kbStartX + 10, `Galewind 2nd shaft must knock enemy back (before=${kbStartX}, after=${kbGoblin.x})`);
+
+      // Verify Twinstring Charm relic STILL stacks cleanly as its own separate angled system
+      Math.random = () => 0.99;
+      rRoom.addPlayerRelic('r1', 'twinstring_charm');
+      rRoom.enemies = [];
+      rRoom.projectiles = [];
+      rRoom.firePrimaryAttack(rp);
+      assert.strictEqual(rRoom.projectiles.length, 2, 'Twinstring Charm still adds 1 angled spread arrow independently');
+      stepRoom(rRoom, 80);
+      assert.strictEqual(rRoom.projectiles.length, 3, 'Twinbow follow-up shaft adds on top of independent Twinstring Charm shots');
+
+      // Eclipse Longbow: +2 pierce + Overpenetration escalating damage per pierced target
+      rRoom.enemies = [];
+      rp.relics = [];
+      rRoom.grantArmament('r1', 'weapon', 'ranger_eclipse_longbow');
+      rRoom.equipArmament('r1', 'weapon', 'ranger_eclipse_longbow');
+      const eFirst = makeEnemy('r_ec_1', 'goblin', rp.x + 42, rp.y);
+      const eSecond = makeEnemy('r_ec_2', 'goblin', rp.x + 76, rp.y);
+      eFirst.stunnedMs = 1000;
+      eSecond.stunnedMs = 1000;
+      rRoom.enemies = [eFirst, eSecond];
+      rRoom.projectiles = [];
+      rRoom.firePrimaryAttack(rp);
+      assert.ok(rRoom.projectiles[0].pierce >= 3, 'Eclipse Longbow grants +2 bonus pierce (3+ total)');
+      stepRoom(rRoom, 160);
+      const e1Dmg = 1000 - eFirst.hp;
+      const e2Dmg = 1000 - eSecond.hp;
+      assert.ok(e2Dmg > e1Dmg, `Eclipse Overpenetration 2nd hit (${e2Dmg}) must escalate above 1st hit (${e1Dmg})`);
+
+      // 3. ARCANIST: Runebound Spire (Active Star Rift Resonance), Cinderflare Rod (Ember Detonation 54px AoE), Chronostar Scepter (Seeking Star-Orb + Cooldown Siphon + Chill)
+      Math.random = () => 0.99;
+      const aRoom = new GameRoom({
+        roomId: 'WPN_A',
+        name: 'Arcanist Armory Combat',
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 404,
+      });
+      aRoom.addOrReconnectPlayer('a1', 'Mage', 'arcanist');
+      aRoom.startExpedition();
+      const ap = aRoom.getPlayerState('a1')!;
+      ap.aimAngle = 0;
+
+      // Runebound Spire: +12% bolt damage when own Star Rift zone is active
+      aRoom.zones = [];
+      aRoom.projectiles = [];
+      aRoom.firePrimaryAttack(ap);
+      assert.strictEqual(aRoom.projectiles[0].pierce, 2, 'Runebound Spire gives 2 total bolt pierce');
+      const spireNoRiftDmg = aRoom.projectiles[0].damage;
+      aRoom.zones.push({
+        id: 'test_rift',
+        kind: 'star_rift',
+        x: ap.x + 80,
+        y: ap.y,
+        radius: 75,
+        ttlMs: 3000,
+        maxTtlMs: 3000,
+        ownerId: ap.id,
+      });
+      aRoom.projectiles = [];
+      aRoom.firePrimaryAttack(ap);
+      const spireActiveRiftDmg = aRoom.projectiles[0].damage;
+      assert.ok(spireActiveRiftDmg > spireNoRiftDmg, 'Runebound Spire Rift Resonance boosts bolt damage while Star Rift is active');
+
+      // Cinderflare Rod: Ember Splash AoE hits adjacent foes within 54px
+      aRoom.zones = [];
+      aRoom.grantArmament('a1', 'weapon', 'arcanist_cinderflare_rod');
+      aRoom.equipArmament('a1', 'weapon', 'arcanist_cinderflare_rod');
+      const cinderPrimary = makeEnemy('a_cind_1', 'goblin', ap.x + 36, ap.y);
+      const cinderSplashTarget = makeEnemy('a_cind_2', 'goblin', ap.x + 36, ap.y + 38);
+      aRoom.enemies = [cinderPrimary, cinderSplashTarget];
+      Math.random = () => 0.2;
+      aRoom.projectiles = [];
+      aRoom.firePrimaryAttack(ap);
+      aRoom.tick(60);
+      assert.ok(cinderPrimary.burnedMs > 0, 'Cinderflare Rod primary hit should ignite target');
+      assert.ok(cinderSplashTarget.hp < 1000, 'Cinderflare Ember Detonation must splash Fire AoE to adjacent enemy within 54px');
+
+      // Chronostar Scepter: Seeking Star-Orb curves mid-flight (single orb, NO Twinstring clone) & siphons Q/R cooldowns
+      Math.random = () => 0.99;
+      aRoom.grantArmament('a1', 'weapon', 'arcanist_chronostar_scepter');
+      aRoom.equipArmament('a1', 'weapon', 'arcanist_chronostar_scepter');
+      const offAxisTarget = makeEnemy('a_chrono', 'goblin', ap.x + 95, ap.y + 62);
+      aRoom.enemies = [offAxisTarget];
+      aRoom.projectiles = [];
+      ap.skillCooldownMs = 2000;
+      ap.ultCooldownMs = 4000;
+      Math.random = () => 0.2; // allow Chill proc too
+      aRoom.firePrimaryAttack(ap);
+      assert.strictEqual(aRoom.projectiles.length, 1, 'Chronostar Scepter launches 1 seeking temporal Star-Orb (no Twinstring reuse)');
+      const chronoOrb = aRoom.projectiles[0];
+      assert.strictEqual(chronoOrb.weaponId, 'arcanist_chronostar_scepter');
+      aRoom.tick(60);
+      assert.ok(Math.abs(chronoOrb.vy) > 1, 'Chronostar Star-Orb must seek off-axis enemy mid-flight');
+      // Direct hit siphon test
+      const inlineChrono = makeEnemy('a_chrono_hit', 'goblin', ap.x + 34, ap.y);
+      aRoom.enemies = [inlineChrono];
+      aRoom.projectiles = [];
+      ap.skillCooldownMs = 2000;
+      ap.ultCooldownMs = 4000;
+      aRoom.firePrimaryAttack(ap);
+      aRoom.tick(60);
+      assert.ok(ap.skillCooldownMs <= 1700, `Chronostar Siphon must trim Q cooldown by 300ms (got ${ap.skillCooldownMs})`);
+      assert.ok(ap.ultCooldownMs <= 3600, `Chronostar Siphon must trim R cooldown by 400ms (got ${ap.ultCooldownMs})`);
+      assert.ok(inlineChrono.slowedMs > 0, 'Chronostar Star-Orb hit should Chill enemy');
+
+      // 4. CLERIC: Dawnstar Mace (Undead Bane +2 total shield), Solaris Censer (Lowest-HP Ally Heal + Chill), Seraphim Crozier (Judgment Brand markedMs)
+      Math.random = () => 0.99;
+      const cRoom = new GameRoom({
+        roomId: 'WPN_C',
+        name: 'Cleric Armory Combat',
+        hostName: 'Tester',
+        difficulty: 'Normal',
+        seed: 505,
+      });
+      cRoom.addOrReconnectPlayer('c1', 'Prelate', 'cleric');
+      cRoom.addOrReconnectPlayer('ally1', 'WoundedAlly', 'vanguard');
+      cRoom.startExpedition();
+      const cp = cRoom.getPlayerState('c1')!;
+      const allyP = cRoom.getPlayerState('ally1')!;
+      allyP.x = cp.x + 50;
+      allyP.y = cp.y;
+      const skeletonTarget = makeEnemy('skel_c', 'skeleton', cp.x + 35, cp.y);
+      cRoom.enemies = [skeletonTarget];
+
+      cp.aimAngle = 0;
+      cp.shield = 10;
+      cRoom.projectiles = [];
+      cRoom.firePrimaryAttack(cp);
+      const dawnstarHpBefore = skeletonTarget.hp;
+      cRoom.tick(60);
+      const dawnstarDealt = dawnstarHpBefore - skeletonTarget.hp;
+      assert.ok(cp.shield >= 12, 'Dawnstar Mace grants +2 total Shield on striking Undead');
+
+      cRoom.unequipArmament('c1', 'weapon');
+      cRoom.projectiles = [];
+      cRoom.firePrimaryAttack(cp);
+      const unarmedHpBefore = skeletonTarget.hp;
+      cRoom.tick(60);
+      const unarmedDealt = unarmedHpBefore - skeletonTarget.hp;
+      assert.ok(dawnstarDealt > unarmedDealt, `Dawnstar Mace vs Undead (${dawnstarDealt}) must exceed unarmed (${unarmedDealt})`);
+
+      // Solaris Censer: Healing amplification + lowest-HP ally heal on primary hit + Chill
+      const healUnarmed = cRoom.computeHealingAmount(20, cp, cp);
+      cRoom.grantArmament('c1', 'weapon', 'cleric_solaris_censer');
+      cRoom.equipArmament('c1', 'weapon', 'cleric_solaris_censer');
+      const healSolaris = cRoom.computeHealingAmount(20, cp, cp);
+      assert.ok(healSolaris > healUnarmed, `Solaris Censer heal (${healSolaris}) must exceed unarmed (${healUnarmed})`);
+
+      allyP.hp = 40;
+      Math.random = () => 0.2;
+      cRoom.projectiles = [];
+      cRoom.firePrimaryAttack(cp);
+      cRoom.tick(60);
+      assert.ok(skeletonTarget.slowedMs > 0, 'Solaris Censer primary hit should Chill target');
+      assert.ok(allyP.hp > 40, `Solaris Censer Incense Mending must heal lowest-HP ally on hit (ally hp=${allyP.hp})`);
+
+      // Seraphim Judgment Crozier: Applies Judgment Brand (markedMs > 0)
+      cRoom.grantArmament('c1', 'weapon', 'cleric_seraphim_crozier');
+      cRoom.equipArmament('c1', 'weapon', 'cleric_seraphim_crozier');
+      skeletonTarget.markedMs = 0;
+      Math.random = () => 0.1;
+      cRoom.projectiles = [];
+      cRoom.firePrimaryAttack(cp);
+      cRoom.tick(60);
+      assert.ok(skeletonTarget.markedMs > 0, 'Seraphim Judgment Crozier must Brand enemy (markedMs > 0)');
+    } finally {
+      Math.random = origRandom;
+    }
+  });
+
+  // --- Test 113: Server-Authoritative Vestment Effects & Stat Projections Parity ---
+  await test('113. Vestments modify HP, resistances, damage taken, CDR, HP regen, CC tenacity, move speed, shield cap & statUtils', () => {
+    // 1. Vanguard Obsidian Juggernaut: +28 Max HP, +9% phys res, -6% damage taken, +15 max shield, -3% speed
+    const room = new GameRoom({
+      roomId: 'VEST_T113',
+      name: 'Vestment Defense Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 606,
+    });
+    room.addOrReconnectPlayer('v1', 'Bulwark', 'vanguard');
+    room.addOrReconnectPlayer('c1', 'Healer', 'cleric');
+    room.startExpedition();
+
+    const vp = room.getPlayerState('v1')!;
+    const cp = room.getPlayerState('c1')!;
+    const unarmedSpeed = (() => {
+      room.unequipArmament('v1', 'vestment');
+      return computePlayerMoveSpeed(vp);
+    })();
+    const unarmedPhysTaken = room.damagePlayer(vp, 100, 'physical');
+    vp.hp = vp.maxHp;
+
+    room.grantArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
+    room.equipArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
+    assert.strictEqual(room.getMaxShieldCap(vp), 75, 'Base 60 shield cap + 15 Obsidian Juggernaut = 75');
+    assert.ok(computePlayerMoveSpeed(vp) < unarmedSpeed, 'Heavy Obsidian plate trades 3% move speed');
+    const juggPhysTaken = room.damagePlayer(vp, 100, 'physical');
+    assert.ok(juggPhysTaken < unarmedPhysTaken, `Juggernaut damage taken (${juggPhysTaken}) < unarmed (${unarmedPhysTaken})`);
+
+    // 2. Sovereign Aegis Warplate: +8% CDR, +2 HP regen per 2.0s pulse
+    room.grantArmament('v1', 'vestment', 'vanguard_aegis_sovereign_mail');
+    room.equipArmament('v1', 'vestment', 'vanguard_aegis_sovereign_mail');
+    vp.hp = 50;
+    // Trigger 2.0s regen pulse
+    room.tick(2000);
+    assert.ok(vp.hp >= 52, `Sovereign Warplate should regenerate +2 HP on 2s pulse (hp=${vp.hp})`);
+
+    // Verify CDR reduces tactical cooldown when performing action
+    vp.skillCooldownMs = 0;
+    room.performAction('v1', 'tactical');
+    const cdWithSovereign = vp.skillCooldownMs;
+    room.unequipArmament('v1', 'vestment');
+    vp.skillCooldownMs = 0;
+    room.performAction('v1', 'tactical');
+    const cdUnarmed = vp.skillCooldownMs;
+    assert.ok(cdWithSovereign < cdUnarmed, `Sovereign 8% CDR (${cdWithSovereign}ms) < unarmed (${cdUnarmed}ms)`);
+
+    // 3. CC Tenacity & Move Speed on Ranger Windrunner Mistcloak
+    room.addOrReconnectPlayer('r1', 'Wind', 'ranger');
+    const rp = room.getPlayerState('r1')!;
+    room.unequipArmament('r1', 'vestment');
+    const speedNoVest = computePlayerMoveSpeed(rp);
+    room.applyPlayerStatus(rp, 'frostbite', 4000);
+    const frostNoVest = rp.statuses.find((s) => s.type === 'frostbite')!.durationMs;
+    rp.statuses = [];
+
+    room.grantArmament('r1', 'vestment', 'ranger_windrunner_mantle');
+    room.equipArmament('r1', 'vestment', 'ranger_windrunner_mantle');
+    const speedWindrunner = computePlayerMoveSpeed(rp);
+    room.applyPlayerStatus(rp, 'frostbite', 4000);
+    const frostWindrunner = rp.statuses.find((s) => s.type === 'frostbite')!.durationMs;
+    assert.ok(speedWindrunner > speedNoVest * 1.09, 'Windrunner Mistcloak increases movement speed by +11%');
+    assert.ok(frostWindrunner < frostNoVest, `Windrunner tenacity shortens CC (${frostWindrunner}ms < ${frostNoVest}ms)`);
+
+    // 4. Cleric Martyr Surplice: +15% healing power & +35% revive speed
+    room.unequipArmament('c1', 'vestment');
+    const healBaseVest = room.computeHealingAmount(20, cp, vp);
+    room.grantArmament('c1', 'vestment', 'cleric_martyr_surplice');
+    room.equipArmament('c1', 'vestment', 'cleric_martyr_surplice');
+    const healMartyrVest = room.computeHealingAmount(20, cp, vp);
+    assert.ok(healMartyrVest > healBaseVest, `Martyr Surplice heal (${healMartyrVest}) > unequipped (${healBaseVest})`);
+
+    // Revive speed test
+    vp.downed = true;
+    vp.reviveProgress = 0;
+    vp.x = cp.x + 10;
+    vp.y = cp.y;
+    room.tick(500);
+    const reviveWithMartyr = vp.reviveProgress;
+    vp.reviveProgress = 0;
+    room.unequipArmament('c1', 'vestment');
+    room.tick(500);
+    const reviveWithoutVest = vp.reviveProgress;
+    assert.ok(reviveWithMartyr > reviveWithoutVest, `Martyr Surplice speeds revive (${reviveWithMartyr} > ${reviveWithoutVest})`);
+    vp.downed = false;
+    vp.hp = vp.maxHp;
+
+    // 5. Stat projection parity checks in statUtils.ts
+    room.grantArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+    room.equipArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+    room.equipArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
+    const projEquipped = calculatePlayerStatProjections(vp, 1);
+    room.unequipArmament('v1', 'weapon');
+    room.unequipArmament('v1', 'vestment');
+    const projUnequipped = calculatePlayerStatProjections(vp, 1);
+    assert.ok(projEquipped.scaledHitDamage > projUnequipped.scaledHitDamage);
+    assert.ok(projEquipped.maxHp > projUnequipped.maxHp);
+    assert.ok(projEquipped.physicalResistPct > projUnequipped.physicalResistPct);
+  });
+
+  // --- Test 114: System Separation, Run Reset Persistence, Boss Drops & Multiplayer Delta Sync ---
+  await test('114. Permanent Armaments survive run resets & sync via delta snapshots while Relics & Scrolls reset properly', () => {
+    const room = new GameRoom({
+      roomId: 'SEP_T114',
+      name: 'System Separation Room',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 707,
+    });
+    const unlockedLog: Array<{ pid: string; slot: string; id: string }> = [];
+    room.onArmamentUnlockedCallback = (pid, slot, id) => {
+      unlockedLog.push({ pid, slot, id });
+    };
+
+    room.addOrReconnectPlayer('a1', 'Starweaver', 'arcanist', false, {
+      level: 5,
+      xp: 0,
+      strength: 0,
+      vitality: 0,
+      dexterity: 0,
+      intelligence: 0,
+      faith: 0,
+      attributePoints: 0,
+      storage: ['bloodletter_talisman'],
+      ownedWeapons: ['arcanist_runebound_spire', 'arcanist_chronostar_scepter'],
+      ownedVestments: ['arcanist_astral_vestments', 'arcanist_voidward_robes'],
+      equippedWeapon: 'arcanist_chronostar_scepter',
+      equippedVestment: 'arcanist_voidward_robes',
+    });
+    room.startExpedition();
+
+    const ap = room.getPlayerState('a1')!;
+    // Equip temporary dungeon relic & Arcanist tactical scroll
+    room.addPlayerRelic('a1', 'sunfire_signet');
+    room.addPlayerRelic('a1', 'keen_arrowhead');
+    ap.equippedScrollId = 'fireball';
+    assert.strictEqual(ap.relics.length, 2);
+    assert.strictEqual(ap.equippedScrollId, 'fireball');
+    assert.strictEqual(ap.equippedWeapon, 'arcanist_chronostar_scepter');
+    assert.strictEqual(ap.equippedVestment, 'arcanist_voidward_robes');
+    assert.strictEqual(ap.shield, 25, 'Voidward Robes grants +10 starting shield (15 + 10 = 25)');
+
+    // Capture delta snapshot before and after swapping armaments
+    const snap1 = cloneSnapshotBaseline(room.buildNetworkSnapshot());
+    room.equipArmament('a1', 'weapon', 'arcanist_runebound_spire');
+    const snap2 = room.buildNetworkSnapshot();
+    const delta = computeSnapshotDelta(snap1, snap2, 1, 2);
+    const applied = applySnapshotDelta(snap1, delta);
+    const syncedArc = applied.players.find((p) => p.id === 'a1')!;
+    assert.strictEqual(syncedArc.equippedWeapon, 'arcanist_runebound_spire');
+    assert.strictEqual(syncedArc.equippedVestment, 'arcanist_voidward_robes');
+
+    // Simulate Boss clear unlock callback
+    const boss = room.enemies.find((e) => e.kind === 'boss') || {
+      id: 'boss_t114',
+      kind: 'boss' as const,
+      name: 'Warden Malakor',
+      roomId: 4,
+      x: ap.x + 25,
+      y: ap.y,
+      vx: 0,
+      vy: 0,
+      hp: 1,
+      maxHp: 500,
+      radius: 28,
+      state: 'idle' as const,
+      windupMs: 0,
+      targetX: ap.x,
+      targetY: ap.y,
+      markedMs: 0,
+      slowedMs: 0,
+      stunnedMs: 0,
+      burnedMs: 0,
+      frozenMs: 0,
+      shockedMs: 0,
+      poisonedMs: 0,
+      bleedingMs: 0,
+      silencedMs: 0,
+      elite: true,
+    };
+    if (!room.enemies.includes(boss)) room.enemies.push(boss);
+    boss.hp = 1;
+    room.damageEnemy(boss, 50, ap, false, 'arcane', true);
+    assert.strictEqual(unlockedLog.length, 1, 'Boss kill should unlock a new unowned class armament');
+    assert.ok(
+      ap.ownedWeapons!.includes(unlockedLog[0].id) || ap.ownedVestments!.includes(unlockedLog[0].id),
+      'Unlocked item must be added to player permanent armory'
+    );
+
+    // Restart run (simulates wipe/new expedition): temporary relics & scroll reset, permanent armaments & storage persist!
+    room.restartRun();
+    const afterRestart = room.getPlayerState('a1')!;
+    assert.deepStrictEqual(afterRestart.relics, [], 'Temporary relics must reset on new run');
+    assert.strictEqual(afterRestart.equippedScrollId, null, 'Temporary Arcanist scroll must reset on new run');
+    assert.deepStrictEqual(afterRestart.storage, ['bloodletter_talisman'], 'Storage vault remains separate & preserved');
+    assert.strictEqual(afterRestart.equippedWeapon, 'arcanist_runebound_spire', 'Equipped permanent weapon survives run reset');
+    assert.strictEqual(afterRestart.equippedVestment, 'arcanist_voidward_robes', 'Equipped permanent vestment survives run reset');
+    assert.ok(afterRestart.ownedWeapons!.includes('arcanist_chronostar_scepter'));
+  });
+
+  // --- Test 115: Visual In-Hand Weapon & Vestment Rendering (8-Dir + North Visibility), Projectiles & Fallen ---
+  await test('115. All 12 permanent weapons & 12 vestments (+ unequipped) render distinctly across N/E/S/W, fallen sprites, and projectiles', async () => {
+    const { drawHeroSprite } = await import('./src/client/heroSprites.ts');
+    const {
+      WEAPON_CATALOG,
+      VESTMENT_CATALOG,
+      getClassWeapons,
+      getClassVestments,
+    } = await import('./src/shared/armaments.ts');
+    const { DIRECTION8_LIST, direction8ToPose } = await import('./src/client/directionalFacing.ts');
+
+    assert.strictEqual(WEAPON_CATALOG.length, 12, 'Expected 12 permanent weapons in catalog');
+    assert.strictEqual(VESTMENT_CATALOG.length, 12, 'Expected 12 permanent vestments in catalog');
+
+    const createMockCtx = () => {
+      const colors = new Set<string>();
+      const rects: string[] = [];
+      let arcs = 0;
+      let ellipses = 0;
+      let strokes = 0;
+      let drawOps = 0;
+      let curFill = '';
+      let curStroke = '';
+
+      const ctx = {
+        get fillStyle() { return curFill; },
+        set fillStyle(v: string) { curFill = String(v); if (v) colors.add(`f:${v}`); },
+        get strokeStyle() { return curStroke; },
+        set strokeStyle(v: string) { curStroke = String(v); if (v) colors.add(`s:${v}`); },
+        lineWidth: 1,
+        font: '',
+        textAlign: 'center',
+        textBaseline: 'middle',
+        globalAlpha: 1,
+        shadowColor: '',
+        shadowBlur: 0,
+        save: () => {},
+        restore: () => {},
+        translate: () => {},
+        rotate: () => {},
+        scale: () => {},
+        setLineDash: () => {},
+        beginPath: () => {},
+        closePath: () => {},
+        moveTo: () => {},
+        lineTo: () => {},
+        quadraticCurveTo: () => {},
+        arc: () => { arcs++; },
+        ellipse: () => { ellipses++; },
+        fillRect: (x: number, y: number, w: number, h: number) => {
+          drawOps++;
+          rects.push(`${Math.round(x)},${Math.round(y)},${Math.round(w)},${Math.round(h)}`);
+        },
+        strokeRect: () => { drawOps++; },
+        fill: () => { drawOps++; },
+        stroke: () => { drawOps++; strokes++; },
+        fillText: () => { drawOps++; },
+        createRadialGradient: () => ({ addColorStop: () => {} }),
+        createLinearGradient: () => ({ addColorStop: () => {} }),
+      } as unknown as CanvasRenderingContext2D;
+
+      return {
+        ctx,
+        result: () => ({
+          drawOps,
+          signature: `${[...colors].sort().join('|')}#ops=${drawOps}#arcs=${arcs}#ell=${ellipses}#stk=${strokes}#rects=${rects.length}`,
+        }),
+      };
+    };
+
+    const renderHero = (
+      heroClass: 'vanguard' | 'ranger' | 'arcanist' | 'cleric',
+      equippedWeapon: string | null | undefined,
+      swingProgress?: number,
+      dir: (typeof DIRECTION8_LIST)[number] = 'E',
+      equippedVestment?: string | null
+    ) => {
+      const m = createMockCtx();
+      const pose = direction8ToPose(dir, false);
+      drawHeroSprite(
+        m.ctx,
+        {
+          heroClass,
+          attackAnimMs: swingProgress !== undefined ? 150 : 0,
+          vx: 0,
+          vy: 0,
+          hasteMs: 0,
+          shield: 20,
+          equippedWeapon,
+          equippedVestment,
+        },
+        160,
+        160,
+        {
+          aimAngle: pose.angleRad,
+          bob: 0,
+          moving: false,
+          now: 5000,
+          swingProgress,
+          swingKind: 'primary',
+          facingLeft: pose.facingLeft,
+          facingDirection: dir,
+        }
+      );
+      return m.result();
+    };
+
+    const classes = ['vanguard', 'ranger', 'arcanist', 'cleric'] as const;
+    const styleByClass = {
+      vanguard: 'slash',
+      ranger: 'arrow',
+      arcanist: 'arcane',
+      cleric: 'radiant',
+    } as const;
+
+    for (const heroClass of classes) {
+      const weapons = getClassWeapons(heroClass);
+      const vestments = getClassVestments(heroClass);
+      assert.strictEqual(weapons.length, 3, `Expected 3 weapons for ${heroClass}`);
+      assert.strictEqual(vestments.length, 3, `Expected 3 vestments for ${heroClass}`);
+
+      const signaturesE = new Set<string>();
+      const signaturesN = new Set<string>();
+      const projectileSigs = new Set<string>();
+
+      for (const w of weapons) {
+        const idleSigE = renderHero(heroClass, w.id, undefined, 'E');
+        const idleSigN = renderHero(heroClass, w.id, undefined, 'N');
+        const swingSig = renderHero(heroClass, w.id, 0.45, 'E');
+        assert.ok(idleSigE.drawOps > 25, `Expected full sprite + weapon draw ops for ${w.id}`);
+        assert.ok(swingSig.drawOps > 20, `Expected swing animation draws for ${w.id}`);
+        assert.notStrictEqual(idleSigE.signature, swingSig.signature, `Expected swing state visual delta for ${w.id}`);
+        signaturesE.add(idleSigE.signature);
+        signaturesN.add(idleSigN.signature);
+
+        for (const dir of DIRECTION8_LIST) {
+          const dirRes = renderHero(heroClass, w.id, 0.42, dir);
+          assert.ok(dirRes.drawOps > 20, `Expected 8-dir draw ops for ${w.id} @ ${dir}`);
+        }
+
+        // Verify per-weapon projectile visual uniqueness in drawEnhancedProjectile
+        const pm = createMockCtx();
+        drawEnhancedProjectile(
+          pm.ctx,
+          {
+            id: `proj_${w.id}`,
+            ownerType: 'player',
+            ownerId: 'p1',
+            style: styleByClass[heroClass],
+            x: 100,
+            y: 100,
+            vx: 100,
+            vy: 0,
+            angle: 0,
+            radius: 30,
+            damage: 25,
+            pierce: 1,
+            ttlMs: 90,
+            weaponId: w.id,
+          },
+          5000
+        );
+        const pRes = pm.result();
+        assert.ok(pRes.drawOps > 2, `Expected projectile draw ops for ${w.id}`);
+        projectileSigs.add(pRes.signature);
+      }
+
+      // Unarmed (`null`) must differ visibly from all 3 equipped weapons in both E and N facings
+      signaturesE.add(renderHero(heroClass, null, undefined, 'E').signature);
+      signaturesN.add(renderHero(heroClass, null, undefined, 'N').signature);
+      assert.strictEqual(signaturesE.size, 4, `Expected 4 distinct East weapon signatures for ${heroClass}`);
+      assert.strictEqual(signaturesN.size, 4, `Expected 4 distinct North weapon signatures for ${heroClass}`);
+      assert.strictEqual(projectileSigs.size, 3, `Expected 3 distinct projectile signatures for ${heroClass}`);
+
+      // Verify all 3 vestments + unarmored (`null`) render distinctly across E, N, and S facings
+      const vestSigsE = new Set<string>();
+      const vestSigsN = new Set<string>();
+      const vestSigsS = new Set<string>();
+      for (const v of vestments) {
+        const resE = renderHero(heroClass, weapons[0].id, undefined, 'E', v.id);
+        const resN = renderHero(heroClass, weapons[0].id, undefined, 'N', v.id);
+        const resS = renderHero(heroClass, weapons[0].id, undefined, 'S', v.id);
+        assert.ok(resE.drawOps > 25, `Expected full vestment draw ops for ${v.id}`);
+        vestSigsE.add(resE.signature);
+        vestSigsN.add(resN.signature);
+        vestSigsS.add(resS.signature);
+      }
+      vestSigsE.add(renderHero(heroClass, weapons[0].id, undefined, 'E', null).signature);
+      vestSigsN.add(renderHero(heroClass, weapons[0].id, undefined, 'N', null).signature);
+      vestSigsS.add(renderHero(heroClass, weapons[0].id, undefined, 'S', null).signature);
+      assert.strictEqual(vestSigsE.size, 4, `Expected 4 distinct East vestment signatures for ${heroClass}`);
+      assert.strictEqual(vestSigsN.size, 4, `Expected 4 distinct North vestment signatures for ${heroClass}`);
+      assert.strictEqual(vestSigsS.size, 4, `Expected 4 distinct South vestment signatures for ${heroClass}`);
+
+      // Verify `undefined` gracefully falls back to class default starter weapon & vestment
+      assert.strictEqual(
+        renderHero(heroClass, undefined, undefined, 'E', undefined).signature,
+        renderHero(heroClass, weapons[0].id, undefined, 'E', vestments[0].id).signature,
+        `Undefined equippedWeapon/equippedVestment should match starter visuals for ${heroClass}`
+      );
+
+      // Verify drawFallenAndGhostPlayer distinguishes each weapon + unarmed
+      const fallenWeaponSigs = new Set<string>();
+      for (const wId of [...weapons.map((w) => w.id), null]) {
+        const fm = createMockCtx();
+        const fRoom = new GameRoom({
+          roomId: `FW_${heroClass}`,
+          name: 'Fallen Sprite Test',
+          hostName: 'Tester',
+          difficulty: 'Normal',
+          seed: 42,
+          initialFloor: 1,
+        });
+        fRoom.addOrReconnectPlayer(`p_${heroClass}_w_${wId ?? 'none'}`, 'Tester', heroClass);
+        const fPlayer = fRoom.getPlayerState(`p_${heroClass}_w_${wId ?? 'none'}`)!;
+        fPlayer.downed = true;
+        fPlayer.downedTimerMs = 12000;
+        fPlayer.reviveProgress = 0;
+        fPlayer.equippedWeapon = wId;
+
+        drawFallenAndGhostPlayer(fm.ctx, fPlayer, 200, 200, 7500, false);
+        fallenWeaponSigs.add(fm.result().signature);
+      }
+      assert.strictEqual(
+        fallenWeaponSigs.size,
+        4,
+        `Expected fallen sprite dropped weapons for ${heroClass} to produce 4 distinct signatures`
+      );
+
+      // Verify drawFallenAndGhostPlayer distinguishes each vestment + unarmored
+      const fallenVestmentSigs = new Set<string>();
+      for (const vId of [...vestments.map((v) => v.id), null]) {
+        const fm = createMockCtx();
+        const fRoom = new GameRoom({
+          roomId: `FV_${heroClass}`,
+          name: 'Fallen Vestment Sprite Test',
+          hostName: 'Tester',
+          difficulty: 'Normal',
+          seed: 42,
+          initialFloor: 1,
+        });
+        fRoom.addOrReconnectPlayer(`p_${heroClass}_v_${vId ?? 'none'}`, 'Tester', heroClass);
+        const fPlayer = fRoom.getPlayerState(`p_${heroClass}_v_${vId ?? 'none'}`)!;
+        fPlayer.downed = true;
+        fPlayer.downedTimerMs = 12000;
+        fPlayer.reviveProgress = 0;
+        fPlayer.equippedVestment = vId;
+
+        drawFallenAndGhostPlayer(fm.ctx, fPlayer, 200, 200, 7500, false);
+        fallenVestmentSigs.add(fm.result().signature);
+      }
+      assert.strictEqual(
+        fallenVestmentSigs.size,
+        4,
+        `Expected fallen sprite vestments for ${heroClass} to produce 4 distinct signatures`
+      );
+    }
+
+    // Verify ParticleManager weapon-aware projectile wakes, hit/cleave impacts, and rate-limited ambient motes
+    const vfxPm = new ParticleManager({ maxParticles: 600 });
+    const baseTime = 12000;
+    const styleForClass: Record<'vanguard' | 'ranger' | 'arcanist' | 'cleric', 'slash' | 'arrow' | 'arcane' | 'radiant'> = {
+      vanguard: 'slash',
+      ranger: 'arrow',
+      arcanist: 'arcane',
+      cleric: 'radiant',
+    };
+
+    for (const w of WEAPON_CATALOG) {
+      const wakeBefore = vfxPm.count;
+      vfxPm.spawnProjectileWake(
+        {
+          id: `wake_${w.id}`,
+          ownerType: 'player',
+          ownerId: 'p1',
+          style: styleForClass[w.heroClass],
+          x: 150,
+          y: 150,
+          vx: 120,
+          vy: 0,
+          angle: 0,
+          radius: 20,
+          damage: 25,
+          pierce: 1,
+          ttlMs: 120,
+          weaponId: w.id,
+        },
+        baseTime
+      );
+      assert.ok(vfxPm.count > wakeBefore, `Expected spawnProjectileWake to emit for ${w.id}`);
+
+      const hitBefore = vfxPm.count;
+      if (w.heroClass === 'vanguard') {
+        vfxPm.spawnVanguardCleave(180, 180, 0.4, true, baseTime + 50, w.id);
+      } else if (w.heroClass === 'ranger') {
+        vfxPm.spawnRangerArrowHit(180, 180, 0.4, true, baseTime + 50, w.id);
+      } else if (w.heroClass === 'arcanist') {
+        vfxPm.spawnArcanistBoltHit(180, 180, baseTime + 50, w.id);
+      } else {
+        vfxPm.spawnClericSmiteHit(180, 180, true, baseTime + 50, w.id);
+      }
+      assert.ok(vfxPm.count > hitBefore, `Expected class impact VFX to emit for ${w.id}`);
+    }
+
+    // Verify spawnArmamentAmbientMotes emits for Forged/Ascendant gear and enforces 240ms rate limit
+    const nonStarterVestments = VESTMENT_CATALOG.filter((v) => !v.isDefault);
+    assert.strictEqual(nonStarterVestments.length, 8, 'Expected 8 Forged/Ascendant vestments');
+    for (let i = 0; i < nonStarterVestments.length; i++) {
+      const v = nonStarterVestments[i];
+      const sigWeapon = WEAPON_CATALOG.find((w) => w.heroClass === v.heroClass && !w.isDefault)?.id ?? null;
+      const beforeAmb = vfxPm.count;
+      vfxPm.spawnArmamentAmbientMotes(`amb_${v.id}`, v.heroClass, sigWeapon, v.id, 220, 220, baseTime + 500 + i * 300);
+      const afterFirst = vfxPm.count;
+      assert.ok(afterFirst > beforeAmb, `Expected ambient motes to spawn for ${v.id}`);
+      // Calling again 50ms later should be rate-limited
+      vfxPm.spawnArmamentAmbientMotes(`amb_${v.id}`, v.heroClass, sigWeapon, v.id, 220, 220, baseTime + 550 + i * 300);
+      assert.strictEqual(vfxPm.count, afterFirst, `Expected ambient motes for ${v.id} to rate-limit within 240ms`);
+    }
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

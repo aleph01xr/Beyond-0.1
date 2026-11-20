@@ -208,6 +208,10 @@ export function buildSnapshotHudKey(
       me.disintegrationState?.active ? 1 : 0,
       me.spellCastState ? `${me.spellCastState.spellId}:${Math.ceil(me.spellCastState.remainingMs / 100)}` : '',
       (me.chronoSuspendedMs || 0) > 0 ? 1 : 0,
+      me.equippedWeapon ?? 'none',
+      me.equippedVestment ?? 'none',
+      me.ownedWeapons?.length ?? 0,
+      me.ownedVestments?.length ?? 0,
     ].join(':');
   }
 

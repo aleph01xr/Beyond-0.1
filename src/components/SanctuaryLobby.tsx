@@ -15,6 +15,7 @@ import {
   type StatusEffectMeta,
 } from '../shared/statusEffects.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
+import { resolveEquippedWeaponForClass } from '../shared/armaments.ts';
 import {
   loadSavedTouchSettings,
   saveTouchSettings,
@@ -454,7 +455,16 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
 
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
                   <div className="p-2.5 bg-[#171622] border border-[#3A384C] shrink-0">
-                    <PixelHeroPreview heroClass={currentClassDef.id} size={64} />
+                    <PixelHeroPreview
+                      heroClass={currentClassDef.id}
+                      equippedWeapon={
+                        currentClassDef.id === user.lockedClass ? user.equippedWeapon : undefined
+                      }
+                      equippedVestment={
+                        currentClassDef.id === user.lockedClass ? user.equippedVestment : undefined
+                      }
+                      size={64}
+                    />
                   </div>
                   <div className="space-y-1.5 flex-1 text-center sm:text-left min-w-0">
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
@@ -467,7 +477,17 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     </div>
 
                     <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 text-xs text-[#9E9CAE] font-mono tabular-nums">
-                      <span>Weapon: <strong className="text-white">{currentClassDef.weapon}</strong></span>
+                      <span>
+                        Weapon:{' '}
+                        <strong className="text-white">
+                          {currentClassDef.id === user.lockedClass
+                            ? user.equippedWeapon === null
+                              ? 'Unarmed'
+                              : resolveEquippedWeaponForClass(user.lockedClass, user.equippedWeapon)?.name ||
+                                currentClassDef.weapon
+                            : currentClassDef.weapon}
+                        </strong>
+                      </span>
                       <span aria-hidden="true">·</span>
                       <span>HP: <strong className="text-[#4ADE80]">{currentClassDef.maxHp}</strong></span>
                       <span aria-hidden="true">·</span>
@@ -640,7 +660,12 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                     {/* Hero Header with Pixel Preview & Core Stats */}
                     <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
                       <div className="p-3 bg-[#15141E] border border-[#353346] shadow-inner shrink-0">
-                        <PixelHeroPreview heroClass={cid} size={76} />
+                        <PixelHeroPreview
+                          heroClass={cid}
+                          equippedWeapon={isMyClass ? user.equippedWeapon : undefined}
+                          equippedVestment={isMyClass ? user.equippedVestment : undefined}
+                          size={76}
+                        />
                       </div>
                       <div className="space-y-1.5 flex-1 text-center sm:text-left min-w-0">
                         <h3 className="font-display text-xl sm:text-2xl text-white font-semibold">

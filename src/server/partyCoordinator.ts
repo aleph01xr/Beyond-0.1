@@ -37,6 +37,10 @@ export interface PartyAccountInput {
     faith: number;
     attributePoints: number;
     storage?: string[];
+    ownedWeapons?: string[];
+    ownedVestments?: string[];
+    equippedWeapon?: string | null;
+    equippedVestment?: string | null;
   };
 }
 

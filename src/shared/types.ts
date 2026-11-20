@@ -46,6 +46,10 @@ export interface AccountRecord {
   faith?: number;
   attributePoints?: number;
   storedRelics?: string[];
+  ownedWeapons?: string[];
+  ownedVestments?: string[];
+  equippedWeapon?: string | null;
+  equippedVestment?: string | null;
 }
 
 export interface HeroClassStats {
@@ -494,6 +498,10 @@ export interface PlayerState {
   starRiftCooldownMs?: number;
   chronoSuspendedMs?: number;
   activeChestPropId?: string | null;
+  ownedWeapons?: string[];
+  ownedVestments?: string[];
+  equippedWeapon?: string | null;
+  equippedVestment?: string | null;
 }
 
 export type PlayerStatusType =
@@ -613,6 +621,7 @@ export interface ProjectileState {
   elapsedMs?: number;
   helixPhase?: number;
   helixSign?: number;
+  weaponId?: string;
 }
 
 export interface PropState {
@@ -810,6 +819,10 @@ export interface UserProfile {
   intelligence: number;
   faith: number;
   attributePoints: number;
+  ownedWeapons?: string[];
+  ownedVestments?: string[];
+  equippedWeapon?: string | null;
+  equippedVestment?: string | null;
 }
 
 export type ClientMessage =
@@ -879,6 +892,9 @@ export type ClientMessage =
   | { type: 'player:channel_stop' }
   | { type: 'player:select_scroll'; scrollId: ArcanistScrollId }
   | { type: 'player:close_chest' }
+  | { type: 'player:equip_armament'; slot: 'weapon' | 'vestment'; itemId: string }
+  | { type: 'player:unequip_armament'; slot: 'weapon' | 'vestment' }
+  | { type: 'admin:grant_armament'; slot: 'weapon' | 'vestment'; itemId: string }
   | { type: 'room:resync' }
   | { type: 'ping'; t: number };
 

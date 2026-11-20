@@ -47,6 +47,13 @@ import {
   verifyPassword,
   verifySharedIdentityRequestSecret,
 } from './src/server/sharedIdentity.ts';
+import {
+  applyAccountArmamentMigration,
+  getArmamentDef,
+  getDefaultVestmentIdForClass,
+  getDefaultWeaponIdForClass,
+  parseArmamentIdArray,
+} from './src/shared/armaments.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,6 +98,7 @@ function normalizeAccountLevel(acc: AccountRecord): void {
 
 function toPublicProfile(acc: AccountRecord): UserProfile {
   normalizeAccountLevel(acc);
+  applyAccountArmamentMigration(acc);
   return {
     id: acc.id,
     username: acc.username,
@@ -109,6 +117,10 @@ function toPublicProfile(acc: AccountRecord): UserProfile {
     intelligence: acc.intelligence || 0,
     faith: acc.faith || 0,
     attributePoints: acc.attributePoints || 0,
+    ownedWeapons: [...(acc.ownedWeapons || [])],
+    ownedVestments: [...(acc.ownedVestments || [])],
+    equippedWeapon: acc.equippedWeapon ?? null,
+    equippedVestment: acc.equippedVestment ?? null,
   };
 }
 
@@ -167,8 +179,9 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
             id, username, username_lower, password_hash, locked_class, preferred_class,
             runs_completed, highest_floor, total_kills, total_revives, gold, is_admin,
             level, xp,
-            strength, vitality, dexterity, intelligence, faith, attribute_points, updated_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, NOW())
+            strength, vitality, dexterity, intelligence, faith, attribute_points,
+            owned_weapons, owned_vestments, equipped_weapon, equipped_vestment, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW())
           ON CONFLICT (username_lower) DO UPDATE SET
             password_hash = EXCLUDED.password_hash,
             locked_class = EXCLUDED.locked_class,
@@ -187,6 +200,10 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
             intelligence = EXCLUDED.intelligence,
             faith = EXCLUDED.faith,
             attribute_points = EXCLUDED.attribute_points,
+            owned_weapons = EXCLUDED.owned_weapons,
+            owned_vestments = EXCLUDED.owned_vestments,
+            equipped_weapon = EXCLUDED.equipped_weapon,
+            equipped_vestment = EXCLUDED.equipped_vestment,
             updated_at = NOW();`,
           [
             acc.id,
@@ -209,6 +226,10 @@ async function persistAccount(acc: AccountRecord): Promise<void> {
             acc.intelligence || 0,
             acc.faith || 0,
             acc.attributePoints || 0,
+            JSON.stringify(acc.ownedWeapons || []),
+            JSON.stringify(acc.ownedVestments || []),
+            acc.equippedWeapon ?? null,
+            acc.equippedVestment ?? null,
           ]
         );
       } catch (err) {
@@ -267,11 +288,15 @@ async function initStorage(): Promise<void> {
           intelligence INT NOT NULL DEFAULT 0,
           faith INT NOT NULL DEFAULT 0,
           attribute_points INT NOT NULL DEFAULT 0,
+          owned_weapons TEXT NOT NULL DEFAULT '[]',
+          owned_vestments TEXT NOT NULL DEFAULT '[]',
+          equipped_weapon VARCHAR(64),
+          equipped_vestment VARCHAR(64),
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
       `);
-      // Safe migration for existing tables missing attribute columns
+      // Safe migration for existing tables missing attribute or armament columns
       await dbPool.query(`
         DO $$
         BEGIN
@@ -301,6 +326,18 @@ async function initStorage(): Promise<void> {
           END IF;
           IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='xp') THEN
             ALTER TABLE accounts ADD COLUMN xp INT NOT NULL DEFAULT 0;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='owned_weapons') THEN
+            ALTER TABLE accounts ADD COLUMN owned_weapons TEXT NOT NULL DEFAULT '[]';
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='owned_vestments') THEN
+            ALTER TABLE accounts ADD COLUMN owned_vestments TEXT NOT NULL DEFAULT '[]';
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='equipped_weapon') THEN
+            ALTER TABLE accounts ADD COLUMN equipped_weapon VARCHAR(64);
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='accounts' AND column_name='equipped_vestment') THEN
+            ALTER TABLE accounts ADD COLUMN equipped_vestment VARCHAR(64);
           END IF;
           -- Increase password_hash length for scrypt
           ALTER TABLE accounts ALTER COLUMN password_hash TYPE VARCHAR(255);
@@ -337,9 +374,25 @@ async function initStorage(): Promise<void> {
         console.log('[Migration] Attribute reset migration already applied. Preserving account attributes.');
       }
 
+      const armamentMigrationRes = await dbPool.query(
+        'SELECT 1 FROM schema_migrations WHERE version = $1',
+        ['20261119_permanent_armaments']
+      );
+      const needsArmamentMigration = armamentMigrationRes.rowCount === 0;
+
       const res = await dbPool.query('SELECT * FROM accounts');
+      const migratedAccounts: AccountRecord[] = [];
       for (const row of res.rows) {
         const lvl = Number(row.level) || 1;
+        const parsedWeapons = parseArmamentIdArray(row.owned_weapons, 'weapon');
+        const parsedVestments = parseArmamentIdArray(row.owned_vestments, 'vestment');
+        const isLegacyRow =
+          needsArmamentMigration &&
+          row.equipped_weapon == null &&
+          row.equipped_vestment == null &&
+          parsedWeapons.length === 0 &&
+          parsedVestments.length === 0;
+
         const rec: AccountRecord = {
           id: row.id,
           username: row.username,
@@ -361,10 +414,42 @@ async function initStorage(): Promise<void> {
           intelligence: Number(row.intelligence) || 0,
           faith: Number(row.faith) || 0,
           attributePoints: Number(row.attribute_points) || 0,
+          ownedWeapons: parsedWeapons,
+          ownedVestments: parsedVestments,
+          equippedWeapon: isLegacyRow ? undefined : (row.equipped_weapon ?? null),
+          equippedVestment: isLegacyRow ? undefined : (row.equipped_vestment ?? null),
         };
         normalizeAccountLevel(rec);
+        const changed = applyAccountArmamentMigration(rec, needsArmamentMigration);
+        if (changed) {
+          migratedAccounts.push(rec);
+        }
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
+      }
+
+      if (needsArmamentMigration || migratedAccounts.length > 0) {
+        for (const acc of migratedAccounts) {
+          await dbPool.query(
+            `UPDATE accounts
+             SET owned_weapons = $2, owned_vestments = $3, equipped_weapon = $4, equipped_vestment = $5, updated_at = NOW()
+             WHERE id = $1`,
+            [
+              acc.id,
+              JSON.stringify(acc.ownedWeapons || []),
+              JSON.stringify(acc.ownedVestments || []),
+              acc.equippedWeapon ?? null,
+              acc.equippedVestment ?? null,
+            ]
+          );
+        }
+        if (needsArmamentMigration) {
+          await dbPool.query(
+            'INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT (version) DO NOTHING',
+            ['20261119_permanent_armaments']
+          );
+          console.log(`[Migration] Permanent armaments assigned to ${migratedAccounts.length} PostgreSQL accounts.`);
+        }
       }
       console.log(`Loaded ${res.rows.length} accounts from PostgreSQL.`);
     } catch (err) {
@@ -389,10 +474,15 @@ async function initStorage(): Promise<void> {
       }
 
       const needsReset = !appliedMigrations.includes('20261106_reset_attributes');
+      const needsArmamentMigration = !appliedMigrations.includes('20261119_permanent_armaments');
       if (needsReset) {
         console.log('[JSON Storage] Applying one-time attribute reset migration...');
       }
+      if (needsArmamentMigration) {
+        console.log('[JSON Storage] Applying permanent armaments migration...');
+      }
 
+      let anyJsonChanged = false;
       for (const rec of list) {
         // STRICT: Never load 'wanderer' in production
         if (isProduction && rec.usernameLower === 'wanderer') continue;
@@ -416,19 +506,27 @@ async function initStorage(): Promise<void> {
           rec.attributePoints = Number(rec.attributePoints) || 0;
         }
         normalizeAccountLevel(rec);
+        if (applyAccountArmamentMigration(rec, needsArmamentMigration)) {
+          anyJsonChanged = true;
+        }
 
         accountsByLower.set(rec.usernameLower, rec);
         accountsById.set(rec.id, rec);
       }
 
-      if (needsReset) {
-        appliedMigrations.push('20261106_reset_attributes');
+      if (needsReset || needsArmamentMigration || anyJsonChanged) {
+        if (needsReset && !appliedMigrations.includes('20261106_reset_attributes')) {
+          appliedMigrations.push('20261106_reset_attributes');
+        }
+        if (needsArmamentMigration && !appliedMigrations.includes('20261119_permanent_armaments')) {
+          appliedMigrations.push('20261119_permanent_armaments');
+        }
         if (!fs.existsSync(DATA_DIR)) {
           fs.mkdirSync(DATA_DIR, { recursive: true });
         }
         fs.writeFileSync(MIGRATIONS_FILE, JSON.stringify(appliedMigrations, null, 2), 'utf8');
         fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(Array.from(accountsById.values()), null, 2), 'utf8');
-        console.log('[JSON Storage] One-time attribute reset applied and recorded.');
+        console.log('[JSON Storage] Account migrations applied and recorded.');
       }
       console.log(`Loaded ${accountsById.size} accounts from ${ACCOUNTS_FILE}`);
     } catch (err) {
@@ -474,6 +572,8 @@ function buildAccountRecord(
 ): AccountRecord {
   const validClass = normalizeHeroClass(chosenClass);
   const id = `usr_${crypto.randomBytes(6).toString('hex')}`;
+  const defaultWeapon = getDefaultWeaponIdForClass(validClass);
+  const defaultVestment = getDefaultVestmentIdForClass(validClass);
   return {
     id,
     username,
@@ -495,6 +595,10 @@ function buildAccountRecord(
     attributePoints: 0,
     level: 1,
     xp: 0,
+    ownedWeapons: [defaultWeapon],
+    ownedVestments: [defaultVestment],
+    equippedWeapon: defaultWeapon,
+    equippedVestment: defaultVestment,
   };
 }
 
@@ -616,10 +720,28 @@ function attachRoomPersistenceCallbacks(room: GameRoom): void {
       });
     }
   };
+  room.onArmamentUnlockedCallback = async (pid, slot, itemId) => {
+    const acc = accountsById.get(pid);
+    if (!acc) return;
+    applyAccountArmamentMigration(acc);
+    if (slot === 'weapon') {
+      if (!acc.ownedWeapons!.includes(itemId)) {
+        acc.ownedWeapons!.push(itemId);
+      }
+    } else {
+      if (!acc.ownedVestments!.includes(itemId)) {
+        acc.ownedVestments!.push(itemId);
+      }
+    }
+    await persistAccount(acc).catch(err => {
+      console.error('Failed to persist unlocked permanent armament:', err);
+    });
+  };
 }
 
 function toPartyAccount(acc: AccountRecord): PartyAccountInput {
   normalizeAccountLevel(acc);
+  applyAccountArmamentMigration(acc);
   return {
     id: acc.id,
     username: acc.username,
@@ -635,6 +757,10 @@ function toPartyAccount(acc: AccountRecord): PartyAccountInput {
       faith: acc.faith || 0,
       attributePoints: acc.attributePoints || 0,
       storage: acc.storedRelics || [],
+      ownedWeapons: [...(acc.ownedWeapons || [])],
+      ownedVestments: [...(acc.ownedVestments || [])],
+      equippedWeapon: acc.equippedWeapon ?? null,
+      equippedVestment: acc.equippedVestment ?? null,
     },
   };
 }
@@ -1531,6 +1657,88 @@ async function startServer() {
         persistAccount(acc).catch(console.error);
       } else if (msg.type === 'player:discard_potion') {
         room.discardPotion(acc.id, msg.count);
+      } else if (msg.type === 'player:equip_armament') {
+        const slot = msg.slot === 'weapon' || msg.slot === 'vestment' ? msg.slot : null;
+        const itemId = typeof msg.itemId === 'string' ? msg.itemId.trim() : '';
+        if (!slot || !itemId) {
+          sendJson(ws, { type: 'error', message: 'Invalid armament selection.' });
+          return;
+        }
+        applyAccountArmamentMigration(acc);
+        const def = getArmamentDef(slot, itemId);
+        if (!def) {
+          sendJson(ws, { type: 'error', message: 'Unknown permanent armament.' });
+          return;
+        }
+        const activeClass = acc.lockedClass || acc.preferredClass || 'vanguard';
+        if (def.heroClass !== activeClass) {
+          sendJson(ws, {
+            type: 'error',
+            message: `${def.name} requires the ${def.heroClass.toUpperCase()} class.`,
+          });
+          return;
+        }
+        const ownedList = slot === 'weapon' ? acc.ownedWeapons || [] : acc.ownedVestments || [];
+        if (!ownedList.includes(itemId)) {
+          sendJson(ws, {
+            type: 'error',
+            message: `Ownership verification failed: ${def.name} is not in your armory.`,
+          });
+          return;
+        }
+        if (slot === 'weapon') {
+          acc.equippedWeapon = itemId;
+        } else {
+          acc.equippedVestment = itemId;
+        }
+        const eqRes = room.equipArmament(acc.id, slot, itemId);
+        if (!eqRes.ok) {
+          sendJson(ws, { type: 'error', message: eqRes.error || 'Cannot equip armament.' });
+          return;
+        }
+        partyCoordinator.markRoomDirty(room.roomId);
+        persistAccount(acc).catch(err => {
+          console.error('Failed to persist equipped armament:', err);
+        });
+      } else if (msg.type === 'player:unequip_armament') {
+        const slot = msg.slot === 'weapon' || msg.slot === 'vestment' ? msg.slot : null;
+        if (!slot) {
+          sendJson(ws, { type: 'error', message: 'Invalid armament slot.' });
+          return;
+        }
+        applyAccountArmamentMigration(acc);
+        if (slot === 'weapon') {
+          acc.equippedWeapon = null;
+        } else {
+          acc.equippedVestment = null;
+        }
+        room.unequipArmament(acc.id, slot);
+        partyCoordinator.markRoomDirty(room.roomId);
+        persistAccount(acc).catch(err => {
+          console.error('Failed to persist unequipped armament:', err);
+        });
+      } else if (msg.type === 'admin:grant_armament') {
+        if (!acc.isAdmin) {
+          sendJson(ws, { type: 'error', message: 'Admin access required.' });
+          return;
+        }
+        const slot = msg.slot === 'weapon' || msg.slot === 'vestment' ? msg.slot : null;
+        const itemId = typeof msg.itemId === 'string' ? msg.itemId.trim() : '';
+        const def = slot ? getArmamentDef(slot, itemId) : null;
+        if (!slot || !def) {
+          sendJson(ws, { type: 'error', message: 'Unknown armament item ID.' });
+          return;
+        }
+        applyAccountArmamentMigration(acc);
+        const targetList = slot === 'weapon' ? acc.ownedWeapons! : acc.ownedVestments!;
+        if (!targetList.includes(itemId)) {
+          targetList.push(itemId);
+        }
+        room.grantArmament(acc.id, slot, itemId);
+        partyCoordinator.markRoomDirty(room.roomId);
+        persistAccount(acc).catch(err => {
+          console.error('Failed to persist admin-granted armament:', err);
+        });
       } else if (msg.type === 'player:change_class') {
         if (acc.isAdmin) {
           const validClass: HeroClassId =
@@ -1542,6 +1750,7 @@ async function startServer() {
               : 'vanguard';
           acc.lockedClass = validClass;
           acc.preferredClass = validClass;
+          applyAccountArmamentMigration(acc, true);
           persistAccount(acc).catch(console.error);
           room.changeClass(acc.id, validClass);
           room.pushSystemChat(`[ADMIN] ${acc.username} shifted hero class to ${validClass.toUpperCase()}`);

@@ -1,4 +1,28 @@
-import { HERO_CLASSES, type PlayerState } from '../shared/types.ts';
+import { HERO_CLASSES, type HeroClassId, type PlayerState } from '../shared/types.ts';
+import {
+  DEFAULT_VESTMENT_BY_CLASS,
+  DEFAULT_WEAPON_BY_CLASS,
+  resolveEquippedVestmentForClass,
+  resolveEquippedWeaponForClass,
+} from '../shared/armaments.ts';
+
+function resolveFallenWeaponId(
+  heroClass: HeroClassId,
+  equippedWeapon: string | null | undefined
+): string | null {
+  if (equippedWeapon === undefined) return DEFAULT_WEAPON_BY_CLASS[heroClass];
+  if (equippedWeapon === null) return null;
+  return resolveEquippedWeaponForClass(heroClass, equippedWeapon)?.id ?? null;
+}
+
+function resolveFallenVestmentId(
+  heroClass: HeroClassId,
+  equippedVestment: string | null | undefined
+): string | null {
+  if (equippedVestment === undefined) return DEFAULT_VESTMENT_BY_CLASS[heroClass];
+  if (equippedVestment === null) return null;
+  return resolveEquippedVestmentForClass(heroClass, equippedVestment)?.id ?? null;
+}
 
 /**
  * Beyond — Fallen & Ethereal Ghost State Animation System
@@ -205,82 +229,303 @@ export function drawFallenAndGhostPlayer(
   ctx.fillStyle = '#0F172A';
   ctx.fillRect(hx + 9, hy + 3, 4, 3); // boots
 
+  const droppedWeaponId = resolveFallenWeaponId(p.heroClass, p.equippedWeapon);
+  const fallenVestmentId = resolveFallenVestmentId(p.heroClass, p.equippedVestment);
+
   // Torso & Class Garb
   if (p.heroClass === 'vanguard') {
-    // Crumpled crimson cape
-    ctx.fillStyle = '#581C1C';
-    ctx.fillRect(hx - 8, hy + 3, 11, 4);
-    // Heavy steel plate
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(hx - 6, hy + 1, 9, 5);
-    // Darker plate edge
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(hx - 5, hy + 3, 7, 2);
-    // Fallen Greatsword beside body
-    ctx.strokeStyle = '#94A3B8';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(hx - 4, hy + 8);
-    ctx.lineTo(hx + 14, hy + 7);
-    ctx.stroke();
-    // Brass crossguard
-    ctx.fillStyle = '#B45309';
-    ctx.fillRect(hx - 2, hy + 7, 2, 3);
+    if (fallenVestmentId === 'vanguard_obsidian_juggernaut') {
+      // Dark charcoal cape & obsidian-riveted plate
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillRect(hx - 5, hy + 2, 7, 1);
+      ctx.fillStyle = '#F59E0B';
+      ctx.fillRect(hx - 2, hy + 3, 2, 2);
+    } else if (fallenVestmentId === 'vanguard_aegis_sovereign_mail') {
+      // Gold-trimmed crimson cape & gilded sanctum warplate
+      ctx.fillStyle = '#991B1B';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#D97706';
+      ctx.fillRect(hx - 8, hy + 6, 11, 1);
+      ctx.fillStyle = '#B91C1C';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#FCD34D';
+      ctx.fillRect(hx - 5, hy + 2, 7, 2);
+    } else if (fallenVestmentId === null) {
+      // Unarmored slate gambeson (no cape)
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#64748B';
+      ctx.fillRect(hx - 4, hy + 2, 5, 2);
+    } else {
+      // Ironcrest Bastion Plate: crimson cape + heavy steel plate
+      ctx.fillStyle = '#581C1C';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(hx - 5, hy + 3, 7, 2);
+    }
+    if (droppedWeaponId === 'vanguard_crimson_halberd') {
+      // Dropped Crimson Halberd beside body
+      ctx.strokeStyle = '#991B1B';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(hx - 6, hy + 8);
+      ctx.lineTo(hx + 15, hy + 7);
+      ctx.stroke();
+      ctx.fillStyle = '#E2E8F0';
+      ctx.fillRect(hx + 11, hy + 5, 4, 4);
+      ctx.fillStyle = '#EF4444';
+      ctx.fillRect(hx + 11, hy + 7, 2, 2);
+    } else if (droppedWeaponId === 'vanguard_stormbreaker_flail') {
+      // Dropped Stormbreaker Flail beside body
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hx - 4, hy + 8);
+      ctx.lineTo(hx + 6, hy + 8);
+      ctx.stroke();
+      ctx.strokeStyle = '#94A3B8';
+      ctx.beginPath();
+      ctx.moveTo(hx + 6, hy + 8);
+      ctx.lineTo(hx + 11, hy + 6);
+      ctx.stroke();
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(hx + 10, hy + 5, 4, 4);
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillRect(hx + 11, hy + 4, 2, 1);
+    } else if (droppedWeaponId !== null) {
+      // Fallen Greatsword beside body
+      ctx.strokeStyle = '#94A3B8';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(hx - 4, hy + 8);
+      ctx.lineTo(hx + 14, hy + 7);
+      ctx.stroke();
+      // Brass crossguard
+      ctx.fillStyle = '#B45309';
+      ctx.fillRect(hx - 2, hy + 7, 2, 3);
+    }
   } else if (p.heroClass === 'ranger') {
-    // Leather & forest cloak folds
-    ctx.fillStyle = '#064E3B';
-    ctx.fillRect(hx - 8, hy + 3, 11, 4);
-    ctx.fillStyle = '#14532D';
-    ctx.fillRect(hx - 6, hy + 1, 9, 5);
-    // Fallen recurve bow
-    ctx.strokeStyle = '#78350F';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(hx + 4, hy + 8, 8, -Math.PI * 0.4, Math.PI * 0.4);
-    ctx.stroke();
+    if (fallenVestmentId === 'ranger_windrunner_mantle') {
+      // Windrunner Mistcloak: slate-cyan mistcloak + teal tunic
+      ctx.fillStyle = '#0E7490';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#155E75';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#38BDF8';
+      ctx.fillRect(hx - 5, hy + 2, 6, 1);
+    } else if (fallenVestmentId === 'ranger_briarheart_leather') {
+      // Briarheart Sentinel Hauberk: living bark & emerald mantle
+      ctx.fillStyle = '#065F46';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#3F2E21';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#10B981';
+      ctx.fillRect(hx - 4, hy + 2, 4, 2);
+    } else if (fallenVestmentId === null) {
+      // Unarmored traveler tunic (no cloak)
+      ctx.fillStyle = '#57534E';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+      ctx.fillStyle = '#78716C';
+      ctx.fillRect(hx - 4, hy + 2, 5, 2);
+    } else {
+      // Thornwood Stalker Brigandine: leather & forest cloak folds
+      ctx.fillStyle = '#064E3B';
+      ctx.fillRect(hx - 8, hy + 3, 11, 4);
+      ctx.fillStyle = '#14532D';
+      ctx.fillRect(hx - 6, hy + 1, 9, 5);
+    }
+    if (droppedWeaponId === 'ranger_galewind_twinbow') {
+      ctx.strokeStyle = '#22D3EE';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(hx + 4, hy + 8, 8, -Math.PI * 0.42, Math.PI * 0.42);
+      ctx.stroke();
+      ctx.strokeStyle = '#BAE6FD';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(hx + 5.5, hy + 8, 6.5, -Math.PI * 0.35, Math.PI * 0.35);
+      ctx.stroke();
+    } else if (droppedWeaponId === 'ranger_eclipse_longbow') {
+      ctx.strokeStyle = '#4C1D95';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(hx + 3, hy + 8, 9.5, -Math.PI * 0.45, Math.PI * 0.45);
+      ctx.stroke();
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillRect(hx + 11, hy + 7, 2, 2);
+    } else if (droppedWeaponId !== null) {
+      // Fallen recurve bow
+      ctx.strokeStyle = '#78350F';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(hx + 4, hy + 8, 8, -Math.PI * 0.4, Math.PI * 0.4);
+      ctx.stroke();
+    }
   } else if (p.heroClass === 'arcanist') {
-    // Midnight cosmic robes
-    ctx.fillStyle = '#1E1B4B';
-    ctx.fillRect(hx - 8, hy + 2, 12, 5);
-    ctx.fillStyle = '#312E81';
-    ctx.fillRect(hx - 5, hy + 1, 8, 4);
-    // Fallen catalyst staff with dim pulsing star crystal
-    ctx.strokeStyle = '#5B21B6';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(hx - 5, hy + 8);
-    ctx.lineTo(hx + 13, hy + 7);
-    ctx.stroke();
-    const crystalPulse = 0.4 + Math.sin(now * 0.005) * 0.3;
-    ctx.fillStyle = `rgba(56, 189, 248, ${crystalPulse})`;
-    ctx.beginPath();
-    ctx.arc(hx + 14, hy + 7, 2, 0, Math.PI * 2);
-    ctx.fill();
+    if (fallenVestmentId === 'arcanist_chronomancer_shroud') {
+      // Chronomancer Silk Shroud: sapphire shroud + gold trim
+      ctx.fillStyle = '#0C4A6E';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#0284C7';
+      ctx.fillRect(hx - 5, hy + 1, 8, 4);
+      ctx.fillStyle = '#FBBF24';
+      ctx.fillRect(hx - 3, hy + 2, 4, 2);
+    } else if (fallenVestmentId === 'arcanist_voidward_robes') {
+      // Voidward Battlemage Robes: deep violet ward-cloth + magenta sigil
+      ctx.fillStyle = '#3B0764';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#581C87';
+      ctx.fillRect(hx - 5, hy + 1, 8, 4);
+      ctx.fillStyle = '#E879F9';
+      ctx.fillRect(hx - 3, hy + 2, 4, 2);
+    } else if (fallenVestmentId === null) {
+      // Unarmored apprentice tunic
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(hx - 6, hy + 2, 9, 4);
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(hx - 5, hy + 1, 7, 3);
+    } else {
+      // Spireweaver Astral Vestments: midnight cosmic robes
+      ctx.fillStyle = '#1E1B4B';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#312E81';
+      ctx.fillRect(hx - 5, hy + 1, 8, 4);
+    }
+    if (droppedWeaponId === 'arcanist_cinderflare_rod') {
+      ctx.strokeStyle = '#27272A';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(hx - 5, hy + 8);
+      ctx.lineTo(hx + 13, hy + 7);
+      ctx.stroke();
+      const flamePulse = 0.45 + Math.sin(now * 0.008) * 0.3;
+      ctx.fillStyle = `rgba(249, 115, 22, ${flamePulse})`;
+      ctx.beginPath();
+      ctx.arc(hx + 14, hy + 7, 2.3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (droppedWeaponId === 'arcanist_chronostar_scepter') {
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hx - 5, hy + 8);
+      ctx.lineTo(hx + 13, hy + 7);
+      ctx.stroke();
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(hx + 14, hy + 7, 2.8, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (droppedWeaponId !== null) {
+      // Fallen catalyst staff with dim pulsing star crystal
+      ctx.strokeStyle = '#5B21B6';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hx - 5, hy + 8);
+      ctx.lineTo(hx + 13, hy + 7);
+      ctx.stroke();
+      const crystalPulse = 0.4 + Math.sin(now * 0.005) * 0.3;
+      ctx.fillStyle = `rgba(56, 189, 248, ${crystalPulse})`;
+      ctx.beginPath();
+      ctx.arc(hx + 14, hy + 7, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
   } else {
-    // Cleric: Vestments & prayer stole
-    ctx.fillStyle = '#475569';
-    ctx.fillRect(hx - 8, hy + 2, 12, 5);
-    ctx.fillStyle = '#94A3B8';
-    ctx.fillRect(hx - 6, hy + 1, 9, 4);
-    // Faded gold stole
-    ctx.fillStyle = '#D97706';
-    ctx.fillRect(hx - 3, hy + 2, 5, 2);
-    // Fallen mace
-    ctx.strokeStyle = '#64748B';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(hx - 4, hy + 8);
-    ctx.lineTo(hx + 12, hy + 8);
-    ctx.stroke();
-    ctx.fillStyle = '#94A3B8';
-    ctx.fillRect(hx + 10, hy + 7, 3, 3);
+    if (fallenVestmentId === 'cleric_martyr_surplice') {
+      // Hallowed Martyr Surplice: emerald mantle & gold prayer stole
+      ctx.fillStyle = '#047857';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#CBD5E1';
+      ctx.fillRect(hx - 6, hy + 1, 9, 4);
+      ctx.fillStyle = '#34D399';
+      ctx.fillRect(hx - 3, hy + 2, 5, 2);
+    } else if (fallenVestmentId === 'cleric_templar_cassock') {
+      // Arch-Templar Sanctum Plate: crimson & gilded paladin plate
+      ctx.fillStyle = '#7F1D1D';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#CBD5E1';
+      ctx.fillRect(hx - 6, hy + 1, 9, 4);
+      ctx.fillStyle = '#FACC15';
+      ctx.fillRect(hx - 4, hy + 2, 6, 2);
+    } else if (fallenVestmentId === null) {
+      // Unarmored novice robe
+      ctx.fillStyle = '#64748B';
+      ctx.fillRect(hx - 6, hy + 2, 9, 4);
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillRect(hx - 5, hy + 1, 7, 3);
+    } else {
+      // Sunbrand Prelate Raiment: Vestments & prayer stole
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(hx - 8, hy + 2, 12, 5);
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillRect(hx - 6, hy + 1, 9, 4);
+      // Faded gold stole
+      ctx.fillStyle = '#D97706';
+      ctx.fillRect(hx - 3, hy + 2, 5, 2);
+    }
+    if (droppedWeaponId === 'cleric_solaris_censer') {
+      ctx.strokeStyle = '#64748B';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hx - 4, hy + 8);
+      ctx.lineTo(hx + 12, hy + 8);
+      ctx.stroke();
+      ctx.fillStyle = '#34D399';
+      ctx.fillRect(hx + 11, hy + 7, 3, 3);
+    } else if (droppedWeaponId === 'cleric_seraphim_crozier') {
+      ctx.strokeStyle = '#FDE047';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(hx - 5, hy + 8);
+      ctx.lineTo(hx + 13, hy + 7);
+      ctx.stroke();
+      ctx.fillStyle = '#FEF08A';
+      ctx.fillRect(hx + 11, hy + 5, 3, 4);
+    } else if (droppedWeaponId !== null) {
+      // Fallen mace
+      ctx.strokeStyle = '#64748B';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(hx - 4, hy + 8);
+      ctx.lineTo(hx + 12, hy + 8);
+      ctx.stroke();
+      ctx.fillStyle = '#94A3B8';
+      ctx.fillRect(hx + 10, hy + 7, 3, 3);
+    }
   }
 
-  // Slumped Head / Cowl on the stones
-  ctx.fillStyle = '#0F172A';
-  ctx.fillRect(hx - 9, hy + 1, 5, 5);
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(hx - 8, hy, 4, 3);
+  // Slumped Head / Helm / Cowl on the stones (varies with vestment vs unarmored)
+  if (fallenVestmentId === null) {
+    ctx.fillStyle = '#D6A87C';
+    ctx.fillRect(hx - 9, hy + 1, 5, 5);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(hx - 9, hy, 5, 2);
+  } else if (fallenVestmentId === 'vanguard_aegis_sovereign_mail' || fallenVestmentId === 'cleric_templar_cassock') {
+    ctx.fillStyle = '#78350F';
+    ctx.fillRect(hx - 9, hy + 1, 5, 5);
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(hx - 8, hy, 4, 3);
+  } else if (fallenVestmentId === 'ranger_windrunner_mantle' || fallenVestmentId === 'arcanist_chronomancer_shroud') {
+    ctx.fillStyle = '#0F172A';
+    ctx.fillRect(hx - 9, hy + 1, 5, 5);
+    ctx.fillStyle = '#38BDF8';
+    ctx.fillRect(hx - 8, hy, 4, 3);
+  } else if (fallenVestmentId === 'arcanist_voidward_robes') {
+    ctx.fillStyle = '#3B0764';
+    ctx.fillRect(hx - 9, hy + 1, 5, 5);
+    ctx.fillStyle = '#C084FC';
+    ctx.fillRect(hx - 8, hy, 4, 3);
+  } else {
+    ctx.fillStyle = '#0F172A';
+    ctx.fillRect(hx - 9, hy + 1, 5, 5);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(hx - 8, hy, 4, 3);
+  }
 
   // =========================================================================
   // 3. ETHEREAL FLOATING GHOST / SOUL SPIRIT (Ascended Overhead)

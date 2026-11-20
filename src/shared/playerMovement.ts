@@ -8,11 +8,13 @@ import {
   type PlayerStatusEffect,
   type PropState,
 } from './types.ts';
+import { resolveEquippedVestmentForClass } from './armaments.ts';
 
 export interface MovablePlayerLike {
   heroClass: HeroClassId;
   dexterity?: number;
   relics: readonly string[];
+  equippedVestment?: string | null;
   hasteMs?: number;
   floorBlessings?: readonly FloorBlessingId[];
   speedBoost?: boolean;
@@ -179,6 +181,10 @@ export function moveWithCollision(
 export function computePlayerMoveSpeed(player: MovablePlayerLike): number {
   const def = HERO_CLASSES[player.heroClass];
   let moveSpeed = def.speed * (1 + (player.dexterity || 0) * 0.0025);
+  const equippedVestment = resolveEquippedVestmentForClass(player.heroClass, player.equippedVestment);
+  if (equippedVestment?.modifiers.moveSpeedMult && equippedVestment.modifiers.moveSpeedMult !== 1) {
+    moveSpeed *= equippedVestment.modifiers.moveSpeedMult;
+  }
   if (player.relics.includes('zephyr_greaves')) moveSpeed *= 1.15;
   if ((player.hasteMs || 0) > 0) moveSpeed *= 1.22;
 
