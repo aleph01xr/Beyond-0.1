@@ -23,7 +23,7 @@ export interface PredictionStepResult {
   snapped: boolean;
 }
 
-const MIN_BLEND_ERROR_PX = 1.5;
+const MIN_BLEND_ERROR_PX = 4.5;
 const HARD_SNAP_ERROR_PX = 48;
 const ERROR_DECAY_RATE = 18;
 const MAX_PENDING_STEPS = 45;
@@ -186,7 +186,7 @@ export class LocalPredictionController {
           hasMovementInput(liveInput) &&
           (Math.hypot(me.vx, me.vy) > 5 || ackSeq >= latestSentSeq)
         ) {
-          const leadSec = Math.min(0.10, Math.max(0.008, oneWayLatencySec + 0.012));
+          const leadSec = Math.min(0.08, Math.max(0.005, oneWayLatencySec + 0.006));
           stepPlayerMovement(reconciled, liveInput, map, props, leadSec, {
             moveSpeed,
             disoriented: isDisoriented,
@@ -210,16 +210,18 @@ export class LocalPredictionController {
         this.errorOffsetY = 0;
         this.pendingSteps.length = 0;
         snapped = true;
-      } else {
+      } else if (reconciledErrorPx > MIN_BLEND_ERROR_PX) {
         const prevVisualX = this.predX + this.errorOffsetX;
         const prevVisualY = this.predY + this.errorOffsetY;
         this.predX = reconciled.x;
         this.predY = reconciled.y;
-        if (reconciledErrorPx > MIN_BLEND_ERROR_PX) {
-          // Preserve visual continuity and bleed correction out smoothly
-          this.errorOffsetX = prevVisualX - this.predX;
-          this.errorOffsetY = prevVisualY - this.predY;
-        }
+        // Preserve visual continuity and bleed correction out smoothly
+        this.errorOffsetX = prevVisualX - this.predX;
+        this.errorOffsetY = prevVisualY - this.predY;
+      } else if (reconciledErrorPx > 0.2) {
+        // Softly converge sub-threshold phase drift without introducing frame-to-frame rubber-banding
+        this.predX += errX * 0.14;
+        this.predY += errY * 0.14;
       }
     }
 

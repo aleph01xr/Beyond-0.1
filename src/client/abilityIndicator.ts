@@ -50,7 +50,12 @@ export function drawAbilityTargetingIndicator(
   aim: AbilityAimState,
   now: number
 ): void {
-  const spec = getAbilityTargetSpec(player.heroClass, aim.action, player.equippedScrollId);
+  const spec = getAbilityTargetSpec(
+    player.heroClass,
+    aim.action,
+    player.equippedScrollId,
+    player.equippedWeapon
+  );
   const cancelled = aim.cancelled;
   const primary = cancelled ? '#EF4444' : spec.accentColor;
   const secondary = cancelled
@@ -422,16 +427,20 @@ export function drawAbilityTargetingIndicator(
         }
       }
     } else if (player.heroClass === 'cleric') {
-      for (const ally of snap.players) {
-        if (Math.hypot(ally.x - target.x, ally.y - target.y) <= spec.aoeRadius) {
-          drawTargetBracket(
-            ctx,
-            ally.x,
-            ally.y,
-            14,
-            cancelled ? '#EF4444' : '#34D399',
-            now
-          );
+      const isSeraphimJudgment =
+        aim.action === 'tactical' && player.equippedWeapon === 'cleric_seraphim_crozier';
+      if (!isSeraphimJudgment) {
+        for (const ally of snap.players) {
+          if (Math.hypot(ally.x - target.x, ally.y - target.y) <= spec.aoeRadius) {
+            drawTargetBracket(
+              ctx,
+              ally.x,
+              ally.y,
+              14,
+              cancelled ? '#EF4444' : '#34D399',
+              now
+            );
+          }
         }
       }
       for (const en of snap.enemies) {

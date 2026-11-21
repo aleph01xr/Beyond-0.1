@@ -20,7 +20,7 @@ export interface PingDiagnostics {
   serverTickMs?: number;
 }
 
-export const HUD_MAX_STALE_MS = 450;
+export const HUD_MAX_STALE_MS = 1500;
 export const SERVER_TICK_MS = 25;
 export const CLIENT_INPUT_CONTINUOUS_INTERVAL_MS = 20;
 export const CLIENT_INPUT_BACKPRESSURE_RETRY_MS = 12;
@@ -170,7 +170,7 @@ export function buildSnapshotHudKey(
     const dashSec = Math.ceil((me.dashCooldownMs || 0) / 1000);
     const statusKey =
       me.statuses && me.statuses.length > 0
-        ? me.statuses.map((s) => `${s.type}:${Math.ceil(s.durationMs / 100)}`).join(',')
+        ? me.statuses.map((s) => `${s.type}:${Math.ceil(s.durationMs / 500)}`).join(',')
         : '';
     meKey = [
       me.id,
@@ -206,7 +206,7 @@ export function buildSnapshotHudKey(
       me.equippedScrollId ?? '',
       me.pendingScrollChoices?.join(',') ?? '',
       me.disintegrationState?.active ? 1 : 0,
-      me.spellCastState ? `${me.spellCastState.spellId}:${Math.ceil(me.spellCastState.remainingMs / 100)}` : '',
+      me.spellCastState ? `${me.spellCastState.spellId}:${Math.ceil(me.spellCastState.remainingMs / 250)}` : '',
       (me.chronoSuspendedMs || 0) > 0 ? 1 : 0,
       me.equippedWeapon ?? 'none',
       me.equippedVestment ?? 'none',

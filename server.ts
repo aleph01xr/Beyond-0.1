@@ -1707,10 +1707,11 @@ async function startServer() {
           return;
         }
         applyAccountArmamentMigration(acc);
+        const activeClass = acc.lockedClass || acc.preferredClass || 'vanguard';
         if (slot === 'weapon') {
           acc.equippedWeapon = null;
         } else {
-          acc.equippedVestment = null;
+          acc.equippedVestment = getDefaultVestmentIdForClass(activeClass);
         }
         room.unequipArmament(acc.id, slot);
         partyCoordinator.markRoomDirty(room.roomId);
@@ -2062,6 +2063,8 @@ async function startServer() {
 
   const TICK_MS = SERVER_TICK_MS; // 40 Hz (25ms) drift-free authoritative simulation loop
   let nextTickAt = performance.now() + TICK_MS;
+  const keyframeTargets: ConnectedClient[] = [];
+  const deltaTargets: ConnectedClient[] = [];
 
   const runServerTick = () => {
     const tickStart = performance.now();
@@ -2084,8 +2087,16 @@ async function startServer() {
 
       const clientCount = roomClientIndex.getRoomClientCount(roomId);
       const statusTransitioned = room.status !== prevStatus;
-      const roomClients = clientCount > 0 ? Array.from(roomClientIndex.getRoomClients(roomId)) : [];
-      const anyNeedsKeyframe = roomClients.some((c) => c.needsKeyframe);
+      let anyNeedsKeyframe = false;
+      const roomClientsIter = clientCount > 0 ? roomClientIndex.getRoomClients(roomId) : null;
+      if (roomClientsIter) {
+        for (const c of roomClientsIter) {
+          if (c.needsKeyframe) {
+            anyNeedsKeyframe = true;
+            break;
+          }
+        }
+      }
       const shouldBroadcast =
         clientCount > 0 &&
         (room.status === 'playing' ||
@@ -2093,7 +2104,7 @@ async function startServer() {
           dirtyNonPlayingRooms.has(roomId) ||
           anyNeedsKeyframe);
 
-      if (shouldBroadcast) {
+      if (shouldBroadcast && roomClientsIter) {
         const snapshot = room.buildNetworkSnapshot();
         let deltaState = roomDeltaStates.get(roomId);
         if (!deltaState) {
@@ -2102,13 +2113,13 @@ async function startServer() {
         }
         const nextSeq = deltaState.seq + 1;
 
-        const keyframeTargets: ConnectedClient[] = [];
-        const deltaTargets: ConnectedClient[] = [];
+        keyframeTargets.length = 0;
+        deltaTargets.length = 0;
 
         if (!deltaState.lastBaseline) {
-          for (const c of roomClients) keyframeTargets.push(c);
+          for (const c of roomClientsIter) keyframeTargets.push(c);
         } else {
-          for (const c of roomClients) {
+          for (const c of roomClientsIter) {
             if (c.needsKeyframe) keyframeTargets.push(c);
             else deltaTargets.push(c);
           }
@@ -2120,7 +2131,8 @@ async function startServer() {
             snapshot,
             seq: nextSeq,
           } satisfies ServerMessage);
-          for (const c of keyframeTargets) {
+          for (let i = 0; i < keyframeTargets.length; i++) {
+            const c = keyframeTargets[i];
             const outcome = sendRawFrame(c, rawKeyframe, { droppable: true });
             if (outcome === 'sent') {
               c.needsKeyframe = false;
@@ -2144,7 +2156,8 @@ async function startServer() {
             { droppable: true }
           );
           if (stats.closedCount > 0) {
-            for (const c of deltaTargets) {
+            for (let i = 0; i < deltaTargets.length; i++) {
+              const c = deltaTargets[i];
               if (c.ws.readyState !== WebSocket.OPEN) {
                 roomClientIndex.removeFromRoom(c, roomId);
                 clients.delete(c);

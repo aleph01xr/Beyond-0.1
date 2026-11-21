@@ -53,6 +53,7 @@ import {
   drawFlameShape,
   drawParticleShape,
   drawEnhancedProjectile,
+  quantizeGlowRgbKey,
   type CombatParticle,
 } from './src/client/canvasEffects.ts';
 import { CHANGELOG_DATA, CATEGORY_ORDER } from './src/data/changelog.ts';
@@ -65,6 +66,7 @@ import {
 import {
   computePlayerMoveSpeed,
   hasMovementInput,
+  isWallAtWorld,
   normalizePlayerInputDirection,
 } from './src/shared/playerMovement.ts';
 import {
@@ -77,6 +79,7 @@ import {
   verifySharedIdentityRequestSecret,
 } from './src/server/sharedIdentity.ts';
 import {
+  ARMAMENT_TUNING,
   DEFAULT_VESTMENT_BY_CLASS,
   DEFAULT_WEAPON_BY_CLASS,
   VESTMENT_CATALOG,
@@ -85,6 +88,7 @@ import {
   getClassVestments,
   getClassWeapons,
   normalizeArmamentLoadout,
+  resolveActiveVestmentPassive,
   resolveEquippedVestmentForClass,
   resolveEquippedWeaponForClass,
 } from './src/shared/armaments.ts';
@@ -8434,20 +8438,26 @@ async function runRegressionTests() {
     assert.strictEqual(eqWpn.ok, true);
     assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedWeapon, 'vanguard_crimson_halberd');
 
-    const baseHp = room.getPlayerState('p_vanguard')!.maxHp;
+    const defaultVestHp = room.getPlayerState('p_vanguard')!.maxHp;
     room.grantArmament('p_vanguard', 'vestment', 'vanguard_obsidian_juggernaut');
     const eqVest = room.equipArmament('p_vanguard', 'vestment', 'vanguard_obsidian_juggernaut');
     assert.strictEqual(eqVest.ok, true);
-    assert.strictEqual(room.getPlayerState('p_vanguard')!.maxHp, baseHp + 28);
+    assert.strictEqual(
+      room.getPlayerState('p_vanguard')!.maxHp,
+      defaultVestHp + ARMAMENT_TUNING.passives ? defaultVestHp + 25 : defaultVestHp + 25
+    );
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.activePassiveId, 'war_monger');
 
     const uneqWpn = room.unequipArmament('p_vanguard', 'weapon');
     assert.strictEqual(uneqWpn.ok, true);
     assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedWeapon, null);
 
+    // Unequipping Vestment restores class default Vestment & passive cleanly
     const uneqVest = room.unequipArmament('p_vanguard', 'vestment');
     assert.strictEqual(uneqVest.ok, true);
-    assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedVestment, null);
-    assert.strictEqual(room.getPlayerState('p_vanguard')!.maxHp, baseHp);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.equippedVestment, DEFAULT_VESTMENT_BY_CLASS.vanguard);
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.activePassiveId, 'iron_will');
+    assert.strictEqual(room.getPlayerState('p_vanguard')!.maxHp, defaultVestHp);
   });
 
   // --- Test 111: Legacy Account Migration & Tamper Normalization ---
@@ -8490,13 +8500,17 @@ async function runRegressionTests() {
     assert.deepStrictEqual(legacyAcc.storedRelics, ['keen_arrowhead', 'sunfire_signet']);
     assert.strictEqual(legacyAcc.runsCompleted, 5);
 
-    // Post-migration intentional unequip (`null`) must be preserved on subsequent logins/restarts
+    // Post-migration intentional weapon unequip (`null`) is preserved, while null vestment restores default vestment
     legacyAcc.equippedWeapon = null;
     legacyAcc.equippedVestment = null;
     const secondRun = applyAccountArmamentMigration(legacyAcc, false);
-    assert.strictEqual(secondRun, false);
+    assert.strictEqual(secondRun, true);
     assert.strictEqual(legacyAcc.equippedWeapon, null);
-    assert.strictEqual(legacyAcc.equippedVestment, null);
+    assert.strictEqual(legacyAcc.equippedVestment, DEFAULT_VESTMENT_BY_CLASS.ranger);
+    const thirdRun = applyAccountArmamentMigration(legacyAcc, false);
+    assert.strictEqual(thirdRun, false);
+    assert.strictEqual(legacyAcc.equippedWeapon, null);
+    assert.strictEqual(legacyAcc.equippedVestment, DEFAULT_VESTMENT_BY_CLASS.ranger);
 
     // Tampered / spoofed / cross-class entries are stripped server-side
     const sanitized = normalizeArmamentLoadout('cleric', {
@@ -8546,7 +8560,7 @@ async function runRegressionTests() {
         elite: false,
       });
 
-      // 1. VANGUARD: Sunforged Claymore (Guard-Edge when shielded), Crimson Halberd (Tipper >= 28px + Bleed), Stormbreaker Flail (Chain Lightning Arc + Shield + Shock)
+      // 1. VANGUARD: Sunforged Claymore (Golden cone shockwave when Shield > 0), Crimson Halberd (+3 pierce / +26px reach / single-hit per swing), Stormbreaker Flail (360° Tempest Wheel + Shock + +3 Shield)
       const vRoom = new GameRoom({
         roomId: 'WPN_V',
         name: 'Vanguard Armory Combat',
@@ -8559,24 +8573,6 @@ async function runRegressionTests() {
       const vpLive = vRoom.getPlayerState('v1')!;
       vpLive.aimAngle = 0;
 
-      // Claymore Guard-Edge (+12% while holding Shield)
-      const clayTarget = makeEnemy('v_clay', 'goblin', vpLive.x + 28, vpLive.y);
-      vRoom.enemies = [clayTarget];
-      vpLive.shield = 0;
-      vRoom.projectiles = [];
-      vRoom.firePrimaryAttack(vpLive);
-      const clayHp0 = clayTarget.hp;
-      vRoom.tick(30);
-      const claymoreUnshieldedDmg = clayHp0 - clayTarget.hp;
-
-      vpLive.shield = 20;
-      vRoom.projectiles = [];
-      vRoom.firePrimaryAttack(vpLive);
-      const clayHp1 = clayTarget.hp;
-      vRoom.tick(30);
-      const claymoreShieldedDmg = clayHp1 - clayTarget.hp;
-      assert.ok(claymoreShieldedDmg > claymoreUnshieldedDmg, `Claymore Guard-Edge must boost hit damage when shielded (${claymoreShieldedDmg} vs ${claymoreUnshieldedDmg})`);
-
       const stepRoom = (rm: GameRoom, totalMs: number) => {
         let rem = totalMs;
         while (rem > 0) {
@@ -8586,48 +8582,57 @@ async function runRegressionTests() {
         }
       };
 
-      // Halberd Tipper (+20% at >= 28px reach) & Bleed
-      vRoom.grantArmament('v1', 'weapon', 'vanguard_crimson_halberd');
-      vRoom.equipArmament('v1', 'weapon', 'vanguard_crimson_halberd');
-      const closeSkeleton = makeEnemy('v_close', 'skeleton', vpLive.x + 14, vpLive.y);
-      const tipperSkeleton = makeEnemy('v_tip', 'skeleton', vpLive.x + 42, vpLive.y);
-      vRoom.enemies = [closeSkeleton];
+      // Claymore Sunforged Shockwave (triggers when shield > 0, absent when shield === 0)
+      const clayTarget = makeEnemy('v_clay', 'goblin', vpLive.x + 100, vpLive.y);
+      vRoom.enemies = [clayTarget];
+      vpLive.shield = 0;
+      vRoom.zones = [];
       vRoom.projectiles = [];
       vRoom.firePrimaryAttack(vpLive);
-      assert.strictEqual(vRoom.projectiles[0].weaponId, 'vanguard_crimson_halberd');
-      const closeHp0 = closeSkeleton.hp;
       stepRoom(vRoom, 30);
-      const closeDealt = closeHp0 - closeSkeleton.hp;
+      assert.strictEqual(vRoom.zones.some((z) => z.kind === 'sunforged_shockwave'), false, 'Claymore must NOT emit shockwave at 0 shield');
+      const clayHpUnshielded = clayTarget.hp;
 
-      vRoom.enemies = [tipperSkeleton];
+      vpLive.shield = 20;
+      vRoom.zones = [];
+      vRoom.projectiles = [];
+      vRoom.firePrimaryAttack(vpLive);
+      assert.ok(vRoom.zones.some((z) => z.kind === 'sunforged_shockwave'), 'Claymore must emit sunforged_shockwave when Shield > 0');
+      assert.ok(clayTarget.hp < clayHpUnshielded, 'Sunforged shockwave must strike cone targets out to 118px');
+
+      // Halberd (+3 pierce, +26px reach, hits each target once per swing & inflicts Bleed)
+      vRoom.grantArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+      vRoom.equipArmament('v1', 'weapon', 'vanguard_crimson_halberd');
+      const halberdSkeleton = makeEnemy('v_halb', 'skeleton', vpLive.x + 56, vpLive.y);
+      vRoom.enemies = [halberdSkeleton];
       Math.random = () => 0.2; // triggers 45% bleedChance
       vRoom.projectiles = [];
       vRoom.firePrimaryAttack(vpLive);
-      const tipHp0 = tipperSkeleton.hp;
-      stepRoom(vRoom, 30);
-      const tipDealt = tipHp0 - tipperSkeleton.hp;
-      assert.ok(tipDealt > closeDealt, `Halberd Tipper (${tipDealt}) must exceed close hit (${closeDealt})`);
-      assert.ok(tipperSkeleton.bleedingMs > 0, 'Crimson Halberd primary hit should inflict Bleed');
+      assert.strictEqual(vRoom.projectiles[0].weaponId, 'vanguard_crimson_halberd');
+      assert.ok(vRoom.projectiles[0].pierce >= 7, 'Crimson Halberd adds +3 pierce (base 4 + 3 = 7)');
+      const hpBeforeHalb = halberdSkeleton.hp;
+      stepRoom(vRoom, 120);
+      assert.ok(halberdSkeleton.hp < hpBeforeHalb, 'Crimson Halberd must strike extended range targets');
+      assert.ok(halberdSkeleton.bleedingMs > 0, 'Crimson Halberd primary hit should inflict Bleed');
 
-      // Stormbreaker Flail (Instant Chain Lightning arc to 2 nearby enemies within 105px + zone + Shock + +4 Shield)
-      Math.random = () => 0.2; // triggers 25% shockChance cleanly
+      // Stormbreaker Flail (360° Tempest Wheel around Vanguard + Shock + +3 Shield)
+      Math.random = () => 0.2; // triggers 25% shockChance
       vRoom.grantArmament('v1', 'weapon', 'vanguard_stormbreaker_flail');
       vRoom.equipArmament('v1', 'weapon', 'vanguard_stormbreaker_flail');
-      const flailMain = makeEnemy('v_flail_0', 'goblin', vpLive.x + 28, vpLive.y);
-      const flailChain1 = makeEnemy('v_flail_1', 'goblin', vpLive.x + 78, vpLive.y + 15);
-      const flailChain2 = makeEnemy('v_flail_2', 'goblin', vpLive.x + 95, vpLive.y - 20);
-      vRoom.enemies = [flailMain, flailChain1, flailChain2];
+      const flailFront = makeEnemy('v_flail_0', 'goblin', vpLive.x + 68, vpLive.y);
+      const flailBehind = makeEnemy('v_flail_1', 'goblin', vpLive.x - 68, vpLive.y);
+      vRoom.enemies = [flailFront, flailBehind];
       vpLive.shield = 10;
       vRoom.projectiles = [];
       vRoom.zones = [];
       vRoom.firePrimaryAttack(vpLive);
-      stepRoom(vRoom, 30);
-      assert.ok(vpLive.shield >= 14, `Expected +4 shield on Stormbreaker hit, got ${vpLive.shield}`);
-      assert.ok(flailMain.shockedMs > 0, 'Stormbreaker Flail primary hit should Shock enemy');
-      assert.ok(flailChain1.hp < 1000 && flailChain2.hp < 1000, 'Stormbreaker Tempest Arc must chain lightning to 2 nearby enemies');
-      assert.ok(vRoom.zones.some((z) => z.kind === 'chain_lightning_arc'), 'Stormbreaker Tempest Arc must spawn visual chain_lightning_arc zone');
+      assert.strictEqual(vRoom.projectiles.length, 0, 'Stormbreaker Tempest Wheel replaces directional cleave projectile with 360° AoE');
+      assert.ok(vRoom.zones.some((z) => z.kind === 'tempest_wheel'), 'Stormbreaker must spawn tempest_wheel zone');
+      assert.ok(flailFront.hp < 1000 && flailBehind.hp < 1000, 'Stormbreaker Tempest Wheel must damage enemies 360° around Vanguard');
+      assert.ok(vpLive.shield >= 16, `Expected +3 shield per hit (10 + 6 = 16), got ${vpLive.shield}`);
+      assert.ok(flailFront.shockedMs > 0, 'Stormbreaker Flail primary hit should Shock enemy');
 
-      // 2. RANGER: Ashwood Recurve (Barbed Broadheads +15% vs Slowed), Galewind Twinbow (sequential straight double-tap + knockback + crit haste, NOT angled twinstring), Eclipse Longbow (Overpenetration escalating pierce dmg)
+      // 2. RANGER: Ashwood Recurve (Barbed Broadheads +15% vs Slowed), Galewind Twinbow (per-target 3rd-hit Galeburst wind AoE), Eclipse Longbow (Hold-to-Charge + INT scaling)
       Math.random = () => 0.99;
       const rRoom = new GameRoom({
         roomId: 'WPN_R',
@@ -8660,61 +8665,67 @@ async function runRegressionTests() {
       const slowDealt = slowBefore - slowedGoblin.hp;
       assert.ok(slowDealt > cleanDealt, `Ashwood Barbed Broadheads vs slowed (${slowDealt}) must exceed clean (${cleanDealt})`);
 
-      // Galewind Twinbow sequential follow-up burst (NOT angled Twinstring clone)
+      // Galewind Twinbow: Per-target 3-hit Galeburst (1 -> 2 -> burst + wind AoE!)
       rRoom.enemies = [];
       rRoom.grantArmament('r1', 'weapon', 'ranger_galewind_twinbow');
       rRoom.equipArmament('r1', 'weapon', 'ranger_galewind_twinbow');
-      rRoom.projectiles = [];
-      rRoom.firePrimaryAttack(rp);
-      assert.strictEqual(rRoom.projectiles.length, 1, 'Galewind Twinbow must launch 1 initial straight arrow (no Twinstring spread clone)');
-      assert.strictEqual(Math.abs(rRoom.projectiles[0].angle), 0, 'Initial Galewind shaft must travel straight along aimAngle');
-      stepRoom(rRoom, 80);
-      assert.strictEqual(rRoom.projectiles.length, 2, 'Galewind Twinbow must fire its 2nd sequential straight tailwind arrow after 75ms');
-      assert.strictEqual(Math.abs(rRoom.projectiles[1].angle), 0, '2nd Galewind shaft must travel straight along aimAngle');
+      const gbMain = makeEnemy('r_gb_1', 'goblin', rp.x + 60, rp.y);
+      const gbSplash = makeEnemy('r_gb_splash', 'goblin', rp.x + 60, rp.y + 44);
+      gbMain.stunnedMs = 5000;
+      gbSplash.stunnedMs = 5000;
+      rRoom.enemies = [gbMain, gbSplash];
+      rRoom.zones = [];
 
-      // 2nd Galewind shaft knocks non-boss back 12px & crits grant Galewind Haste
-      const kbGoblin = makeEnemy('r_kb', 'goblin', rp.x + 65, rp.y);
-      kbGoblin.stunnedMs = 1000;
-      const kbStartX = kbGoblin.x;
-      rRoom.enemies = [kbGoblin];
+      // Hit 1 & Hit 2 build per-target marks without bursting
+      for (let shot = 1; shot <= 2; shot++) {
+        rRoom.projectiles = [];
+        rRoom.firePrimaryAttack(rp);
+        stepRoom(rRoom, 110);
+        assert.strictEqual(gbMain.galeburstMarks, shot, `Expected ${shot} Galeburst mark(s) after hit ${shot}`);
+        assert.strictEqual(gbSplash.hp, 1000, 'Adjacent enemy must not take Galeburst damage before 3rd hit');
+      }
+      // Hit 3 triggers Galeburst wind AoE & resets mark to 0
       rRoom.projectiles = [];
-      Math.random = () => 0.01; // force crit
-      rp.hasteMs = 0;
       rRoom.firePrimaryAttack(rp);
-      stepRoom(rRoom, 100); // 1st arrow hits + triggers haste, 2nd follow-up spawns
-      assert.ok(rp.hasteMs >= 600, 'Galewind Twinbow crit must grant Galewind Haste');
-      stepRoom(rRoom, 125); // 2nd follow-up shaft hits -> knockback
-      assert.ok(kbGoblin.x >= kbStartX + 10, `Galewind 2nd shaft must knock enemy back (before=${kbStartX}, after=${kbGoblin.x})`);
+      stepRoom(rRoom, 110);
+      assert.strictEqual(gbMain.galeburstMarks, 0, 'Galeburst marks reset to 0 after detonation');
+      assert.ok(rRoom.zones.some((z) => z.kind === 'galeburst_nova'), 'Expected galeburst_nova zone on 3rd hit');
+      assert.ok(gbSplash.hp < 1000, 'Galeburst wind AoE must damage nearby enemies');
 
       // Verify Twinstring Charm relic STILL stacks cleanly as its own separate angled system
-      Math.random = () => 0.99;
       rRoom.addPlayerRelic('r1', 'twinstring_charm');
       rRoom.enemies = [];
       rRoom.projectiles = [];
       rRoom.firePrimaryAttack(rp);
       assert.strictEqual(rRoom.projectiles.length, 2, 'Twinstring Charm still adds 1 angled spread arrow independently');
-      stepRoom(rRoom, 80);
-      assert.strictEqual(rRoom.projectiles.length, 3, 'Twinbow follow-up shaft adds on top of independent Twinstring Charm shots');
 
-      // Eclipse Longbow: +2 pierce + Overpenetration escalating damage per pierced target
+      // Eclipse Longbow: Hold-to-Charge + Intelligence scaling
       rRoom.enemies = [];
       rp.relics = [];
       rRoom.grantArmament('r1', 'weapon', 'ranger_eclipse_longbow');
       rRoom.equipArmament('r1', 'weapon', 'ranger_eclipse_longbow');
-      const eFirst = makeEnemy('r_ec_1', 'goblin', rp.x + 42, rp.y);
-      const eSecond = makeEnemy('r_ec_2', 'goblin', rp.x + 76, rp.y);
-      eFirst.stunnedMs = 1000;
-      eSecond.stunnedMs = 1000;
-      rRoom.enemies = [eFirst, eSecond];
       rRoom.projectiles = [];
-      rRoom.firePrimaryAttack(rp);
-      assert.ok(rRoom.projectiles[0].pierce >= 3, 'Eclipse Longbow grants +2 bonus pierce (3+ total)');
-      stepRoom(rRoom, 160);
-      const e1Dmg = 1000 - eFirst.hp;
-      const e2Dmg = 1000 - eSecond.hp;
-      assert.ok(e2Dmg > e1Dmg, `Eclipse Overpenetration 2nd hit (${e2Dmg}) must escalate above 1st hit (${e1Dmg})`);
+      rRoom.fireEclipseChargedShot(rp, 0);
+      const minShot = rRoom.projectiles[0];
+      assert.ok(minShot.pierce >= 3, 'Eclipse Longbow grants +2 bonus pierce (3+ total)');
+      rRoom.projectiles = [];
+      rRoom.fireEclipseChargedShot(rp, ARMAMENT_TUNING.weapons.eclipse.maxChargeMs);
+      const fullShot = rRoom.projectiles[0];
+      assert.ok(fullShot.damage > minShot.damage * 2, `Full draw Eclipse shot (${fullShot.damage}) must massively exceed uncharged (${minShot.damage})`);
+      assert.ok(Math.hypot(fullShot.vx, fullShot.vy) > Math.hypot(minShot.vx, minShot.vy), 'Full draw arrow flies faster');
 
-      // 3. ARCANIST: Runebound Spire (Active Star Rift Resonance), Cinderflare Rod (Ember Detonation 54px AoE), Chronostar Scepter (Seeking Star-Orb + Cooldown Siphon + Chill)
+      // Confirm Intelligence increases Eclipse shot damage while Dexterity does not
+      const dmgIntBase = fullShot.damage;
+      rp.dexterity += 20;
+      rRoom.projectiles = [];
+      rRoom.fireEclipseChargedShot(rp, ARMAMENT_TUNING.weapons.eclipse.maxChargeMs);
+      assert.strictEqual(rRoom.projectiles[0].damage, dmgIntBase, 'DEX must not boost Eclipse damage');
+      rp.intelligence += 20;
+      rRoom.projectiles = [];
+      rRoom.fireEclipseChargedShot(rp, ARMAMENT_TUNING.weapons.eclipse.maxChargeMs);
+      assert.ok(rRoom.projectiles[0].damage > dmgIntBase, 'INT must scale Eclipse Longbow damage');
+
+      // 3. ARCANIST: Runebound Spire (Active Star Rift Resonance), Cinderflare Rod (64px Ember Blast), Chronostar Scepter (Seeking Star-Orb + 150/300ms Cooldown Siphon + Chill)
       Math.random = () => 0.99;
       const aRoom = new GameRoom({
         roomId: 'WPN_A',
@@ -8749,21 +8760,22 @@ async function runRegressionTests() {
       const spireActiveRiftDmg = aRoom.projectiles[0].damage;
       assert.ok(spireActiveRiftDmg > spireNoRiftDmg, 'Runebound Spire Rift Resonance boosts bolt damage while Star Rift is active');
 
-      // Cinderflare Rod: Ember Splash AoE hits adjacent foes within 54px
+      // Cinderflare Rod: Ember Blast 64px AoE hits adjacent foes & spawns cinderflare_blast
       aRoom.zones = [];
       aRoom.grantArmament('a1', 'weapon', 'arcanist_cinderflare_rod');
       aRoom.equipArmament('a1', 'weapon', 'arcanist_cinderflare_rod');
       const cinderPrimary = makeEnemy('a_cind_1', 'goblin', ap.x + 36, ap.y);
-      const cinderSplashTarget = makeEnemy('a_cind_2', 'goblin', ap.x + 36, ap.y + 38);
+      const cinderSplashTarget = makeEnemy('a_cind_2', 'goblin', ap.x + 36, ap.y + 42);
       aRoom.enemies = [cinderPrimary, cinderSplashTarget];
       Math.random = () => 0.2;
       aRoom.projectiles = [];
       aRoom.firePrimaryAttack(ap);
       aRoom.tick(60);
       assert.ok(cinderPrimary.burnedMs > 0, 'Cinderflare Rod primary hit should ignite target');
-      assert.ok(cinderSplashTarget.hp < 1000, 'Cinderflare Ember Detonation must splash Fire AoE to adjacent enemy within 54px');
+      assert.ok(cinderSplashTarget.hp < 1000, 'Cinderflare Ember Blast must splash Fire AoE to adjacent enemy within 64px');
+      assert.ok(aRoom.zones.some((z) => z.kind === 'cinderflare_blast'), 'Cinderflare Ember Blast spawns cinderflare_blast zone');
 
-      // Chronostar Scepter: Seeking Star-Orb curves mid-flight (single orb, NO Twinstring clone) & siphons Q/R cooldowns
+      // Chronostar Scepter: Seeking Star-Orb curves mid-flight & siphons 150ms Q / 300ms R once per orb
       Math.random = () => 0.99;
       aRoom.grantArmament('a1', 'weapon', 'arcanist_chronostar_scepter');
       aRoom.equipArmament('a1', 'weapon', 'arcanist_chronostar_scepter');
@@ -8772,26 +8784,28 @@ async function runRegressionTests() {
       aRoom.projectiles = [];
       ap.skillCooldownMs = 2000;
       ap.ultCooldownMs = 4000;
-      Math.random = () => 0.2; // allow Chill proc too
+      Math.random = () => 0.2;
       aRoom.firePrimaryAttack(ap);
-      assert.strictEqual(aRoom.projectiles.length, 1, 'Chronostar Scepter launches 1 seeking temporal Star-Orb (no Twinstring reuse)');
+      assert.strictEqual(aRoom.projectiles.length, 1, 'Chronostar Scepter launches 1 seeking temporal Star-Orb');
       const chronoOrb = aRoom.projectiles[0];
       assert.strictEqual(chronoOrb.weaponId, 'arcanist_chronostar_scepter');
       aRoom.tick(60);
       assert.ok(Math.abs(chronoOrb.vy) > 1, 'Chronostar Star-Orb must seek off-axis enemy mid-flight');
-      // Direct hit siphon test
-      const inlineChrono = makeEnemy('a_chrono_hit', 'goblin', ap.x + 34, ap.y);
-      aRoom.enemies = [inlineChrono];
+
+      // Direct hit siphon test (single siphon even when piercing 2 targets!)
+      const inline1 = makeEnemy('a_chrono_hit1', 'goblin', ap.x + 34, ap.y);
+      const inline2 = makeEnemy('a_chrono_hit2', 'goblin', ap.x + 60, ap.y);
+      aRoom.enemies = [inline1, inline2];
       aRoom.projectiles = [];
       ap.skillCooldownMs = 2000;
       ap.ultCooldownMs = 4000;
       aRoom.firePrimaryAttack(ap);
-      aRoom.tick(60);
-      assert.ok(ap.skillCooldownMs <= 1700, `Chronostar Siphon must trim Q cooldown by 300ms (got ${ap.skillCooldownMs})`);
-      assert.ok(ap.ultCooldownMs <= 3600, `Chronostar Siphon must trim R cooldown by 400ms (got ${ap.ultCooldownMs})`);
-      assert.ok(inlineChrono.slowedMs > 0, 'Chronostar Star-Orb hit should Chill enemy');
+      stepRoom(aRoom, 100);
+      assert.strictEqual(ap.skillCooldownMs, 2000 - ARMAMENT_TUNING.weapons.chronostar.tacticalSiphonMs - 100, 'Chronostar Siphon must trim Q cooldown once per orb');
+      assert.strictEqual(ap.ultCooldownMs, 4000 - ARMAMENT_TUNING.weapons.chronostar.ultSiphonMs - 100, 'Chronostar Siphon must trim R cooldown once per orb');
+      assert.ok(inline1.slowedMs > 0, 'Chronostar Star-Orb hit should Chill enemy');
 
-      // 4. CLERIC: Dawnstar Mace (Undead Bane +2 total shield), Solaris Censer (Lowest-HP Ally Heal + Chill), Seraphim Crozier (Judgment Brand markedMs)
+      // 4. CLERIC: Dawnstar Mace (Undead Bane, 0 shield on hit), Solaris Censer (Lowest-HP OTHER Ally Heal), Seraphim Crozier (Seraphic Judgment Tactical ground AoE)
       Math.random = () => 0.99;
       const cRoom = new GameRoom({
         roomId: 'WPN_C',
@@ -8817,7 +8831,7 @@ async function runRegressionTests() {
       const dawnstarHpBefore = skeletonTarget.hp;
       cRoom.tick(60);
       const dawnstarDealt = dawnstarHpBefore - skeletonTarget.hp;
-      assert.ok(cp.shield >= 12, 'Dawnstar Mace grants +2 total Shield on striking Undead');
+      assert.strictEqual(cp.shield, 10, 'Dawnstar Mace must grant 0 shield (Shield Exclusivity)');
 
       cRoom.unequipArmament('c1', 'weapon');
       cRoom.projectiles = [];
@@ -8827,38 +8841,54 @@ async function runRegressionTests() {
       const unarmedDealt = unarmedHpBefore - skeletonTarget.hp;
       assert.ok(dawnstarDealt > unarmedDealt, `Dawnstar Mace vs Undead (${dawnstarDealt}) must exceed unarmed (${unarmedDealt})`);
 
-      // Solaris Censer: Healing amplification + lowest-HP ally heal on primary hit + Chill
-      const healUnarmed = cRoom.computeHealingAmount(20, cp, cp);
+      // Solaris Censer: Healing amplification + lowest-HP OTHER ally heal on primary hit + Chill (never self-heal when solo)
+      const healUnarmed = GameRoom.computeHealingAmount(20, cp, cp);
       cRoom.grantArmament('c1', 'weapon', 'cleric_solaris_censer');
       cRoom.equipArmament('c1', 'weapon', 'cleric_solaris_censer');
-      const healSolaris = cRoom.computeHealingAmount(20, cp, cp);
+      const healSolaris = GameRoom.computeHealingAmount(20, cp, cp);
       assert.ok(healSolaris > healUnarmed, `Solaris Censer heal (${healSolaris}) must exceed unarmed (${healUnarmed})`);
 
-      allyP.hp = 40;
+      cp.hp = 50;
+      allyP.hp = allyP.maxHp; // No injured other ally
       Math.random = () => 0.2;
       cRoom.projectiles = [];
       cRoom.firePrimaryAttack(cp);
       cRoom.tick(60);
-      assert.ok(skeletonTarget.slowedMs > 0, 'Solaris Censer primary hit should Chill target');
-      assert.ok(allyP.hp > 40, `Solaris Censer Incense Mending must heal lowest-HP ally on hit (ally hp=${allyP.hp})`);
+      assert.strictEqual(cp.hp, 50, 'Solaris Censer must never self-heal when only self is injured');
 
-      // Seraphim Judgment Crozier: Applies Judgment Brand (markedMs > 0)
-      cRoom.grantArmament('c1', 'weapon', 'cleric_seraphim_crozier');
-      cRoom.equipArmament('c1', 'weapon', 'cleric_seraphim_crozier');
-      skeletonTarget.markedMs = 0;
-      Math.random = () => 0.1;
+      allyP.hp = 40;
+      cRoom.tick(400); // expire Solaris proc cooldown
       cRoom.projectiles = [];
       cRoom.firePrimaryAttack(cp);
       cRoom.tick(60);
-      assert.ok(skeletonTarget.markedMs > 0, 'Seraphim Judgment Crozier must Brand enemy (markedMs > 0)');
+      assert.ok(skeletonTarget.slowedMs > 0, 'Solaris Censer primary hit should Chill target');
+      assert.ok(allyP.hp > 40, `Solaris Censer Incense Mending must heal lowest-HP injured ally on hit (ally hp=${allyP.hp})`);
+
+      // Seraphim Judgment Crozier: Tactical becomes Seraphic Judgment ground AoE Divine burst with NO healing
+      cRoom.grantArmament('c1', 'weapon', 'cleric_seraphim_crozier');
+      cRoom.equipArmament('c1', 'weapon', 'cleric_seraphim_crozier');
+      const seraphimSpec = getAbilityTargetSpec('cleric', 'tactical', null, 'cleric_seraphim_crozier');
+      assert.strictEqual(seraphimSpec.label, 'Seraphic Judgment');
+      assert.strictEqual(seraphimSpec.kind, 'ground_aoe');
+      cp.hp = 50;
+      allyP.hp = 40;
+      cp.skillCooldownMs = 0;
+      cRoom.zones = [];
+      skeletonTarget.x = cp.x + 120;
+      skeletonTarget.y = cp.y;
+      const skelBeforeSeraphim = skeletonTarget.hp;
+      cRoom.performAction('c1', 'tactical', 0, { aimDistance: 120, explicitAim: true });
+      assert.ok(skeletonTarget.hp < skelBeforeSeraphim, 'Seraphic Judgment must deal immediate Divine AoE damage');
+      assert.ok(cRoom.zones.some((z) => z.kind === 'seraphim_holy_burst'), 'Seraphic Judgment spawns seraphim_holy_burst zone');
+      assert.strictEqual(cp.hp, 50, 'Seraphic Judgment must NOT heal caster');
+      assert.strictEqual(allyP.hp, 40, 'Seraphic Judgment must NOT heal allies');
     } finally {
       Math.random = origRandom;
     }
   });
 
   // --- Test 113: Server-Authoritative Vestment Effects & Stat Projections Parity ---
-  await test('113. Vestments modify HP, resistances, damage taken, CDR, HP regen, CC tenacity, move speed, shield cap & statUtils', () => {
-    // 1. Vanguard Obsidian Juggernaut: +28 Max HP, +9% phys res, -6% damage taken, +15 max shield, -3% speed
+  await test('113. Vestments modify HP, resistances, CDR, move speed, attack speed, healing power & statUtils parity', () => {
     const room = new GameRoom({
       roomId: 'VEST_T113',
       name: 'Vestment Defense Test',
@@ -8872,89 +8902,63 @@ async function runRegressionTests() {
 
     const vp = room.getPlayerState('v1')!;
     const cp = room.getPlayerState('c1')!;
-    const unarmedSpeed = (() => {
-      room.unequipArmament('v1', 'vestment');
-      return computePlayerMoveSpeed(vp);
-    })();
-    const unarmedPhysTaken = room.damagePlayer(vp, 100, 'physical');
-    vp.hp = vp.maxHp;
+    // Default Ironcrest Plate grants +10 Max Shield Cap (60 + 10 = 70)
+    assert.strictEqual(room.getMaxShieldCap(vp), 70, 'Ironcrest Plate grants +10 Max Shield Cap (70)');
+    const defaultSpeed = computePlayerMoveSpeed(vp);
 
+    // 1. Vanguard Obsidian Juggernaut: +25 Max HP, +8% phys res, -5% speed, 0 shield cap bonus
     room.grantArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
     room.equipArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
-    assert.strictEqual(room.getMaxShieldCap(vp), 75, 'Base 60 shield cap + 15 Obsidian Juggernaut = 75');
-    assert.ok(computePlayerMoveSpeed(vp) < unarmedSpeed, 'Heavy Obsidian plate trades 3% move speed');
+    assert.strictEqual(room.getMaxShieldCap(vp), 60, 'Obsidian Juggernaut grants 0 shield cap bonus');
+    assert.ok(computePlayerMoveSpeed(vp) < defaultSpeed, 'Heavy Obsidian plate trades 5% move speed');
     const juggPhysTaken = room.damagePlayer(vp, 100, 'physical');
-    assert.ok(juggPhysTaken < unarmedPhysTaken, `Juggernaut damage taken (${juggPhysTaken}) < unarmed (${unarmedPhysTaken})`);
+    vp.hp = vp.maxHp;
 
-    // 2. Sovereign Aegis Warplate: +8% CDR, +2 HP regen per 2.0s pulse
+    // Sovereign Aegis Warplate (+15 HP, +5% phys res, +5% attack speed)
     room.grantArmament('v1', 'vestment', 'vanguard_aegis_sovereign_mail');
     room.equipArmament('v1', 'vestment', 'vanguard_aegis_sovereign_mail');
-    vp.hp = 50;
-    // Trigger 2.0s regen pulse
-    room.tick(2000);
-    assert.ok(vp.hp >= 52, `Sovereign Warplate should regenerate +2 HP on 2s pulse (hp=${vp.hp})`);
+    const sovPhysTaken = room.damagePlayer(vp, 100, 'physical');
+    assert.ok(juggPhysTaken < sovPhysTaken, `Obsidian +8% phys res takes less (${juggPhysTaken}) than Sovereign +5% (${sovPhysTaken})`);
 
-    // Verify CDR reduces tactical cooldown when performing action
-    vp.skillCooldownMs = 0;
-    room.performAction('v1', 'tactical');
-    const cdWithSovereign = vp.skillCooldownMs;
-    room.unequipArmament('v1', 'vestment');
-    vp.skillCooldownMs = 0;
-    room.performAction('v1', 'tactical');
-    const cdUnarmed = vp.skillCooldownMs;
-    assert.ok(cdWithSovereign < cdUnarmed, `Sovereign 8% CDR (${cdWithSovereign}ms) < unarmed (${cdUnarmed}ms)`);
-
-    // 3. CC Tenacity & Move Speed on Ranger Windrunner Mistcloak
+    // 2. Move speed & attack speed on Ranger Windrunner Mistcloak (+10 HP, +10% move speed, +5% attack speed)
     room.addOrReconnectPlayer('r1', 'Wind', 'ranger');
     const rp = room.getPlayerState('r1')!;
-    room.unequipArmament('r1', 'vestment');
-    const speedNoVest = computePlayerMoveSpeed(rp);
-    room.applyPlayerStatus(rp, 'frostbite', 4000);
-    const frostNoVest = rp.statuses.find((s) => s.type === 'frostbite')!.durationMs;
-    rp.statuses = [];
+    const defaultRangerSpeed = computePlayerMoveSpeed(rp);
+    const defaultProj = calculatePlayerStatProjections(rp, 1);
 
     room.grantArmament('r1', 'vestment', 'ranger_windrunner_mantle');
     room.equipArmament('r1', 'vestment', 'ranger_windrunner_mantle');
-    const speedWindrunner = computePlayerMoveSpeed(rp);
-    room.applyPlayerStatus(rp, 'frostbite', 4000);
-    const frostWindrunner = rp.statuses.find((s) => s.type === 'frostbite')!.durationMs;
-    assert.ok(speedWindrunner > speedNoVest * 1.09, 'Windrunner Mistcloak increases movement speed by +11%');
-    assert.ok(frostWindrunner < frostNoVest, `Windrunner tenacity shortens CC (${frostWindrunner}ms < ${frostNoVest}ms)`);
+    const windSpeed = computePlayerMoveSpeed(rp);
+    const windProj = calculatePlayerStatProjections(rp, 1);
+    assert.ok(windSpeed > defaultRangerSpeed, 'Windrunner Mistcloak increases movement speed (+10% vs +5%)');
+    assert.ok(windProj.attackCooldownMs < defaultProj.attackCooldownMs, 'Windrunner +5% attack speed reduces cooldown');
 
-    // 4. Cleric Martyr Surplice: +15% healing power & +35% revive speed
-    room.unequipArmament('c1', 'vestment');
-    const healBaseVest = room.computeHealingAmount(20, cp, vp);
+    // 3. Cleric Martyr Surplice: +15% healing power & +5% CDR
+    const healBaseVest = GameRoom.computeHealingAmount(20, cp, vp);
+    cp.skillCooldownMs = 0;
+    room.performAction('c1', 'tactical');
+    const cdDefault = cp.skillCooldownMs;
+
     room.grantArmament('c1', 'vestment', 'cleric_martyr_surplice');
     room.equipArmament('c1', 'vestment', 'cleric_martyr_surplice');
-    const healMartyrVest = room.computeHealingAmount(20, cp, vp);
-    assert.ok(healMartyrVest > healBaseVest, `Martyr Surplice heal (${healMartyrVest}) > unequipped (${healBaseVest})`);
+    const healMartyrVest = GameRoom.computeHealingAmount(20, cp, vp);
+    assert.ok(healMartyrVest > healBaseVest, `Martyr Surplice heal (${healMartyrVest}) > Prelate (${healBaseVest})`);
+    cp.skillCooldownMs = 0;
+    room.performAction('c1', 'tactical');
+    const cdMartyr = cp.skillCooldownMs;
+    assert.ok(cdMartyr < cdDefault, `Martyr 5% CDR (${cdMartyr}ms) < Prelate (${cdDefault}ms)`);
 
-    // Revive speed test
-    vp.downed = true;
-    vp.reviveProgress = 0;
-    vp.x = cp.x + 10;
-    vp.y = cp.y;
-    room.tick(500);
-    const reviveWithMartyr = vp.reviveProgress;
-    vp.reviveProgress = 0;
-    room.unequipArmament('c1', 'vestment');
-    room.tick(500);
-    const reviveWithoutVest = vp.reviveProgress;
-    assert.ok(reviveWithMartyr > reviveWithoutVest, `Martyr Surplice speeds revive (${reviveWithMartyr} > ${reviveWithoutVest})`);
-    vp.downed = false;
-    vp.hp = vp.maxHp;
-
-    // 5. Stat projection parity checks in statUtils.ts
+    // 4. Stat projection parity checks in statUtils.ts
     room.grantArmament('v1', 'weapon', 'vanguard_crimson_halberd');
     room.equipArmament('v1', 'weapon', 'vanguard_crimson_halberd');
     room.equipArmament('v1', 'vestment', 'vanguard_obsidian_juggernaut');
-    const projEquipped = calculatePlayerStatProjections(vp, 1);
+    const projObsidian = calculatePlayerStatProjections(vp, 1);
     room.unequipArmament('v1', 'weapon');
     room.unequipArmament('v1', 'vestment');
-    const projUnequipped = calculatePlayerStatProjections(vp, 1);
-    assert.ok(projEquipped.scaledHitDamage > projUnequipped.scaledHitDamage);
-    assert.ok(projEquipped.maxHp > projUnequipped.maxHp);
-    assert.ok(projEquipped.physicalResistPct > projUnequipped.physicalResistPct);
+    const projDefault = calculatePlayerStatProjections(vp, 1);
+    assert.ok(projObsidian.scaledHitDamage > projDefault.scaledHitDamage);
+    assert.ok(projObsidian.maxHp > projDefault.maxHp);
+    assert.ok(projObsidian.physicalResistPct > projDefault.physicalResistPct);
   });
 
   // --- Test 114: System Separation, Run Reset Persistence, Boss Drops & Multiplayer Delta Sync ---
@@ -8997,7 +9001,7 @@ async function runRegressionTests() {
     assert.strictEqual(ap.equippedScrollId, 'fireball');
     assert.strictEqual(ap.equippedWeapon, 'arcanist_chronostar_scepter');
     assert.strictEqual(ap.equippedVestment, 'arcanist_voidward_robes');
-    assert.strictEqual(ap.shield, 25, 'Voidward Robes grants +10 starting shield (15 + 10 = 25)');
+    assert.strictEqual(ap.shield, 15, 'Voidward Robes grants 0 starting shield (base 15 only)');
 
     // Capture delta snapshot before and after swapping armaments
     const snap1 = cloneSnapshotBaseline(room.buildNetworkSnapshot());
@@ -9375,6 +9379,517 @@ async function runRegressionTests() {
       vfxPm.spawnArmamentAmbientMotes(`amb_${v.id}`, v.heroClass, sigWeapon, v.id, 220, 220, baseTime + 550 + i * 300);
       assert.strictEqual(vfxPm.count, afterFirst, `Expected ambient motes for ${v.id} to rate-limit within 240ms`);
     }
+  });
+
+  // --- Test 116: Damage Type Floating Text Colors (Red Physical, Purple Magic, Yellow Divine) ---
+  await test('116. Damage floating text uses Red (Physical), Purple (Magic), Yellow (Divine) across hits, crits, dummies & players without conflicts', async () => {
+    const {
+      getDamageTypeColor,
+      getDamageTypeFamily,
+      inferDamageCategoryFromProjectileStyle,
+    } = await import('./src/shared/types.ts');
+
+    const physColor = getDamageTypeColor('physical', false);
+    const physCrit = getDamageTypeColor('physical', true);
+    const magicColor = getDamageTypeColor('arcane', false);
+    const magicCrit = getDamageTypeColor('arcane', true);
+    const divineColor = getDamageTypeColor('divine', false);
+    const divineCrit = getDamageTypeColor('divine', true);
+    const poisonColor = getDamageTypeColor('poison', false);
+
+    assert.strictEqual(getDamageTypeFamily('physical'), 'physical');
+    assert.strictEqual(getDamageTypeFamily('bleed'), 'physical');
+    assert.strictEqual(getDamageTypeFamily('arcane'), 'magic');
+    assert.strictEqual(getDamageTypeFamily('fire'), 'magic');
+    assert.strictEqual(getDamageTypeFamily('frost'), 'magic');
+    assert.strictEqual(getDamageTypeFamily('lightning'), 'magic');
+    assert.strictEqual(getDamageTypeFamily('elemental'), 'magic');
+    assert.strictEqual(getDamageTypeFamily('divine'), 'divine');
+    assert.strictEqual(getDamageTypeColor('fire', false), magicColor);
+    assert.strictEqual(getDamageTypeColor('frost', false), magicColor);
+    assert.strictEqual(getDamageTypeColor('lightning', false), magicColor);
+    assert.strictEqual(getDamageTypeColor('bleed', false), physColor);
+
+    const uniqueColors = new Set([physColor, magicColor, divineColor, poisonColor]);
+    assert.strictEqual(uniqueColors.size, 4, 'Physical, Magic, Divine, and Poison colors must all be distinct');
+    assert.notStrictEqual(physCrit, divineCrit, 'Physical crit must not share Divine crit yellow');
+    assert.notStrictEqual(magicCrit, divineCrit, 'Magic crit must not share Divine crit yellow');
+
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('slash'), 'physical');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('arrow'), 'physical');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('bone'), 'physical');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('arcane'), 'arcane');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('voidorb'), 'arcane');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('fireball'), 'fire');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('frost_lance'), 'frost');
+    assert.strictEqual(inferDamageCategoryFromProjectileStyle('radiant'), 'divine');
+
+    const room = new GameRoom({
+      roomId: 'DMG-COLORS',
+      name: 'Damage Color Verification',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 123,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p_van', 'Vanguard', 'vanguard');
+    room.addOrReconnectPlayer('p_arc', 'Arcanist', 'arcanist');
+    room.addOrReconnectPlayer('p_cle', 'Cleric', 'cleric');
+    const pVan = room.getPlayerState('p_van')!;
+    const pArc = room.getPlayerState('p_arc')!;
+    const pCle = room.getPlayerState('p_cle')!;
+
+    // 1. Enemy hits (normal, crit, and marked) preserve Red / Purple / Yellow
+    const enemy = room.spawnEnemyForTesting('goblin', 200, 200);
+    enemy.hp = 5000;
+    enemy.maxHp = 5000;
+
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 30, pVan, false, 'physical');
+    assert.strictEqual(room.pendingEvents[0]?.color, physColor, 'Physical enemy hit should be Red');
+    assert.strictEqual(room.pendingEvents[0]?.damageCategory, 'physical');
+
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 31, pVan, true, 'physical');
+    assert.strictEqual(room.pendingEvents[0]?.kind, 'crit');
+    assert.strictEqual(room.pendingEvents[0]?.color, physCrit, 'Physical enemy crit should be Red, not Yellow');
+
+    // Marked enemy hit by Arcanist should still be Magic Purple (not Divine Yellow)
+    enemy.markedMs = 2000;
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 32, pArc, false, 'arcane');
+    assert.strictEqual(room.pendingEvents[0]?.kind, 'crit');
+    assert.strictEqual(room.pendingEvents[0]?.color, magicCrit, 'Marked Magic hit must remain Purple');
+
+    enemy.markedMs = 0;
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 33, pCle, true, 'divine');
+    assert.strictEqual(room.pendingEvents[0]?.kind, 'crit');
+    assert.strictEqual(room.pendingEvents[0]?.color, divineCrit, 'Divine crit should be Yellow');
+
+    // Shock chain lightning should emit Magic Purple (not Divine Yellow)
+    const shockTarget = room.spawnEnemyForTesting('goblin', 240, 200);
+    shockTarget.hp = 1000;
+    enemy.shockedMs = 3000;
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 40, pVan, false, 'physical');
+    const chainEv = room.pendingEvents.find((e) => e.text.includes('⚡'));
+    assert.ok(chainEv, 'Expected shock chain lightning floating damage event');
+    assert.strictEqual(chainEv?.color, magicColor, 'Shock chain lightning must be Magic Purple, not Yellow');
+
+    // 2. Player incoming damage matches Physical Red, Magic Purple, Divine Yellow
+    pVan.shield = 0;
+    pVan.hp = pVan.maxHp;
+    room.pendingEvents = [];
+    room.damagePlayer(pVan, 25, 'physical');
+    assert.strictEqual(room.pendingEvents[0]?.color, physColor, 'Physical damage taken must be Red');
+
+    room.pendingEvents = [];
+    room.damagePlayer(pVan, 26, 'arcane');
+    assert.strictEqual(room.pendingEvents[0]?.color, magicColor, 'Arcane damage taken must be Purple');
+
+    room.pendingEvents = [];
+    room.damagePlayer(pVan, 27, 'divine');
+    assert.strictEqual(room.pendingEvents[0]?.color, divineColor, 'Divine damage taken must be Yellow');
+
+    // 3. Oriphiel Aegis Parry reflect emits only ONE Divine Yellow event (no duplicate red event)
+    room.zones.push({
+      id: 'parry_zone_test',
+      kind: 'warden_parry',
+      x: enemy.x,
+      y: enemy.y,
+      radius: 70,
+      ttlMs: 2000,
+      maxTtlMs: 2000,
+      ownerId: enemy.id,
+    });
+    room.pendingEvents = [];
+    room.damageEnemy(enemy, 50, pVan, false, 'physical');
+    const parryDamageEvents = room.pendingEvents.filter((e) => e.kind === 'damage');
+    assert.strictEqual(parryDamageEvents.length, 1, 'Parry reflect must not emit duplicate damage floating texts');
+    assert.strictEqual(parryDamageEvents[0]?.color, divineColor, 'Parry reflect damage must be Divine Yellow');
+
+    // 4. Training dummies match attacker damage types (Red for Vanguard, Purple for Arcanist, Yellow for Cleric)
+    const tavern = new GameRoom({
+      roomId: 'TAVERN-HUB',
+      name: 'Tavern Test',
+      hostName: 'Tester',
+      difficulty: 'Normal',
+      seed: 1,
+      initialFloor: 0,
+    });
+    tavern.status = 'playing';
+    tavern.addOrReconnectPlayer('t_van', 'V', 'vanguard');
+    tavern.addOrReconnectPlayer('t_arc', 'A', 'arcanist');
+    tavern.addOrReconnectPlayer('t_cle', 'C', 'cleric');
+    const tVan = tavern.getPlayerState('t_van')!;
+    const tArc = tavern.getPlayerState('t_arc')!;
+    const tCle = tavern.getPlayerState('t_cle')!;
+    const dummy = tavern.trainingDummies[0];
+    assert.ok(dummy, 'Expected Tavern training dummy');
+
+    for (const [pl, expectedCol, label] of [
+      [tVan, physColor, 'Vanguard'],
+      [tArc, magicColor, 'Arcanist'],
+      [tCle, divineColor, 'Cleric'],
+    ] as const) {
+      pl.x = dummy.x - 24;
+      pl.y = dummy.y;
+      pl.aimAngle = 0;
+      tavern.pendingEvents = [];
+      tavern.firePrimaryAttack(pl);
+      for (let step = 0; step < 6; step++) tavern.tick(50);
+      const dmgEv = tavern.pendingEvents.find((e) => e.kind === 'damage' || e.kind === 'crit');
+      assert.ok(dmgEv, `Expected dummy floating damage event for ${label}`);
+      assert.strictEqual(
+        dmgEv?.color,
+        dmgEv?.kind === 'crit'
+          ? getDamageTypeColor(dmgEv.damageCategory, true)
+          : expectedCol,
+        `Expected ${label} dummy hit color to match damage type`
+      );
+    }
+  });
+
+  // --- Test 117: Runtime Optimization Fidelity (Particle Viewport Culling, Collision Cache & Snapshot Delta Fast-Paths) ---
+  await test('117. Runtime optimization fidelity: particle viewport culling, Warden Gate collision cache, and snapshot delta fast paths', () => {
+    // 1. ParticleManager viewport culling skips offscreen draw ops while still advancing physics & expiring particles
+    const pm = new ParticleManager();
+    const t0 = 50000;
+    pm.spawnHitSparks(100, 100, '#FFFFFF', 4, t0);
+    const onscreenCount = pm.count;
+    assert.ok(onscreenCount > 0, 'Expected onscreen particles to spawn');
+
+    pm.spawnHitSparks(1500, 1500, '#FFFFFF', 4, t0);
+    assert.strictEqual(pm.count, onscreenCount * 2, 'Expected offscreen particles to spawn');
+
+    let drawCalls = 0;
+    const noop = () => {};
+    const mockCtx = {
+      save: noop,
+      restore: noop,
+      translate: noop,
+      rotate: noop,
+      beginPath: noop,
+      closePath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      arc: noop,
+      ellipse: noop,
+      fill: () => { drawCalls++; },
+      stroke: () => { drawCalls++; },
+      fillRect: () => { drawCalls++; },
+      strokeRect: noop,
+      globalAlpha: 1,
+      fillStyle: '#fff',
+      strokeStyle: '#fff',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    const viewport = { left: 0, right: 400, top: 0, bottom: 400 };
+    // Only the onscreen particles (x=100,y=100) should draw; offscreen (x=1500,y=1500) must be culled
+    pm.updateAndDraw(mockCtx, t0 + 50, 0.05, viewport);
+    const firstFrameDraws = drawCalls;
+    assert.ok(firstFrameDraws > 0, 'Onscreen particles must draw within viewport');
+
+    // Compare against only having the onscreen burst: draw call count should be identical
+    const pmSingle = new ParticleManager();
+    pmSingle.spawnHitSparks(100, 100, '#FFFFFF', 4, t0);
+    drawCalls = 0;
+    pmSingle.updateAndDraw(mockCtx, t0 + 50, 0.05, viewport);
+    assert.strictEqual(firstFrameDraws, drawCalls, 'Offscreen particles must not execute canvas draw ops');
+
+    // Offscreen particles spawned later with short window vs earlier still expire on schedule
+    pm.clear();
+    pm.spawnHitSparks(1500, 1500, '#FFFFFF', 4, t0);
+    assert.ok(pm.count > 0);
+    pm.updateAndDraw(mockCtx, t0 + 2000, 0.1, viewport);
+    assert.strictEqual(pm.count, 0, 'Offscreen particles must expire on schedule even when culled from rendering');
+
+    // 2. Warden's Gate WeakMap collision cache reacts accurately to prop array mutation & opened state changes
+    const miniMap = {
+      width: 12,
+      height: 12,
+      tiles: new Array(144).fill(1),
+      rooms: [],
+      biome: 'catacombs' as const,
+      biomeTitle: 'Cache Test',
+      floor: 10,
+      seed: 1,
+      portalPos: { x: 100, y: 100 },
+      portalActive: false,
+      torches: [],
+    };
+    const props: PropState[] = [
+      { id: 'c1', kind: 'crate', x: 64, y: 64, opened: false, value: 5 },
+    ];
+    assert.strictEqual(isWallAtWorld(miniMap, props, 200, 200), false, 'Open tile without gate should be passable');
+
+    // Pushing a new warden_gate invalidates cached len cleanly
+    const gate: PropState = { id: 'g1', kind: 'warden_gate', x: 200, y: 200, opened: false, value: 0 };
+    props.push(gate);
+    assert.strictEqual(isWallAtWorld(miniMap, props, 200, 200), true, 'Newly added closed warden_gate must block');
+
+    // Toggling opened on existing gate object reflects immediately without array length change
+    gate.opened = true;
+    assert.strictEqual(isWallAtWorld(miniMap, props, 200, 200), false, 'Opened warden_gate must immediately become passable');
+
+    // 3. Snapshot delta fast-path fidelity across matching-order updates, additions, removals, and empty arrays
+    const snapRoom = new GameRoom({
+      roomId: 'DELTA-OPT',
+      name: 'Delta Opt Test',
+      hostName: 'Host',
+      difficulty: 'Normal',
+      seed: 77,
+      initialFloor: 1,
+    });
+    snapRoom.status = 'playing';
+    snapRoom.addOrReconnectPlayer('p_delta', 'DeltaHero', 'vanguard');
+    const s1 = snapRoom.buildNetworkSnapshot();
+    let baseline = cloneSnapshotBaseline(s1);
+
+    // Same-order tick mutation
+    snapRoom.tick(25);
+    const s2 = snapRoom.buildNetworkSnapshot();
+    const d2 = computeSnapshotDelta(baseline, s2, 1, 2);
+    const recon2 = applySnapshotDelta(baseline, d2);
+    assert.deepStrictEqual(recon2, s2, 'Same-order delta fast path must reconstruct snapshot identically');
+    baseline = cloneSnapshotBaseline(recon2);
+
+    // Enemy removal + new projectile insertion (out-of-length path)
+    if (snapRoom.enemies.length > 0) snapRoom.enemies.pop();
+    snapRoom.firePrimaryAttack(snapRoom.getPlayerState('p_delta')!);
+    const s3 = snapRoom.buildNetworkSnapshot();
+    const d3 = computeSnapshotDelta(baseline, s3, 2, 3);
+    const recon3 = applySnapshotDelta(baseline, d3);
+    assert.deepStrictEqual(recon3, s3, 'Entity add/remove delta path must reconstruct snapshot identically');
+  });
+
+  // --- Test 118: Frame-Pacing, Viewport Crop Blitting, Sub-Pixel Snap & Smooth Sub-Threshold Prediction ---
+  await test('118. Frame-pacing optimizations: computeMapCropRect, snapToScreenPixel, smooth prediction convergence & headless decoration safety', async () => {
+    const {
+      computeMapCropRect,
+      getWorldViewBounds,
+      snapToScreenPixel,
+    } = await import('./src/client/camera.ts');
+    const { LocalPredictionController } = await import('./src/client/prediction.ts');
+    const {
+      drawTavernDecorations,
+      drawDungeonPortal,
+      drawMysticShrine,
+      drawRelicVault,
+    } = await import('./src/client/dungeonDecorations.ts');
+
+    // 1. Viewport map crop rectangle strictly clamps to map bounds and skips offscreen maps
+    const viewCenter = getWorldViewBounds(400, 300, 640, 360, 1.5);
+    const cropCenter = computeMapCropRect(viewCenter, 2560, 2560, 2);
+    assert.ok(cropCenter, 'Expected valid crop rect inside map bounds');
+    assert.ok(cropCenter!.sx >= 0 && cropCenter!.sy >= 0);
+    assert.ok(cropCenter!.sw < 2560 && cropCenter!.sh < 2560, 'Crop rect should only cover visible viewport slice');
+
+    const viewEdge = getWorldViewBounds(100, 100, 800, 600, 1.2);
+    const cropEdge = computeMapCropRect(viewEdge, 1024, 1024, 2);
+    assert.ok(cropEdge && cropEdge.sx === 0 && cropEdge.sy === 0, 'Left/top overflow must clamp cleanly to 0');
+
+    const offMapView = getWorldViewBounds(4000, 4000, 400, 400, 1.5);
+    assert.strictEqual(computeMapCropRect(offMapView, 1024, 1024, 2), null, 'Off-map view must return null');
+
+    // 2. Screen-pixel grid snapping locks camera and world entities onto identical device pixels
+    const zoom = 1.5;
+    const rawCoord = 123.4;
+    const snapped = snapToScreenPixel(rawCoord, zoom);
+    assert.ok(Math.abs(snapped * zoom - Math.round(snapped * zoom)) < 1e-9, 'Snapped world coord must land on exact device pixel');
+
+    // 3. Sub-threshold tick phase drift converges smoothly without rubber-band snap jumps
+    const room = new GameRoom({
+      roomId: 'PRED-SMOOTH',
+      name: 'Smooth Prediction Test',
+      hostName: 'Hero',
+      difficulty: 'Normal',
+      seed: 101,
+      initialFloor: 1,
+    });
+    room.status = 'playing';
+    room.addOrReconnectPlayer('p_smooth', 'Hero', 'vanguard');
+    const p = room.getPlayerState('p_smooth')!;
+    const pred = new LocalPredictionController();
+    const idleInput = { up: false, down: false, left: false, right: false, attack: false, aimAngle: 0 };
+
+    const init = pred.step({
+      me: { ...p, lastInputSeq: 1 },
+      liveInput: idleInput,
+      latestSentSeq: 1,
+      map: room.map,
+      props: room.props,
+      dtSec: 0.016,
+      nowMs: 1000,
+      isNewSnapshot: true,
+    });
+    assert.strictEqual(init.x, p.x);
+
+    // Simulate minor 2.5px server tick phase offset (< 4.5px MIN_BLEND_ERROR_PX)
+    const drifted = pred.step({
+      me: { ...p, x: p.x + 2.5, lastInputSeq: 1 },
+      liveInput: idleInput,
+      latestSentSeq: 1,
+      map: room.map,
+      props: room.props,
+      dtSec: 0.016,
+      nowMs: 1025,
+      isNewSnapshot: true,
+    });
+    assert.strictEqual(drifted.snapped, false, 'Sub-threshold drift must not trigger hard snap');
+    assert.ok(drifted.x > p.x && drifted.x < p.x + 2.5, `Sub-threshold drift must converge smoothly (got ${drifted.x} vs ${p.x}..${p.x + 2.5})`);
+
+    // 4. Decoration renderers remain safe in headless Node environments without document
+    const noop = () => {};
+    const mockCtx = {
+      save: noop,
+      restore: noop,
+      translate: noop,
+      rotate: noop,
+      scale: noop,
+      beginPath: noop,
+      closePath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      arc: noop,
+      ellipse: noop,
+      fillRect: noop,
+      strokeRect: noop,
+      fill: noop,
+      stroke: noop,
+      fillText: noop,
+      drawImage: noop,
+      measureText: (txt: string) => ({ width: txt.length * 6 }),
+      createRadialGradient: () => ({ addColorStop: noop }),
+      createLinearGradient: () => ({ addColorStop: noop }),
+      setLineDash: noop,
+      font: '',
+      textAlign: 'center',
+      textBaseline: 'middle',
+      fillStyle: '#fff',
+      strokeStyle: '#fff',
+      lineWidth: 1,
+      globalAlpha: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    assert.doesNotThrow(() => {
+      drawTavernDecorations(mockCtx, 5000);
+      drawDungeonPortal(mockCtx, 300, 300, false, 5000, 'catacombs', 1);
+      drawMysticShrine(mockCtx, { id: 's1', kind: 'shrine', x: 200, y: 200, opened: false, value: 0 }, 5000);
+      drawRelicVault(mockCtx, { id: 'v1', kind: 'relic_chest', x: 250, y: 250, opened: false, value: 0 }, 5000);
+    });
+  });
+
+  // --- Test 119: Basic-Attack Hotpath (Quantized Glow Sprite Cache & Auto-Target Squared Distance) ---
+  await test('119. Basic-attack hotpath: quantized glow sprite reuse bounds offscreen canvas allocations and findBestAutoTarget preserves range accuracy', async () => {
+    // 1. Quantized glow key collapses smooth RGB fades into bounded cache buckets
+    const buckets = new Set<number>();
+    for (let step = 0; step <= 200; step++) {
+      const t = step / 200;
+      const r = Math.round(254 + (127 - 254) * t);
+      const g = Math.round(240 + (29 - 240) * t);
+      const b = Math.round(138 + (29 - 138) * t);
+      buckets.add(quantizeGlowRgbKey(r, g, b));
+    }
+    assert.ok(
+      buckets.size > 4 && buckets.size <= 36,
+      `Expected smooth glow trajectory to collapse into <= 36 quantized buckets (got ${buckets.size})`
+    );
+
+    // 2. Instrument document.createElement to ensure ParticleManager.updateAndDraw reuses cached glow canvases
+    const prevDoc = (globalThis as any).document;
+    let createdCanvases = 0;
+    const noop = () => {};
+    const makeMockCanvas = () => ({
+      width: 32,
+      height: 32,
+      getContext: () => ({
+        createRadialGradient: () => ({ addColorStop: noop }),
+        fillStyle: '',
+        fillRect: noop,
+      }),
+    });
+    (globalThis as any).document = {
+      createElement: (tag: string) => {
+        if (tag === 'canvas') createdCanvases++;
+        return makeMockCanvas();
+      },
+    };
+    try {
+      const pm = new ParticleManager();
+      const baseTime = 10000;
+      for (let burst = 0; burst < 6; burst++) {
+        pm.spawnVanguardCleave(300, 300, burst * 0.4, true, baseTime + burst * 40, 'vanguard_crimson_halberd');
+      }
+      const drawCtx = {
+        save: noop,
+        restore: noop,
+        translate: noop,
+        rotate: noop,
+        scale: noop,
+        beginPath: noop,
+        closePath: noop,
+        moveTo: noop,
+        lineTo: noop,
+        arc: noop,
+        ellipse: noop,
+        fillRect: noop,
+        strokeRect: noop,
+        fill: noop,
+        stroke: noop,
+        drawImage: noop,
+        globalAlpha: 1,
+        globalCompositeOperation: 'source-over',
+        fillStyle: '#fff',
+        strokeStyle: '#fff',
+        lineWidth: 1,
+      } as unknown as CanvasRenderingContext2D;
+
+      for (let frame = 0; frame < 15; frame++) {
+        pm.updateAndDraw(drawCtx, baseTime + frame * 16, 0.016, {
+          left: 0,
+          right: 800,
+          top: 0,
+          bottom: 600,
+        });
+      }
+      assert.ok(
+        createdCanvases <= 25,
+        `Glow cache should bound offscreen canvas creation across 6 crit cleaves x 15 frames (created ${createdCanvases})`
+      );
+    } finally {
+      if (prevDoc === undefined) {
+        delete (globalThis as any).document;
+      } else {
+        (globalThis as any).document = prevDoc;
+      }
+    }
+
+    // 3. findBestAutoTarget squared-distance rejection preserves exact range boundary and angle selection
+    const nearMatch = findBestAutoTarget({
+      playerX: 100,
+      playerY: 100,
+      maxRange: 90,
+      preferredAngle: 0,
+      minDot: -1,
+      enemies: [
+        { id: 'far', x: 195, y: 100, hp: 50 }, // dist 95 > 90
+        { id: 'edge', x: 189, y: 100, hp: 50 }, // dist 89 <= 90
+      ],
+    });
+    assert.ok(nearMatch && nearMatch.target.id === 'edge', 'Expected target within maxRange to lock and out-of-range to skip');
+    assert.ok(Math.abs(nearMatch!.angle) < 1e-6);
+
+    const outOfRange = findBestAutoTarget({
+      playerX: 100,
+      playerY: 100,
+      maxRange: 90,
+      enemies: [{ id: 'far', x: 191, y: 100, hp: 50 }],
+    });
+    assert.strictEqual(outOfRange, null, 'Out-of-range candidate must return null');
   });
 
   console.log(`\nAll regression tests completed: ${passed}/${total} passed.`);

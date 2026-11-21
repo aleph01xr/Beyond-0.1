@@ -15,7 +15,12 @@ import {
   type StatusEffectMeta,
 } from '../shared/statusEffects.ts';
 import { PixelHeroPreview } from './PixelHeroPreview.tsx';
-import { resolveEquippedWeaponForClass } from '../shared/armaments.ts';
+import {
+  getDefaultVestmentIdForClass,
+  getVestmentDef,
+  resolveEquippedVestmentForClass,
+  resolveEquippedWeaponForClass,
+} from '../shared/armaments.ts';
 import {
   loadSavedTouchSettings,
   saveTouchSettings,
@@ -496,9 +501,21 @@ export const SanctuaryLobby: React.FC<SanctuaryLobbyProps> = ({
                       <span>SPD: <strong className="text-[#38BDF8]">{currentClassDef.speed}</strong></span>
                     </div>
 
-                    <p className="text-xs text-[#C7C5D8] leading-relaxed pt-0.5">
-                      <strong className="text-[#FBBF24]">Passive [{currentClassDef.passiveName}]:</strong> {currentClassDef.passiveDesc}
-                    </p>
+                    {(() => {
+                      const activeVestment =
+                        currentClassDef.id === user.lockedClass
+                          ? resolveEquippedVestmentForClass(user.lockedClass, user.equippedVestment) ||
+                            getVestmentDef(getDefaultVestmentIdForClass(user.lockedClass))
+                          : getVestmentDef(getDefaultVestmentIdForClass(currentClassDef.id));
+                      return (
+                        <p className="text-xs text-[#C7C5D8] leading-relaxed pt-0.5">
+                          <strong className="text-[#FBBF24]">
+                            Passive [{activeVestment?.passiveName || currentClassDef.passiveName}]:
+                          </strong>{' '}
+                          {activeVestment?.passiveSummary || currentClassDef.passiveDesc}
+                        </p>
+                      );
+                    })()}
 
                     <p className="text-[11px] text-[#8C8A9E] font-mono pt-1">
                        This account is locked to this class. To play as another hero class, create a separate adventurer account.

@@ -330,7 +330,21 @@ export function App() {
           if (Number.isFinite(rtt) && rtt >= 0 && rtt < 15000) {
             const diag = pingTrackerRef.current.recordSample(rtt, msg.tickMs);
             pingMsRef.current = diag.pingMs;
-            setPingDiagnostics(diag);
+            setPingDiagnostics((prev) => {
+              const prevHighJitter = prev.jitterMs >= 15;
+              const nextHighJitter = diag.jitterMs >= 15;
+              if (
+                prev.samples >= 3 &&
+                Math.abs(diag.pingMs - prev.pingMs) < 3 &&
+                prev.quality === diag.quality &&
+                prevHighJitter === nextHighJitter &&
+                (!nextHighJitter || Math.abs(diag.jitterMs - prev.jitterMs) < 4) &&
+                Math.abs((diag.serverTickMs ?? 0) - (prev.serverTickMs ?? 0)) < 2
+              ) {
+                return prev;
+              }
+              return diag;
+            });
           }
         }
       };

@@ -1142,10 +1142,12 @@ export function drawElyndorBoss(
   const wingFlap = Math.sin(now * 0.0038) * 4.2;
   const wingFold = Math.cos(now * 0.0038) * 1.8;
 
-  // Layer A: Under-wing holy amber glow aura
+  // Layer A: Under-wing holy amber glow aura (translucent aura ellipse instead of Gaussian shadowBlur)
   ctx.save();
-  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.55)' : 'rgba(251, 191, 36, 0.45)';
-  ctx.shadowBlur = 10;
+  ctx.fillStyle = isEnraged ? 'rgba(239, 68, 68, 0.16)' : 'rgba(251, 191, 36, 0.14)';
+  ctx.beginPath();
+  ctx.ellipse(x, cy - 10, 56, 26, 0, 0, Math.PI * 2);
+  ctx.fill();
   for (const side of [-1, 1]) {
     const flap = side === -1 ? wingFlap : -wingFlap;
     const fold = side === -1 ? wingFold : -wingFold;
@@ -1808,8 +1810,10 @@ export function drawSarielBoss(
   const lowerFlap = Math.sin(now * 0.0036 + 0.8) * 3.2;
 
   ctx.save();
-  ctx.shadowColor = isEnraged ? 'rgba(244, 63, 94, 0.6)' : 'rgba(192, 132, 252, 0.5)';
-  ctx.shadowBlur = 10;
+  ctx.fillStyle = isEnraged ? 'rgba(244, 63, 94, 0.18)' : 'rgba(192, 132, 252, 0.16)';
+  ctx.beginPath();
+  ctx.ellipse(x, cy - 8, 56, 28, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   for (const side of [-1, 1]) {
     const flap = side === -1 ? wingFlap : -wingFlap;
@@ -2069,8 +2073,10 @@ export function drawSeraphelBoss(
   const lowerFlap = Math.sin(now * 0.0042 + 0.9) * 3.4;
 
   ctx.save();
-  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.65)' : 'rgba(253, 224, 71, 0.55)';
-  ctx.shadowBlur = 12;
+  ctx.fillStyle = isEnraged ? 'rgba(239, 68, 68, 0.18)' : 'rgba(253, 224, 71, 0.16)';
+  ctx.beginPath();
+  ctx.ellipse(x, cy - 10, 62, 30, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   for (const side of [-1, 1]) {
     const flap = side === -1 ? wingFlap : -wingFlap;
@@ -2366,8 +2372,10 @@ export function drawOriphielBoss(
   const wingBreathe = Math.cos(now * 0.0032) * 2.2;
 
   ctx.save();
-  ctx.shadowColor = isEnraged ? 'rgba(239, 68, 68, 0.7)' : 'rgba(245, 158, 11, 0.65)';
-  ctx.shadowBlur = 14;
+  ctx.fillStyle = isEnraged ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.18)';
+  ctx.beginPath();
+  ctx.ellipse(x, cy - 12, 72, 36, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   for (const side of [-1, 1]) {
     const flap = side === -1 ? wingFlap : -wingFlap;

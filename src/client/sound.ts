@@ -22,6 +22,9 @@ class RetroAudioEngine {
   private ambientActive = false;
   private ambientOscillators: OscillatorNode[] = [];
   private musicInterval: number | null = null;
+  private lastAttackSfxAt = 0;
+  private lastEnemyHitSfxAt = 0;
+  private lastEnemyCritSfxAt = 0;
 
   constructor() {
     // Synchronize initial mute state if legacy storage was present
@@ -203,9 +206,12 @@ class RetroAudioEngine {
    * - Cleric: Resonant holy hammer chime with warm punch
    */
   public playAttack(style: AttackHeroStyle = 'vanguard'): void {
+    const perfNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (perfNow - this.lastAttackSfxAt < 55) return;
     const ctx = this.ensureContext();
     const dest = this.getDestination();
     if (!ctx || !dest) return;
+    this.lastAttackSfxAt = perfNow;
     const now = ctx.currentTime;
     const noise = this.getNoiseBuffer();
 
@@ -624,9 +630,21 @@ class RetroAudioEngine {
    * isCrit adds a metallic high-pitch slash ring.
    */
   public playEnemyHit(isCrit = false): void {
+    const perfNow = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (isCrit) {
+      if (perfNow - this.lastEnemyCritSfxAt < 40) return;
+    } else if (perfNow - this.lastEnemyHitSfxAt < 40) {
+      return;
+    }
     const ctx = this.ensureContext();
     const dest = this.getDestination();
     if (!ctx || !dest) return;
+    if (isCrit) {
+      this.lastEnemyCritSfxAt = perfNow;
+      this.lastEnemyHitSfxAt = perfNow;
+    } else {
+      this.lastEnemyHitSfxAt = perfNow;
+    }
     const now = ctx.currentTime;
 
     // Satisfying crunchy thud

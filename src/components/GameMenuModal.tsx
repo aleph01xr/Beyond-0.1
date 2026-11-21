@@ -4,6 +4,12 @@ import { calculatePlayerStatProjections } from '../shared/statUtils.ts';
 import { sfx } from '../client/sound.ts';
 import { soundManager } from '../client/soundManager.ts';
 import { useFullscreenState } from '../client/fullscreen.ts';
+import {
+  getDefaultVestmentIdForClass,
+  getVestmentDef,
+  resolveEquippedVestmentForClass,
+  resolveEquippedWeaponForClass,
+} from '../shared/armaments.ts';
 import { type TouchSettings } from './TouchControls.tsx';
 
 interface GameMenuModalProps {
@@ -47,6 +53,10 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
 
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
   const stats = calculatePlayerStatProjections(player, floor);
+  const equippedWeaponDef = resolveEquippedWeaponForClass(player.heroClass, player.equippedWeapon);
+  const activeVestmentDef =
+    resolveEquippedVestmentForClass(player.heroClass, player.equippedVestment) ||
+    getVestmentDef(getDefaultVestmentIdForClass(player.heroClass));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-1.5 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200 select-none pb-safe pt-safe pl-safe pr-safe">
@@ -334,14 +344,23 @@ export const GameMenuModal: React.FC<GameMenuModalProps> = ({
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="stone-input p-3 space-y-1">
-                    <span className="text-[#A19FAF] text-[10px] uppercase block">Primary Weapon</span>
-                    <span className="font-bold text-[#FCD34D]">{heroDef.weapon}</span>
+                    <span className="text-[#A19FAF] text-[10px] uppercase block">Equipped Weapon</span>
+                    <span className="font-bold text-[#FCD34D]">
+                      {player.equippedWeapon === null ? 'Unarmed' : equippedWeaponDef?.name || heroDef.weapon}
+                    </span>
                   </div>
                   <div className="stone-input p-3 space-y-1">
-                    <span className="text-[#A19FAF] text-[10px] uppercase block">Class Passive</span>
-                    <span className="font-bold text-[#38BDF8]">{heroDef.passiveName}</span>
+                    <span className="text-[#A19FAF] text-[10px] uppercase block">
+                      {activeVestmentDef && !activeVestmentDef.isDefault ? 'Vestment Passive' : 'Class Passive'}
+                    </span>
+                    <span className="font-bold text-[#38BDF8] block">
+                      {activeVestmentDef?.passiveName || heroDef.passiveName}
+                    </span>
+                    <span className="text-[11px] text-[#A19FAF] leading-snug block">
+                      {activeVestmentDef?.passiveSummary || heroDef.passiveDesc}
+                    </span>
                   </div>
                 </div>
 

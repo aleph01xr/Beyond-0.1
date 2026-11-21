@@ -6,6 +6,8 @@ import {
   WEAPON_CATALOG,
   getClassVestments,
   getClassWeapons,
+  getDefaultVestmentIdForClass,
+  getVestmentDef,
   resolveEquippedVestmentForClass,
   resolveEquippedWeaponForClass,
   type ArmamentDef,
@@ -51,6 +53,9 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
   const ownedVestments = player.ownedVestments || [];
   const equippedWeaponDef = resolveEquippedWeaponForClass(heroClass, player.equippedWeapon);
   const equippedVestmentDef = resolveEquippedVestmentForClass(heroClass, player.equippedVestment);
+  const activeVestmentDef =
+    equippedVestmentDef || getVestmentDef(getDefaultVestmentIdForClass(heroClass));
+  const isNonDefaultVestment = Boolean(equippedVestmentDef && !equippedVestmentDef.isDefault);
 
   const classWeapons = getClassWeapons(heroClass);
   const classVestments = getClassVestments(heroClass);
@@ -399,29 +404,35 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                       >
                         {equippedVestmentDef ? 'Swap Vestment' : 'Equip Vestment'}
                       </button>
-                      {equippedVestmentDef && onSendAdminCommand && (
+                      {isNonDefaultVestment && onSendAdminCommand && (
                         <button
                           type="button"
                           onClick={() => handleUnequipArmament('vestment')}
                           className="stone-button stone-button-dark py-1.5 px-3 min-h-[36px] text-[10px] font-mono font-bold text-[#F87171] whitespace-nowrap"
                         >
-                          Unequip
+                          Restore Default
                         </button>
                       )}
                     </div>
                   </div>
 
-                  {/* Class Passive */}
+                  {/* Active Passive (Default Class Passive or Vestment Replacement) */}
                   <div className="stone-input p-3 flex items-center gap-3">
                     <div className="w-10 h-10 bg-[#252336] border border-[#38BDF8] flex items-center justify-center font-mono font-bold text-xs text-[#38BDF8] shrink-0">
                       [PAS]
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-mono font-bold text-[#38BDF8] truncate">{heroDef.passiveName}</span>
-                        <span className="text-[10px] font-mono text-[#38BDF8] shrink-0">CLASS PASSIVE</span>
+                        <span className="text-xs font-mono font-bold text-[#38BDF8] truncate">
+                          {activeVestmentDef?.passiveName || heroDef.passiveName}
+                        </span>
+                        <span className="text-[9px] font-mono text-[#38BDF8] shrink-0 text-right">
+                          {isNonDefaultVestment ? 'VESTMENT PASSIVE (REPLACES DEFAULT)' : 'DEFAULT PASSIVE'}
+                        </span>
                       </div>
-                      <p className="text-[11px] text-[#A19FAF] leading-snug mt-0.5">{heroDef.passiveDesc}</p>
+                      <p className="text-[11px] text-[#A19FAF] leading-snug mt-0.5">
+                        {activeVestmentDef?.passiveSummary || heroDef.passiveDesc}
+                      </p>
                     </div>
                   </div>
 
@@ -717,13 +728,13 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                         </div>
                       </div>
                     </div>
-                    {equippedVestmentDef && onSendAdminCommand && (
+                    {isNonDefaultVestment && onSendAdminCommand && (
                       <button
                         type="button"
                         onClick={() => handleUnequipArmament('vestment')}
                         className="stone-button stone-button-dark py-1.5 px-3 min-h-[38px] text-[10px] font-mono font-bold text-[#F87171] whitespace-nowrap shrink-0"
                       >
-                        Unequip
+                        Restore Default
                       </button>
                     )}
                   </div>
@@ -852,13 +863,13 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                             ) : isEquipped ? (
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-mono font-bold text-[#FACC15]">EQUIPPED</span>
-                                {onSendAdminCommand && (
+                                {onSendAdminCommand && (item.slot === 'weapon' || !item.isDefault) && (
                                   <button
                                     type="button"
                                     onClick={() => handleUnequipArmament(item.slot)}
                                     className="stone-button stone-button-dark py-1.5 px-3 min-h-[38px] text-[10px] font-mono font-bold text-[#F87171]"
                                   >
-                                    Unequip
+                                    {item.slot === 'vestment' ? 'Restore Default' : 'Unequip'}
                                   </button>
                                 )}
                               </div>
@@ -1195,7 +1206,7 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                       </span>
                     </div>
 
-                    {stats.longshotHitDamage > 0 && (
+                    {stats.longshotHitDamage > stats.scaledHitDamage && (
                       <div className="flex items-center justify-between p-2 stone-input">
                         <span className="text-[#A19FAF]">Eagle Keenness (180u+ Longshot)</span>
                         <span className="font-bold text-[#34D399]">{stats.longshotHitDamage} Dmg / Hit (+25%)</span>
@@ -1209,12 +1220,14 @@ export const CharacterInventoryModal: React.FC<CharacterInventoryModalProps> = (
                       </span>
                     </div>
 
-                    {player.heroClass === 'arcanist' && (
-                      <div className="flex items-center justify-between p-2 stone-input">
-                        <span className="text-[#A19FAF]">Star Rift Passive (4th Hit / 8s CD)</span>
-                        <span className="font-bold text-[#C084FC]">+{stats.passiveCombatDps} DPS</span>
-                      </div>
-                    )}
+                    {player.heroClass === 'arcanist' &&
+                      (!activeVestmentDef || activeVestmentDef.passiveId === 'astral_resonance') &&
+                      stats.passiveCombatDps > 0 && (
+                        <div className="flex items-center justify-between p-2 stone-input">
+                          <span className="text-[#A19FAF]">Star Rift Passive (4th Hit / 8s CD)</span>
+                          <span className="font-bold text-[#C084FC]">+{stats.passiveCombatDps} DPS</span>
+                        </div>
+                      )}
 
                     <div className="flex items-center justify-between p-2 stone-input">
                       <span className="text-[#A19FAF]">Hybrid DoT Scaling</span>

@@ -715,11 +715,10 @@ export function drawFallenAndGhostPlayer(
   ctx.font = '600 11px "JetBrains Mono", monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.88)';
+  ctx.fillText(p.username, ghostX + 1, badgeY);
   ctx.fillStyle = '#FFFFFF';
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-  ctx.shadowBlur = 4;
   ctx.fillText(p.username, ghostX, badgeY - 1);
-  ctx.shadowBlur = 0;
 
   // Status & Progress Sub-label
   ctx.font = '700 9px "JetBrains Mono", monospace';

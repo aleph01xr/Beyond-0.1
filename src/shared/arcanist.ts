@@ -232,6 +232,7 @@ export interface DisintegrationChannelState {
   activationRemainingMs: number;
   tickAccumMs: number;
   startedAtMs: number;
+  empoweredByVoid?: boolean;
 }
 
 /**

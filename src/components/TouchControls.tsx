@@ -166,6 +166,13 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const heroDef = HERO_CLASSES[player.heroClass] || HERO_CLASSES.vanguard;
   const equippedScroll =
     player.heroClass === 'arcanist' ? getArcanistScrollDef(player.equippedScrollId) : null;
+  const isSeraphimTactical =
+    player.heroClass === 'cleric' && player.equippedWeapon === 'cleric_seraphim_crozier';
+  const tacticalLabel = equippedScroll
+    ? equippedScroll.tacticalTitle
+    : isSeraphimTactical
+    ? 'Seraphic Judgment'
+    : heroDef.tacticalName;
   const isChronoSuspended = (player.chronoSuspendedMs || 0) > 0;
   const isChanneling = Boolean(player.disintegrationState?.active);
   const tacSec = Math.ceil(player.skillCooldownMs / 1000);
@@ -252,7 +259,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     const spec = getAbilityTargetSpec(
       livePlayer.heroClass,
       action,
-      livePlayer.equippedScrollId
+      livePlayer.equippedScrollId,
+      livePlayer.equippedWeapon
     );
     const liveEnemies = liveSnap?.enemies ?? enemiesRef.current;
     const liveDummies = liveSnap?.trainingDummies;
@@ -361,6 +369,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     }
   };
 
+  const lastSentTouchAimRef = useRef<number | null>(null);
+
   // Attack Touch
   const handleAttackStart = (e: React.TouchEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -372,6 +382,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     triggerHaptic(18);
     sfx.playAttack(player.heroClass);
     const targetAngle = getAutoTargetAngle();
+    lastSentTouchAimRef.current = targetAngle;
     onAttackPress(true, targetAngle);
   };
 
@@ -382,6 +393,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       if (e.changedTouches[i].identifier === attackTouchIdRef.current) {
         attackTouchIdRef.current = null;
         attackAimingRef.current = false;
+        lastSentTouchAimRef.current = null;
         setAttackAiming(false);
         onAttackPress(false);
         break;
@@ -389,13 +401,19 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     }
   };
 
-  // Continuous auto-target tracking while holding attack button
+  // Continuous auto-target tracking while holding attack button (only emits on meaningful aim change)
   useEffect(() => {
     if (!attackAiming) return;
     const interval = setInterval(() => {
       const angle = getAutoTargetAngle();
-      onAttackPressRef.current(true, angle);
-    }, 45);
+      const prev = lastSentTouchAimRef.current;
+      let diff = prev === null ? Math.PI : Math.abs(angle - prev);
+      if (diff > Math.PI) diff = Math.PI * 2 - diff;
+      if (diff >= 0.04) {
+        lastSentTouchAimRef.current = angle;
+        onAttackPressRef.current(true, angle);
+      }
+    }, 65);
     return () => clearInterval(interval);
   }, [attackAiming]);
 
@@ -535,7 +553,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     const spec = getAbilityTargetSpec(
       livePlayer.heroClass,
       active.action,
-      livePlayer.equippedScrollId
+      livePlayer.equippedScrollId,
+      livePlayer.equippedWeapon
     );
     const prevCancelled = abilityAimRef?.current?.cancelled ?? false;
 
@@ -915,7 +934,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 ? 'bg-[#1B1A24]/90 border-[#38364A] text-[#716F82]'
                 : 'bg-[#282738]/95 border-[#818CF8] text-[#C7D2FE] active:scale-95'
             }`}
-            aria-label={equippedScroll ? equippedScroll.tacticalTitle : heroDef.tacticalName}
+            aria-label={tacticalLabel}
           >
             <span className="text-xs font-mono font-bold leading-none">
               {isSilenced ? 'SIL' : isChanneling ? 'CHAN' : tacSec > 0 ? `${tacSec}s` : 'Q'}
@@ -927,7 +946,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
                 ? 'Beam'
                 : tacSec > 0
                 ? 'Wait'
-                : (equippedScroll ? equippedScroll.tacticalTitle : heroDef.tacticalName).split(' ')[0]}
+                : tacticalLabel.split(' ')[0]}
             </span>
           </button>
 

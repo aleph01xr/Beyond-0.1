@@ -2,10 +2,125 @@ import {
   HERO_CLASSES,
   type AccountRecord,
   type HeroClassId,
+  type VestmentPassiveId,
 } from './types.ts';
 
 export type ArmamentSlot = 'weapon' | 'vestment';
 export type ArmamentRarity = 'Standard' | 'Forged' | 'Ascendant';
+
+/**
+ * Centralized balance and mechanics tuning configuration for all 12 Weapons & 12 Vestments.
+ * Undecided Section 10 parameters are explicitly exposed here as named temporary defaults.
+ */
+export const ARMAMENT_TUNING = {
+  weapons: {
+    sunforged: {
+      shockwaveDamageRatio: 0.55,
+      shockwaveRangePx: 118,
+      shockwaveHalfAngleRad: 0.58,
+      shockwaveZoneTtlMs: 240,
+    },
+    crimson: {
+      bonusPierce: 3,
+      rangeBonusPx: 26,
+    },
+    stormbreaker: {
+      tempestRadiusPx: 92,
+      tempestDamageRatio: 1.0,
+      tempestZoneTtlMs: 240,
+    },
+    galewind: {
+      counterScope: 'per_target' as const,
+      hitsToTrigger: 3,
+      aoeRadiusPx: 88,
+      aoeDamageRatio: 0.85,
+      dexScalingMult: 0.78,
+      attackSpeedMult: 0.92,
+      novaZoneTtlMs: 260,
+    },
+    eclipse: {
+      minChargeMs: 120,
+      maxChargeMs: 950,
+      minDamageRatio: 0.55,
+      maxDamageRatio: 2.15,
+      minProjSpeedMult: 1.05,
+      maxProjSpeedMult: 1.55,
+      scalingStat: 'intelligence' as const,
+    },
+    cinderflare: {
+      aoeRadiusPx: 64,
+      aoeDamageRatio: 0.5,
+      blastZoneTtlMs: 240,
+    },
+    chronostar: {
+      tacticalSiphonMs: 150,
+      ultSiphonMs: 300,
+      seekingRadiusPx: 170,
+    },
+    solaris: {
+      allyHealBase: 5,
+      healRangePx: 180,
+      procCooldownMs: 350,
+    },
+    seraphim: {
+      tacticalRadiusPx: 110,
+      tacticalRangePx: 210,
+      tacticalBaseDamage: 56,
+      tacticalCooldownMs: 6500,
+      holyBurstZoneTtlMs: 340,
+    },
+  },
+  passives: {
+    warMonger: {
+      lowHpThresholdRatio: 0.3,
+      thresholdInclusive: true,
+      aboveThresholdLifestealPct: 0.06,
+      atOrBelowThresholdLifestealPct: 0.5,
+    },
+    heat: {
+      cap: 100,
+      gainPerHit: 18,
+      maxDamageBonusPct: 0.25,
+      resetGraceMs: 2400,
+    },
+    momentum: {
+      cap: 100,
+      buildDurationMs: 2500,
+      minMoveSpeedPx: 20,
+      maxAttackSpeedBonusPct: 0.24,
+      resetOnStop: true,
+      resetOnHit: true,
+    },
+    predatorsInstinct: {
+      maxStacks: 5,
+      damagePerStackPct: 0.06,
+      inactivityResetMs: 3500,
+    },
+    temporalAcceleration: {
+      tacticalReductionPerBasicHitMs: 120,
+      ultReductionPerTacticalHitMs: 250,
+    },
+    voidConsumption: {
+      cap: 100,
+      gainPerHit: 20,
+      empoweredTacticalBonusPct: 0.35,
+    },
+    sharedGrace: {
+      storePct: 0.35,
+      maxCap: 60,
+      triggerHpRatio: 0.6,
+      releaseRangePx: 220,
+    },
+    sacredRetribution: {
+      sanctityPerHeal: 25,
+      cap: 100,
+      shockwaveRadiusPx: 145,
+      enemyBaseDamage: 38,
+      allyBaseHeal: 18,
+      shockwaveZoneTtlMs: 320,
+    },
+  },
+} as const;
 
 export interface WeaponModifiers {
   /** Multiplicative damage scaling applied to class primary/ability damage (default 1.0) */
@@ -22,11 +137,9 @@ export interface WeaponModifiers {
   projectileSpeedMult?: number;
   /** Extra melee cleave radius or projectile reach in world px */
   rangeBonusPx?: number;
-  /** Shield restored when a primary attack hits a target */
+  /** Vanguard-only: Shield restored when a primary attack hits a target */
   shieldOnPrimaryHit?: number;
-  /** Bonus Shield restored when Dawnstar Mace strikes Undead, Cultists, or Bosses */
-  undeadBonusShieldOnHit?: number;
-  /** Multiplicative bonus to healing output (e.g. 0.14 = +14% healing) */
+  /** Multiplicative bonus to healing output (e.g. 0.16 = +16% healing) */
   healingBonusPct?: number;
   /** Bonus damage multiplier vs Undead, Cultists & Bosses (e.g. 0.20 = +20%) */
   undeadBossBonusPct?: number;
@@ -42,39 +155,36 @@ export interface WeaponModifiers {
   shockChance?: number;
   /** Chance on primary hit to inflict Bleed (0..1) */
   bleedChance?: number;
-  /** Sunforged Claymore: bonus cleave damage while Shield > 0 */
-  shieldedBonusDmgPct?: number;
-  /** Crimson Halberd: outer-reach tipper threshold in px and bonus damage pct */
-  tipperReachPx?: number;
-  tipperBonusPct?: number;
-  /** Stormbreaker Flail: instant Chain Lightning arc to nearby enemies on hit */
-  chainLightningTargets?: number;
-  chainLightningDmgRatio?: number;
-  chainLightningRangePx?: number;
+  /** Sunforged Claymore: releases a short-range golden shockwave while Shield > 0 */
+  sunforgedShockwave?: boolean;
+  /** Stormbreaker Flail: 360-degree circular Tempest Wheel Basic Attack */
+  tempestWheel?: boolean;
   /** Ashwood Recurve: bonus arrow damage against Slowed, Poisoned, or Frozen foes */
   impairedTargetBonusPct?: number;
-  /** Galewind Twinbow: sequential straight follow-up burst shot (delayMs & dmg ratio) + knockback + crit haste */
-  followUpDelayMs?: number;
-  followUpDamageRatio?: number;
-  followUpKnockbackPx?: number;
-  critHasteMs?: number;
-  /** Eclipse Longbow: escalating bonus damage per pierced enemy */
-  pierceEscalationPct?: number;
+  /** Galewind Twinbow: per-target 3-hit deterministic Galeburst wind explosion */
+  galeburstTriggerHits?: number;
+  galeburstRadiusPx?: number;
+  galeburstDamageRatio?: number;
+  /** Multiplier on DEX damage scaling (used by Galewind balance pass) */
+  dexScalingMult?: number;
+  /** Eclipse Longbow: hold-to-charge Basic Attack scaling with INT */
+  chargeToFire?: boolean;
+  usesIntScaling?: boolean;
   /** Runebound Spire: bonus bolt damage while an owned Star Rift is active */
   activeRiftBonusPct?: number;
-  /** Cinderflare Rod: Ember Splash AoE detonation on primary hit */
+  /** Cinderflare Rod: Ember Splash Fire AoE detonation on primary hit */
   emberSplashRadiusPx?: number;
   emberSplashRatio?: number;
   /** Chronostar Scepter: wide mid-flight proximity seeking & cooldown siphon on hit */
   seekingRadiusPx?: number;
   tacticalSiphonMs?: number;
   ultSiphonMs?: number;
-  /** Solaris Censer: heals lowest-HP ally within range on primary bolt hit */
+  /** Solaris Censer: heals lowest-HP nearby ally on primary bolt hit */
   allyHealOnHitBase?: number;
   allyHealOnHitRangePx?: number;
-  /** Seraphim Crozier: brands hit enemies (+35% party damage taken) */
-  brandMarkChance?: number;
-  brandDurationMs?: number;
+  allyHealProcCooldownMs?: number;
+  /** Seraphim Crozier: replaces Cleric Tactical with targeted AoE Holy Burst */
+  seraphimTacticalBurst?: boolean;
 }
 
 export interface VestmentModifiers {
@@ -86,8 +196,12 @@ export interface VestmentModifiers {
   elementalResistBonus?: number;
   /** Multiplicative incoming damage reduction factor (e.g. 0.94 = -6% incoming damage) */
   damageTakenMult?: number;
-  /** Multiplicative movement speed multiplier (e.g. 1.06 = +6% speed) */
+  /** Multiplicative movement speed multiplier (e.g. 1.05 = +5% speed) */
   moveSpeedMult?: number;
+  /** Additive attack speed bonus (e.g. 0.05 = +5% attack speed) */
+  attackSpeedBonus?: number;
+  /** Additive critical strike chance bonus (e.g. 0.05 = +5% crit chance) */
+  critChanceBonus?: number;
   /** Additive cooldown reduction (e.g. 0.08 = +8% CDR) */
   cdrBonus?: number;
   /** Bonus HP regenerated per 2.0s combat pulse */
@@ -96,11 +210,11 @@ export interface VestmentModifiers {
   ccTenacityBonus?: number;
   /** Additive ally revive speed multiplier (e.g. 0.20 = +20% faster revive) */
   reviveSpeedBonus?: number;
-  /** Multiplicative bonus to Cleric Aura & Kit healing (e.g. 0.15 = +15%) */
+  /** Multiplicative bonus to Cleric healing output (e.g. 0.15 = +15%) */
   auraHealBonusPct?: number;
-  /** Flat increase to Maximum Shield cap (base 60) */
+  /** Vanguard-only: Flat increase to Maximum Shield cap (base 60) */
   maxShieldBonus?: number;
-  /** Bonus starting Shield at expedition start */
+  /** Vanguard-only: Bonus starting Shield at expedition start */
   startingShieldBonus?: number;
 }
 
@@ -126,6 +240,9 @@ export interface VestmentDef {
   name: string;
   rarity: ArmamentRarity;
   archetype: string;
+  passiveId: VestmentPassiveId;
+  passiveName: string;
+  passiveSummary: string;
   summary: string;
   effectLines: string[];
   unlockHint: string;
@@ -158,11 +275,11 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'vanguard',
     name: HERO_CLASSES.vanguard.weapon,
     rarity: 'Standard',
-    archetype: 'Shield-Empowered Greatsword',
-    summary: 'Signature Vanguard greatsword paired with a heavy tower shield for stalwart counter-cleaves.',
+    archetype: 'Shield-Wave Greatsword',
+    summary: 'Broad Vanguard greatsword that unleashes a golden forward shockwave whenever you hold Shield.',
     effectLines: [
       '+10px primary cleave reach & +3% Critical Chance',
-      'Guard-Edge: +12% cleave damage while you hold Shield',
+      'Sunforged Shockwave: While Shield > 0, swings release a golden cone shockwave (55% dmg, 118px)',
       'Restores +2 Shield when primary cleave hits a foe',
     ],
     unlockHint: 'Starter Vanguard armament',
@@ -174,7 +291,7 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
       critChanceBonus: 0.03,
       rangeBonusPx: 10,
       shieldOnPrimaryHit: 2,
-      shieldedBonusDmgPct: 0.12,
+      sunforgedShockwave: true,
     },
   },
   {
@@ -183,11 +300,11 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'vanguard',
     name: 'Crimson War Halberd & Buckler',
     rarity: 'Forged',
-    archetype: 'Tipper Polearm Cleaver',
-    summary: 'Extended polearm engineered to skewer distant frontlines with its crescent axe-tip.',
+    archetype: 'Long-Reach Piercing Polearm',
+    summary: 'Extended polearm engineered to thrust deeply and pierce entire frontline formations in one sweep.',
     effectLines: [
-      '+10% Offensive Damage, +18px cleave reach & +1 Pierce (-6% cadence)',
-      'Polearm Tipper: +20% bonus damage to foes struck at 28px+ reach',
+      `+10% Offensive Damage, +${ARMAMENT_TUNING.weapons.crimson.rangeBonusPx}px Reach & +${ARMAMENT_TUNING.weapons.crimson.bonusPierce} Pierce (-6% cadence)`,
+      'Impaling Reach: Extended forward halberd profile hits each target once per swing',
       '45% chance on primary hit to inflict Bleed (4s) & +1 Shield',
     ],
     unlockHint: 'Defeat Floor Bosses as Vanguard',
@@ -195,10 +312,8 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     modifiers: {
       damageMult: 1.1,
       attackSpeedMult: 0.94,
-      bonusPierce: 1,
-      rangeBonusPx: 18,
-      tipperReachPx: 28,
-      tipperBonusPct: 0.2,
+      bonusPierce: ARMAMENT_TUNING.weapons.crimson.bonusPierce,
+      rangeBonusPx: ARMAMENT_TUNING.weapons.crimson.rangeBonusPx,
       bleedChance: 0.45,
       shieldOnPrimaryHit: 1,
     },
@@ -209,25 +324,22 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'vanguard',
     name: 'Stormbreaker Flail & Bastion Wall',
     rarity: 'Ascendant',
-    archetype: 'Tempest Chain-Lightning Flail',
-    summary: 'Lightning-tempered war flail discharging crackling thunderbolts across clustered enemies.',
+    archetype: 'Tempest Wheel War Flail',
+    summary: 'Thunder-forged flail replacing directional cleaves with a 360° Tempest Wheel vortex around you.',
     effectLines: [
-      '+14% Attack Speed, +6% Crit Chance & +4 Shield on primary hit',
-      'Tempest Arc: Strikes chain lightning to up to 2 foes within 105px (45% dmg)',
+      `Tempest Wheel: 360° circular flail sweep (${ARMAMENT_TUNING.weapons.stormbreaker.tempestRadiusPx}px radius around you)`,
+      '+5% Damage, +12% Attack Speed, +5% Crit Chance & +3 Shield on hit',
       '25% chance on primary hit to Shock foes (3.5s)',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Vanguard',
     accent: '#FBBF24',
     modifiers: {
-      damageMult: 1.04,
-      attackSpeedMult: 1.14,
-      critChanceBonus: 0.06,
-      rangeBonusPx: 8,
-      shieldOnPrimaryHit: 4,
+      damageMult: 1.05,
+      attackSpeedMult: 1.12,
+      critChanceBonus: 0.05,
+      shieldOnPrimaryHit: 3,
       shockChance: 0.25,
-      chainLightningTargets: 2,
-      chainLightningDmgRatio: 0.45,
-      chainLightningRangePx: 105,
+      tempestWheel: true,
     },
   },
 
@@ -263,24 +375,24 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'ranger',
     name: 'Galewind Twinbow & Split Quiver',
     rarity: 'Forged',
-    archetype: 'Sequential Tandem Wind-Burst',
-    summary: 'Double-limbed composite bow firing two rapid straight shafts in tandem along your exact aim line.',
+    archetype: 'Galeburst 3-Hit Windbow',
+    summary: 'Twin-limbed composite bow whose arrows mark targets and detonate a violent air burst on every third hit.',
     effectLines: [
-      'Tandem Double-Tap: Fires a 2nd straight tailwind arrow 75ms later (90% ratio)',
-      '+6% Cadence, +18% Velocity & 2nd shaft knocks non-boss foes back 12px',
-      'Critical hits grant 0.7s Galewind Haste (+4% Crit, 62% base per-shaft ratio)',
+      `Galeburst: Every ${ARMAMENT_TUNING.weapons.galewind.hitsToTrigger}rd confirmed hit on a target triggers an ${ARMAMENT_TUNING.weapons.galewind.aoeRadiusPx}px wind AoE (${Math.round(ARMAMENT_TUNING.weapons.galewind.aoeDamageRatio * 100)}% dmg)`,
+      '+12% Arrow Velocity & +4% Crit Chance',
+      `Tuned for burst cadence (${Math.round(ARMAMENT_TUNING.weapons.galewind.attackSpeedMult * 100)}% cadence, ${Math.round(ARMAMENT_TUNING.weapons.galewind.dexScalingMult * 100)}% DEX scaling)`,
     ],
     unlockHint: 'Defeat Floor Bosses as Ranger',
     accent: '#38BDF8',
     modifiers: {
-      damageMult: 0.62,
-      attackSpeedMult: 1.06,
-      projectileSpeedMult: 1.18,
+      damageMult: 0.95,
+      attackSpeedMult: ARMAMENT_TUNING.weapons.galewind.attackSpeedMult,
+      projectileSpeedMult: 1.12,
       critChanceBonus: 0.04,
-      followUpDelayMs: 75,
-      followUpDamageRatio: 0.9,
-      followUpKnockbackPx: 12,
-      critHasteMs: 700,
+      dexScalingMult: ARMAMENT_TUNING.weapons.galewind.dexScalingMult,
+      galeburstTriggerHits: ARMAMENT_TUNING.weapons.galewind.hitsToTrigger,
+      galeburstRadiusPx: ARMAMENT_TUNING.weapons.galewind.aoeRadiusPx,
+      galeburstDamageRatio: ARMAMENT_TUNING.weapons.galewind.aoeDamageRatio,
     },
   },
   {
@@ -289,24 +401,24 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'ranger',
     name: 'Eclipse Siege Longbow & Bodkins',
     rarity: 'Ascendant',
-    archetype: 'Overpenetrating Siege Sniper',
-    summary: 'Heavy darkwood siege bow whose high-velocity bodkins gain lethal momentum as they pierce ranks.',
+    archetype: 'INT-Scaled Charged Siege Bow',
+    summary: 'Heavy arcane-sinew siege longbow; hold Basic Attack to draw massive INT-scaled piercing shots.',
     effectLines: [
-      '+12% Arrow Damage, +2 Arrow Pierce & +25% Arrow Velocity (-6% cadence)',
-      'Overpenetration: Each enemy pierced boosts remaining hit damage by +18%',
-      '+8% Crit Chance, +10% Crit Multiplier & +15% Longshot beyond 180u',
+      `Hold-to-Charge (${ARMAMENT_TUNING.weapons.eclipse.minChargeMs}-${ARMAMENT_TUNING.weapons.eclipse.maxChargeMs}ms): Deals ${Math.round(ARMAMENT_TUNING.weapons.eclipse.minDamageRatio * 100)}%-${Math.round(ARMAMENT_TUNING.weapons.eclipse.maxDamageRatio * 100)}% arrow damage`,
+      'Arcane Sinew: Damage scales with Intelligence (INT) instead of Dexterity',
+      '+2 Arrow Pierce, +6% Crit Chance & +10% Crit Multiplier',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Ranger',
     accent: '#FBBF24',
     modifiers: {
-      damageMult: 1.12,
-      attackSpeedMult: 0.94,
+      damageMult: 1.0,
+      attackSpeedMult: 1.0,
       bonusPierce: 2,
-      critChanceBonus: 0.08,
+      critChanceBonus: 0.06,
       critMultBonus: 0.1,
-      projectileSpeedMult: 1.25,
-      longshotBonusPct: 0.15,
-      pierceEscalationPct: 0.18,
+      projectileSpeedMult: 1.2,
+      chargeToFire: true,
+      usesIntScaling: true,
     },
   },
 
@@ -343,22 +455,22 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     name: 'Cinderflare Catalyst & Ember Crown',
     rarity: 'Forged',
     archetype: 'Detonating Pyromancy Catalyst',
-    summary: 'Obsidian-gold catalyst firing volatile ember bolts that erupt into fiery splash blasts on impact.',
+    summary: 'Obsidian-gold catalyst firing volatile ember bolts that erupt into fiery AoE blasts on hit.',
     effectLines: [
-      '+10% Arcane Spell & Bolt Damage, +1 Pierce & +10% Crit Multiplier',
-      'Ember Detonation: Primary bolts splash 45% Fire AoE within 54px on hit',
+      '+8% Arcane Bolt Damage, +1 Pierce & +10% Crit Multiplier',
+      `Ember Detonation: Confirmed hits trigger a ${ARMAMENT_TUNING.weapons.cinderflare.aoeRadiusPx}px Fire AoE blast (${Math.round(ARMAMENT_TUNING.weapons.cinderflare.aoeDamageRatio * 100)}% dmg)`,
       '35% chance on primary hit to Ignite foes (4s Burn)',
     ],
     unlockHint: 'Defeat Floor Bosses as Arcanist',
     accent: '#F97316',
     modifiers: {
-      damageMult: 1.1,
+      damageMult: 1.08,
       attackSpeedMult: 1.0,
       bonusPierce: 1,
       critMultBonus: 0.1,
       burnChance: 0.35,
-      emberSplashRadiusPx: 54,
-      emberSplashRatio: 0.45,
+      emberSplashRadiusPx: ARMAMENT_TUNING.weapons.cinderflare.aoeRadiusPx,
+      emberSplashRatio: ARMAMENT_TUNING.weapons.cinderflare.aoeDamageRatio,
     },
   },
   {
@@ -370,22 +482,22 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     archetype: 'Seeking Temporal Star-Orb Scepter',
     summary: 'Celestial astrolabe scepter launching homing Star-Orbs that curve mid-flight and siphon spell cooldowns.',
     effectLines: [
-      'Seeking Star-Orb: Curves toward foes within 170px mid-flight (+10% dmg, +10% cadence)',
-      'Temporal Siphon: Primary orb hits trim -0.3s Tactical & -0.4s Ultimate cooldowns',
-      '+1 Pierce, +6% Crit Chance, 35% Chill & +30% Star Rift resonance damage',
+      `Seeking Star-Orb: Curves toward foes within ${ARMAMENT_TUNING.weapons.chronostar.seekingRadiusPx}px (+8% dmg, +8% cadence)`,
+      `Temporal Siphon: Confirmed orb hits trim -${ARMAMENT_TUNING.weapons.chronostar.tacticalSiphonMs}ms Tactical & -${ARMAMENT_TUNING.weapons.chronostar.ultSiphonMs}ms Ultimate CD once per orb`,
+      '+1 Pierce, +5% Crit Chance, 35% Chill & +25% Star Rift resonance damage',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Arcanist',
     accent: '#38BDF8',
     modifiers: {
-      damageMult: 1.1,
-      attackSpeedMult: 1.1,
+      damageMult: 1.08,
+      attackSpeedMult: 1.08,
       bonusPierce: 1,
-      critChanceBonus: 0.06,
+      critChanceBonus: 0.05,
       projectileSpeedMult: 1.15,
-      starRiftBonusDamagePct: 0.3,
-      seekingRadiusPx: 170,
-      tacticalSiphonMs: 300,
-      ultSiphonMs: 400,
+      starRiftBonusDamagePct: 0.25,
+      seekingRadiusPx: ARMAMENT_TUNING.weapons.chronostar.seekingRadiusPx,
+      tacticalSiphonMs: ARMAMENT_TUNING.weapons.chronostar.tacticalSiphonMs,
+      ultSiphonMs: ARMAMENT_TUNING.weapons.chronostar.ultSiphonMs,
       chillChance: 0.35,
     },
   },
@@ -401,8 +513,8 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     summary: 'Flanged sun-gold mace paired with a consecrated reliquary of undead-banishing judgment.',
     effectLines: [
       '+20% Smite damage vs Undead, Cultists & Bosses',
-      '+4% Critical Strike Chance & +1 Shield on primary Smite hit',
-      'Sanctuary Bane: Grants +2 total Shield when smiting Undead, Cultists, or Bosses',
+      '+4% Critical Strike Chance',
+      'Sanctuary Judgment: Pure radiant Smite attacks without Shield mechanics',
     ],
     unlockHint: 'Starter Cleric armament',
     isDefault: true,
@@ -412,8 +524,6 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
       attackSpeedMult: 1.0,
       critChanceBonus: 0.04,
       undeadBossBonusPct: 0.2,
-      shieldOnPrimaryHit: 1,
-      undeadBonusShieldOnHit: 1,
     },
   },
   {
@@ -423,22 +533,23 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     name: 'Solaris War-Censer & Thurible',
     rarity: 'Forged',
     archetype: 'Mending Incense Focus',
-    summary: 'Swinging emerald-gold war-censer whose sacred bolts mend the lowest-HP nearby ally on impact.',
+    summary: 'Swinging emerald-gold war-censer whose confirmed hits mend the lowest-HP nearby injured ally.',
     effectLines: [
-      '+16% Healing Power, +8% Divine Damage & +1 Radiant Bolt Pierce',
-      'Incense Mending: Primary hits heal the lowest-HP ally within 150px (+4 scaled HP)',
+      '+16% Healing Power, +6% Divine Damage & +1 Radiant Bolt Pierce',
+      `Incense Mending: Confirmed hits heal lowest-HP injured ally within ${ARMAMENT_TUNING.weapons.solaris.healRangePx}px (+${ARMAMENT_TUNING.weapons.solaris.allyHealBase} scaled HP, ${ARMAMENT_TUNING.weapons.solaris.procCooldownMs}ms CD)`,
       '30% chance on primary hit to Chill targets (2.5s)',
     ],
     unlockHint: 'Defeat Floor Bosses as Cleric',
     accent: '#34D399',
     modifiers: {
-      damageMult: 1.08,
+      damageMult: 1.06,
       attackSpeedMult: 1.0,
       bonusPierce: 1,
       healingBonusPct: 0.16,
       chillChance: 0.3,
-      allyHealOnHitBase: 4,
-      allyHealOnHitRangePx: 150,
+      allyHealOnHitBase: ARMAMENT_TUNING.weapons.solaris.allyHealBase,
+      allyHealOnHitRangePx: ARMAMENT_TUNING.weapons.solaris.healRangePx,
+      allyHealProcCooldownMs: ARMAMENT_TUNING.weapons.solaris.procCooldownMs,
     },
   },
   {
@@ -447,25 +558,23 @@ export const WEAPON_CATALOG: readonly WeaponDef[] = [
     heroClass: 'cleric',
     name: 'Seraphim Judgment Crozier & Sun-Relic',
     rarity: 'Ascendant',
-    archetype: 'Judgment Brand Battle-Crozier',
-    summary: 'High-choir crozier piercing ranks with sunlit lances that brand foes for amplified party damage.',
+    archetype: 'Seraphic Burst Battle-Crozier',
+    summary: 'High-choir crozier that retains steady Smite bolts while transforming your Tactical Skill into a targeted Holy Burst.',
     effectLines: [
-      '+14% Divine Damage, +10% Attack Speed, +1 Pierce & +6% Crit Chance',
-      'Seraphic Brand: 35% chance (100% on Crit) to Mark foes (+35% party dmg for 2.5s)',
-      '+12% Healing Power, +2 Shield/hit & +15% vs Undead/Bosses',
+      '+12% Divine Damage, +1 Pierce & +5% Critical Chance',
+      `Seraphic Judgment (Tactical): Targeted ${ARMAMENT_TUNING.weapons.seraphim.tacticalRadiusPx}px AoE Holy Burst (${ARMAMENT_TUNING.weapons.seraphim.tacticalBaseDamage} scaled Divine dmg, no heal, ${(ARMAMENT_TUNING.weapons.seraphim.tacticalCooldownMs / 1000).toFixed(1)}s CD)`,
+      '+10% Healing Power & +15% Smite damage vs Undead/Bosses',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Cleric',
     accent: '#FDE047',
     modifiers: {
-      damageMult: 1.14,
-      attackSpeedMult: 1.1,
+      damageMult: 1.12,
+      attackSpeedMult: 1.0,
       bonusPierce: 1,
-      critChanceBonus: 0.06,
-      healingBonusPct: 0.12,
+      critChanceBonus: 0.05,
+      healingBonusPct: 0.1,
       undeadBossBonusPct: 0.15,
-      shieldOnPrimaryHit: 2,
-      brandMarkChance: 0.35,
-      brandDurationMs: 2500,
+      seraphimTacticalBurst: true,
     },
   },
 ];
@@ -479,18 +588,21 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     name: 'Ironcrest Bastion Plate',
     rarity: 'Standard',
     archetype: 'Linebreaker Knight Armor',
-    summary: 'Layered bastion steel engineered to turn heavy blows and reinforce guard posture.',
+    passiveId: 'iron_will',
+    passiveName: 'Iron Will',
+    passiveSummary: 'Absorbs 15% of all incoming damage. Striking stunned, burned, or frozen foes restores +3 Shield.',
+    summary: 'Layered bastion steel sustaining the classic Vanguard Iron Will passive and extra Shield capacity.',
     effectLines: [
+      'Passive — Iron Will: -15% incoming damage; +3 Shield on hitting Stunned/Burned/Frozen foes',
+      '+10 Maximum Shield Cap & +5 Starting Shield',
       '+4% Elemental Resistance',
-      '+12 Maximum Shield Cap (up to 72)',
-      '+5 Starting Shield at expedition launch',
     ],
     unlockHint: 'Starter Vanguard vestment',
     isDefault: true,
     accent: '#94A3B8',
     modifiers: {
       elementalResistBonus: 0.04,
-      maxShieldBonus: 12,
+      maxShieldBonus: 10,
       startingShieldBonus: 5,
     },
   },
@@ -500,22 +612,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'vanguard',
     name: 'Obsidian Juggernaut Harness',
     rarity: 'Forged',
-    archetype: 'Fortress Heavy Plate',
-    summary: 'Dense obsidian-riveted plate trading slight stride speed for massive durability.',
+    archetype: 'Berserker Juggernaut Plate',
+    passiveId: 'war_monger',
+    passiveName: 'War Monger',
+    passiveSummary: `Above 30% HP, direct hits heal ${Math.round(ARMAMENT_TUNING.passives.warMonger.aboveThresholdLifestealPct * 100)}% Lifesteal. At or below 30% HP, Lifesteal surges to 50%.`,
+    summary: 'Heavy obsidian warplate trading mobility for brutal desperate Lifesteal when battered.',
     effectLines: [
-      '+28 Maximum HP & +9% Physical Resistance',
-      '-6% All Incoming Damage & +15 Max Shield Cap',
-      '-3% Movement Speed (heavy plate weight)',
+      `Passive — War Monger: ${Math.round(ARMAMENT_TUNING.passives.warMonger.aboveThresholdLifestealPct * 100)}% Lifesteal above 30% HP; 50% Lifesteal at/below 30% HP (replaces Iron Will)`,
+      '+25 Maximum HP & +8% Physical Resistance',
+      '-5% Movement Speed',
     ],
     unlockHint: 'Defeat Floor Bosses as Vanguard',
     accent: '#CBD5E1',
     modifiers: {
-      maxHpBonus: 28,
-      physicalResistBonus: 0.09,
-      damageTakenMult: 0.94,
-      maxShieldBonus: 15,
-      startingShieldBonus: 10,
-      moveSpeedMult: 0.97,
+      maxHpBonus: 25,
+      physicalResistBonus: 0.08,
+      moveSpeedMult: 0.95,
     },
   },
   {
@@ -524,22 +636,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'vanguard',
     name: 'Sovereign Aegis Warplate',
     rarity: 'Ascendant',
-    archetype: 'Commanding Warden Mail',
-    summary: 'Gilded sanctum warplate channeling rapid shield abilities and steady vitality regen.',
+    archetype: 'Thermal Furnace Warplate',
+    passiveId: 'heat',
+    passiveName: 'Heat',
+    passiveSummary: `Confirmed Basic Attack hits build Heat (+${ARMAMENT_TUNING.passives.heat.gainPerHit}/hit up to ${ARMAMENT_TUNING.passives.heat.cap}), boosting damage up to +${Math.round(ARMAMENT_TUNING.passives.heat.maxDamageBonusPct * 100)}%. Resets after ${(ARMAMENT_TUNING.passives.heat.resetGraceMs / 1000).toFixed(1)}s without hits.`,
+    summary: 'Gilded sanctum warplate stoking an escalating Heat gauge during relentless melee pressure.',
     effectLines: [
-      '+18 Maximum HP & +8% Cooldown Reduction',
-      '+6% Physical Resistance & +8% Elemental Resistance',
-      '+2 HP Regen every 2.0s combat pulse',
+      `Passive — Heat: Basic hits build Heat (up to +${Math.round(ARMAMENT_TUNING.passives.heat.maxDamageBonusPct * 100)}% dmg); resets when idle (replaces Iron Will)`,
+      '+15 Maximum HP & +5% Physical Resistance',
+      '+5% Attack Speed',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Vanguard',
     accent: '#F59E0B',
     modifiers: {
-      maxHpBonus: 18,
-      physicalResistBonus: 0.06,
-      elementalResistBonus: 0.08,
-      cdrBonus: 0.08,
-      hpRegenPerTickBonus: 2,
-      maxShieldBonus: 12,
+      maxHpBonus: 15,
+      physicalResistBonus: 0.05,
+      attackSpeedBonus: 0.05,
     },
   },
 
@@ -551,20 +663,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     name: 'Thornwood Stalker Brigandine',
     rarity: 'Standard',
     archetype: 'Scout Leather & Cloak',
-    summary: 'Oil-treated forest brigandine woven with briarhide for swift kiting.',
+    passiveId: 'eagle_keenness',
+    passiveName: 'Eagle Keenness',
+    passiveSummary: 'Arrows hitting foes at 180u+ trigger Longshot (+25% guaranteed Crit). Kills grant +22% Haste for 2.5s.',
+    summary: 'Oil-treated forest brigandine preserving classic Eagle Keenness sniping and kill-haste.',
     effectLines: [
-      '+5% Movement Speed',
-      '+4% Elemental Resistance',
-      '+6 Max Shield Cap & +4 Starting Shield',
+      'Passive — Eagle Keenness: Longshot Crits at 180u+ (+25% dmg) & 2.5s Haste on kill',
+      '+5% Movement Speed & +4% Elemental Resistance',
+      '+5 Maximum HP',
     ],
     unlockHint: 'Starter Ranger vestment',
     isDefault: true,
     accent: '#4ADE80',
     modifiers: {
+      maxHpBonus: 5,
       moveSpeedMult: 1.05,
       elementalResistBonus: 0.04,
-      maxShieldBonus: 6,
-      startingShieldBonus: 4,
     },
   },
   {
@@ -573,20 +687,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'ranger',
     name: 'Windrunner Mistcloak',
     rarity: 'Forged',
-    archetype: 'Gale-Tuned Skirmisher Garb',
-    summary: 'Featherlight mistcloak accelerating evasion, skill cadence, and snare recovery.',
+    archetype: 'Gale-Charged Skirmisher Cloak',
+    passiveId: 'momentum',
+    passiveName: 'Momentum',
+    passiveSummary: `Continuous movement builds Momentum (up to +${Math.round(ARMAMENT_TUNING.passives.momentum.maxAttackSpeedBonusPct * 100)}% Attack Speed). Standing still or taking damage resets it.`,
+    summary: 'Featherlight mistcloak converting sustained kiting movement directly into rapid bow cadence.',
     effectLines: [
-      '+11% Movement Speed & +8% Cooldown Reduction',
-      '+18% Crowd-Control Duration Tenacity',
-      '+12 Maximum HP',
+      `Passive — Momentum: Moving builds up to +${Math.round(ARMAMENT_TUNING.passives.momentum.maxAttackSpeedBonusPct * 100)}% Attack Speed; stopping or hit resets (replaces Eagle Keenness)`,
+      '+10% Movement Speed & +5% Attack Speed',
+      '+10 Maximum HP',
     ],
     unlockHint: 'Defeat Floor Bosses as Ranger',
     accent: '#38BDF8',
     modifiers: {
-      maxHpBonus: 12,
-      moveSpeedMult: 1.11,
-      cdrBonus: 0.08,
-      ccTenacityBonus: 0.18,
+      maxHpBonus: 10,
+      moveSpeedMult: 1.1,
+      attackSpeedBonus: 0.05,
     },
   },
   {
@@ -595,21 +711,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'ranger',
     name: 'Briarheart Sentinel Hauberk',
     rarity: 'Ascendant',
-    archetype: 'Reinforced Grove Brigandine',
-    summary: 'Living-bark reinforced leather mending wounds while preserving agile footwork.',
+    archetype: 'Apex Tracker Brigandine',
+    passiveId: 'predators_instinct',
+    passiveName: "Predator's Instinct",
+    passiveSummary: `Repeated attacks against the same foe build up to ${ARMAMENT_TUNING.passives.predatorsInstinct.maxStacks} stacks (+${Math.round(ARMAMENT_TUNING.passives.predatorsInstinct.damagePerStackPct * 100)}%/stack, max +${ARMAMENT_TUNING.passives.predatorsInstinct.maxStacks * Math.round(ARMAMENT_TUNING.passives.predatorsInstinct.damagePerStackPct * 100)}%). Switching targets or stopping resets.`,
+    summary: 'Briar-woven sentinel leather locking focus onto a single quarry until brought down.',
     effectLines: [
-      '+24 Maximum HP & +2 HP Regen every 2.0s pulse',
-      '+7% Physical & +7% Elemental Resistance',
-      '+6% Movement Speed',
+      `Passive — Predator's Instinct: Focusing one target stacks up to +${ARMAMENT_TUNING.passives.predatorsInstinct.maxStacks * Math.round(ARMAMENT_TUNING.passives.predatorsInstinct.damagePerStackPct * 100)}% damage (replaces Eagle Keenness)`,
+      '+20 Maximum HP & +6% Physical Resistance',
+      '+5% Critical Strike Chance',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Ranger',
     accent: '#10B981',
     modifiers: {
-      maxHpBonus: 24,
-      physicalResistBonus: 0.07,
-      elementalResistBonus: 0.07,
-      moveSpeedMult: 1.06,
-      hpRegenPerTickBonus: 2,
+      maxHpBonus: 20,
+      physicalResistBonus: 0.06,
+      critChanceBonus: 0.05,
     },
   },
 
@@ -621,19 +738,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     name: 'Spireweaver Astral Vestments',
     rarity: 'Standard',
     archetype: 'Runed Scholar Robes',
-    summary: 'Indigo vestments threaded with silver astrolabe wire to steady mana cadence.',
+    passiveId: 'astral_resonance',
+    passiveName: 'Astral Resonance',
+    passiveSummary: 'Every 4th cosmic bolt unleashes a pulsing Star Rift zone (8s CD) dealing continuous AoE Arcane damage.',
+    summary: 'Indigo vestments threaded with silver astrolabe wire channeling classic Astral Resonance rifts.',
     effectLines: [
-      '+4% Elemental Resistance',
-      '+10 Maximum Shield Cap',
-      '+5 Starting Shield at expedition launch',
+      'Passive — Astral Resonance: Every 4th Basic Attack summons a pulsing Star Rift',
+      '+5% Elemental Resistance & +3% Cooldown Reduction',
+      '+5 Maximum HP',
     ],
     unlockHint: 'Starter Arcanist vestment',
     isDefault: true,
     accent: '#818CF8',
     modifiers: {
-      elementalResistBonus: 0.04,
-      maxShieldBonus: 10,
-      startingShieldBonus: 5,
+      maxHpBonus: 5,
+      elementalResistBonus: 0.05,
+      cdrBonus: 0.03,
     },
   },
   {
@@ -643,19 +763,21 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     name: 'Chronomancer Silk Shroud',
     rarity: 'Forged',
     archetype: 'Temporal Conduit Robes',
-    summary: 'Quicksilver-lined shroud engineered for rapid spell cycling and nimble repositioning.',
+    passiveId: 'temporal_acceleration',
+    passiveName: 'Temporal Acceleration',
+    passiveSummary: `Basic hits trim -${ARMAMENT_TUNING.passives.temporalAcceleration.tacticalReductionPerBasicHitMs}ms Tactical CD; Tactical hits trim -${ARMAMENT_TUNING.passives.temporalAcceleration.ultReductionPerTacticalHitMs}ms Ultimate CD.`,
+    summary: 'Quicksilver-lined shroud cycling Scrolls and Chrono Wells at blinding speed.',
     effectLines: [
-      '+12% Cooldown Reduction',
-      '+7% Movement Speed & +8% Elemental Resistance',
-      '+14 Maximum HP',
+      `Passive — Temporal Acceleration: Basic hits trim -${ARMAMENT_TUNING.passives.temporalAcceleration.tacticalReductionPerBasicHitMs}ms Tactical & Tactical hits trim -${ARMAMENT_TUNING.passives.temporalAcceleration.ultReductionPerTacticalHitMs}ms Ult CD (replaces Astral Resonance)`,
+      '+8% Cooldown Reduction & +5% Movement Speed',
+      '+10 Maximum HP',
     ],
     unlockHint: 'Defeat Floor Bosses as Arcanist',
     accent: '#38BDF8',
     modifiers: {
-      maxHpBonus: 14,
-      cdrBonus: 0.12,
-      moveSpeedMult: 1.07,
-      elementalResistBonus: 0.08,
+      maxHpBonus: 10,
+      cdrBonus: 0.08,
+      moveSpeedMult: 1.05,
     },
   },
   {
@@ -664,23 +786,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'arcanist',
     name: 'Voidward Battlemage Robes',
     rarity: 'Ascendant',
-    archetype: 'Ward-Woven Battle Mantle',
-    summary: 'Runic ward-cloth wrapping frail casters in dense arcane barriers.',
+    archetype: 'Void-Empowered Battle Robes',
+    passiveId: 'void_consumption',
+    passiveName: 'Void Consumption',
+    passiveSummary: `Basic hits build Void Energy (+${ARMAMENT_TUNING.passives.voidConsumption.gainPerHit}/${ARMAMENT_TUNING.passives.voidConsumption.cap}). At max Energy, your next Tactical/Scroll consumes it for +${Math.round(ARMAMENT_TUNING.passives.voidConsumption.empoweredTacticalBonusPct * 100)}% damage.`,
+    summary: 'Runic void-cloth storing raw eldritch charge to overcharge your next Tactical or Scroll cast.',
     effectLines: [
-      '+26 Maximum HP & +15 Max Shield Cap',
-      '+7% Physical & +10% Elemental Resistance',
-      '-6% All Incoming Damage & +6% Cooldown Reduction',
+      `Passive — Void Consumption: Basic hits fill Void Energy to empower next Tactical/Scroll by +${Math.round(ARMAMENT_TUNING.passives.voidConsumption.empoweredTacticalBonusPct * 100)}% (replaces Astral Resonance)`,
+      '+25 Maximum HP & +8% Elemental Resistance',
+      '+5% Cooldown Reduction',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Arcanist',
     accent: '#A855F7',
     modifiers: {
-      maxHpBonus: 26,
-      physicalResistBonus: 0.07,
-      elementalResistBonus: 0.1,
-      damageTakenMult: 0.94,
-      cdrBonus: 0.06,
-      maxShieldBonus: 15,
-      startingShieldBonus: 10,
+      maxHpBonus: 25,
+      elementalResistBonus: 0.08,
+      cdrBonus: 0.05,
     },
   },
 
@@ -692,20 +813,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     name: 'Sunbrand Prelate Raiment',
     rarity: 'Standard',
     archetype: 'Consecrated Choir Vestments',
-    summary: 'Gold-embroidered vestments preserving clear prayers under pressure.',
+    passiveId: 'radiant_aura',
+    passiveName: 'Radiant Aura',
+    passiveSummary: 'Pulses healing light every 2.0s to nearby allies and revives fallen allies 40% faster.',
+    summary: 'Gold-embroidered vestments channeling classic Radiant Aura party sustenance.',
     effectLines: [
-      '+3% Physical & +5% Elemental Resistance',
-      '+20% faster Ally Revive Speed',
-      '+6 Maximum Shield Cap',
+      'Passive — Radiant Aura: 2.0s party healing pulse & +40% Ally Revive Speed',
+      '+5% Healing Power & +3% Physical Resistance',
+      '+5 Maximum HP',
     ],
     unlockHint: 'Starter Cleric vestment',
     isDefault: true,
     accent: '#FACC15',
     modifiers: {
+      maxHpBonus: 5,
+      auraHealBonusPct: 0.05,
       physicalResistBonus: 0.03,
-      elementalResistBonus: 0.05,
-      reviveSpeedBonus: 0.2,
-      maxShieldBonus: 6,
     },
   },
   {
@@ -714,21 +837,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'cleric',
     name: 'Hallowed Martyr Surplice',
     rarity: 'Forged',
-    archetype: 'Sacred Mending Vestments',
-    summary: 'Sunlit surplice amplifying party healing cadence, HP regen, and battlefield revives.',
+    archetype: 'Lifewell Reservoir Vestments',
+    passiveId: 'shared_grace',
+    passiveName: 'Shared Grace',
+    passiveSummary: `Stores ${Math.round(ARMAMENT_TUNING.passives.sharedGrace.storePct * 100)}% of effective ally healing as Grace (cap ${ARMAMENT_TUNING.passives.sharedGrace.maxCap}). Automatically heals allies dropping below ${Math.round(ARMAMENT_TUNING.passives.sharedGrace.triggerHpRatio * 100)}% HP.`,
+    summary: 'Sunlit surplice banking overflow devotion to rescue injured allies the moment danger strikes.',
     effectLines: [
-      '+22 Maximum HP & +15% Healing Power',
-      '+8% Cooldown Reduction & +2 HP Regen / 2.0s',
-      '+35% faster Ally Revive Speed',
+      `Passive — Shared Grace: Stores ${Math.round(ARMAMENT_TUNING.passives.sharedGrace.storePct * 100)}% ally healing (cap ${ARMAMENT_TUNING.passives.sharedGrace.maxCap}) & auto-mends injured allies (replaces Radiant Aura)`,
+      '+15% Healing Power & +5% Cooldown Reduction',
+      '+15 Maximum HP',
     ],
     unlockHint: 'Defeat Floor Bosses as Cleric',
     accent: '#34D399',
     modifiers: {
-      maxHpBonus: 22,
+      maxHpBonus: 15,
       auraHealBonusPct: 0.15,
-      cdrBonus: 0.08,
-      hpRegenPerTickBonus: 2,
-      reviveSpeedBonus: 0.35,
+      cdrBonus: 0.05,
     },
   },
   {
@@ -737,23 +861,22 @@ export const VESTMENT_CATALOG: readonly VestmentDef[] = [
     heroClass: 'cleric',
     name: 'Arch-Templar Sanctum Plate',
     rarity: 'Ascendant',
-    archetype: 'Armored Paladin Cassock',
-    summary: 'Sacred steel-lined cassock letting Clerics hold the frontline beside Vanguards.',
+    archetype: 'Sanctified Battle-Plate',
+    passiveId: 'sacred_retribution',
+    passiveName: 'Sacred Retribution',
+    passiveSummary: `Ally heals build Sanctity (+${ARMAMENT_TUNING.passives.sacredRetribution.sanctityPerHeal}/${ARMAMENT_TUNING.passives.sacredRetribution.cap}). At max Sanctity, your next Basic Attack emits a holy shockwave damaging enemies & healing allies.`,
+    summary: 'Sacred steel-lined plate converting battlefield triage into punishing holy shockwaves.',
     effectLines: [
-      '+32 Maximum HP & +12 Max Shield Cap',
-      '+8% Physical & +8% Elemental Resistance',
-      '-6% All Incoming Damage & +18% CC Tenacity',
+      `Passive — Sacred Retribution: Ally heals build Sanctity; at ${ARMAMENT_TUNING.passives.sacredRetribution.cap}, next Basic Attack triggers Holy Shockwave (replaces Radiant Aura)`,
+      '+25 Maximum HP & +8% Physical Resistance',
+      '+8% Elemental Resistance',
     ],
     unlockHint: 'Defeat Floor 3+ Bosses as Cleric',
     accent: '#FDE047',
     modifiers: {
-      maxHpBonus: 32,
+      maxHpBonus: 25,
       physicalResistBonus: 0.08,
       elementalResistBonus: 0.08,
-      damageTakenMult: 0.94,
-      ccTenacityBonus: 0.18,
-      maxShieldBonus: 12,
-      startingShieldBonus: 8,
     },
   },
 ];
@@ -810,6 +933,21 @@ export function resolveEquippedVestmentForClass(
   return def;
 }
 
+/**
+ * Resolves the active class passive from the currently equipped Vestment.
+ * Only the equipped Vestment's passive runs; if no valid class Vestment is equipped,
+ * falls back to that class's default Vestment passive rather than leaving the player passive-less.
+ */
+export function resolveActiveVestmentPassive(
+  heroClass: HeroClassId,
+  vestmentId?: string | null
+): VestmentPassiveId {
+  const equipped = resolveEquippedVestmentForClass(heroClass, vestmentId);
+  if (equipped) return equipped.passiveId;
+  const fallback = getVestmentDef(getDefaultVestmentIdForClass(heroClass));
+  return fallback?.passiveId ?? 'iron_will';
+}
+
 export function getClassWeapons(heroClass: HeroClassId): WeaponDef[] {
   return WEAPON_CATALOG.filter((w) => w.heroClass === heroClass);
 }
@@ -855,8 +993,7 @@ export interface SanitizedArmamentLoadout {
  * - Strips unknown/tampered item IDs
  * - Guarantees the class default Weapon & Vestment are owned
  * - Enforces ownership + class restriction on equipped items
- * - Preserves intentional `null` (unequipped) once initialized, while auto-equipping
- *   class defaults when uninitialized (`undefined`) or migrating legacy accounts.
+ * - Ensures a Vestment is always equipped (restoring class default if null/missing) so passive replacement never leaves a player without a passive.
  */
 export function normalizeArmamentLoadout(
   heroClass: HeroClassId,
@@ -896,10 +1033,8 @@ export function normalizeArmamentLoadout(
   }
 
   let equippedVestment: string | null;
-  if (input?.equippedVestment === undefined) {
+  if (input?.equippedVestment === undefined || input.equippedVestment === null) {
     equippedVestment = defaultVestment;
-  } else if (input.equippedVestment === null) {
-    equippedVestment = forceEquipDefaultsIfEmpty ? defaultVestment : null;
   } else {
     const def = resolveEquippedVestmentForClass(heroClass, input.equippedVestment);
     if (def && ownedVestments.includes(def.id)) {

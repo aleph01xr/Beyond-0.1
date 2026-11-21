@@ -19,7 +19,7 @@ interface VoiceHUDProps {
   mapHeight?: number;
 }
 
-export const VoiceHUD: React.FC<VoiceHUDProps> = ({
+export const VoiceHUD: React.FC<VoiceHUDProps> = React.memo(({
   roomId,
   tokenAuthHeader,
   userId,
@@ -79,7 +79,7 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
   useEffect(() => {
     const interval = window.setInterval(() => {
       const snap = latestSnapshotRef?.current;
-      if (!snap) return;
+      if (!snap || snap.players.length <= 1) return;
       const me = snap.players.find((p) => p.id === userId);
       if (!me) return;
       const others = snap.players
@@ -748,4 +748,4 @@ export const VoiceHUD: React.FC<VoiceHUDProps> = ({
       )}
     </>
   );
-};
+});

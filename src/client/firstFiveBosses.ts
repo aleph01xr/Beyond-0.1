@@ -154,7 +154,7 @@ export function triggerBossEventAnim(
   now: number
 ): boolean {
   const txt = eventText.trim().toUpperCase();
-  if (eventKind === 'damage' && txt.includes('SOUL SIPHON')) {
+  if ((eventKind === 'damage' || eventKind === 'status') && txt.includes('SOUL SIPHON')) {
     triggerBossAbilityAnim(runtime, 'cast', 'soul_siphon', 950, aimAngle, now);
     return true;
   }

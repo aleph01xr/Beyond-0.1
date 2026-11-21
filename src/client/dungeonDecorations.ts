@@ -19,6 +19,87 @@ export function getMinecraftObfuscatedString(length: number = 14, nowMs: number 
   return result;
 }
 
+const decoTextWidthCache = new Map<string, number>();
+function measureDecoTextCached(ctx: CanvasRenderingContext2D, font: string, text: string): number {
+  const key = `${font}|${text}`;
+  const cached = decoTextWidthCache.get(key);
+  if (cached !== undefined) return cached;
+  const w = ctx.measureText(text).width;
+  if (decoTextWidthCache.size >= 128) decoTextWidthCache.clear();
+  decoTextWidthCache.set(key, w);
+  return w;
+}
+
+type OffscreenDecoSprites = {
+  portalVortex: HTMLCanvasElement;
+  shrineRay: HTMLCanvasElement;
+  shrineCrystalAura: HTMLCanvasElement;
+  fireGlow: HTMLCanvasElement;
+  candleGlow: HTMLCanvasElement;
+};
+let cachedDecoSprites: OffscreenDecoSprites | null = null;
+function getDecoSprites(): OffscreenDecoSprites | null {
+  if (cachedDecoSprites) return cachedDecoSprites;
+  if (typeof document === 'undefined') return null;
+  const makeRadial = (size: number, r0: number, stops: readonly [number, string][]): HTMLCanvasElement => {
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const gCtx = c.getContext('2d');
+    if (gCtx) {
+      const half = size / 2;
+      const g = gCtx.createRadialGradient(half, half, r0, half, half, half);
+      for (const [offset, color] of stops) g.addColorStop(offset, color);
+      gCtx.fillStyle = g;
+      gCtx.fillRect(0, 0, size, size);
+    }
+    return c;
+  };
+  const makeLinearY = (w: number, h: number, stops: readonly [number, string][]): HTMLCanvasElement => {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const gCtx = c.getContext('2d');
+    if (gCtx) {
+      const g = gCtx.createLinearGradient(0, h, 0, 0);
+      for (const [offset, color] of stops) g.addColorStop(offset, color);
+      gCtx.fillStyle = g;
+      gCtx.fillRect(0, 0, w, h);
+    }
+    return c;
+  };
+  cachedDecoSprites = {
+    portalVortex: makeRadial(28, 2, [
+      [0, '#FFFFFF'],
+      [0.3, '#7DD3FC'],
+      [0.7, '#6366F1'],
+      [1, '#1E1B4B'],
+    ]),
+    shrineRay: makeLinearY(32, 54, [
+      [0, 'rgba(52, 211, 153, 0.22)'],
+      [0.6, 'rgba(110, 231, 183, 0.1)'],
+      [1, 'rgba(167, 243, 208, 0)'],
+    ]),
+    shrineCrystalAura: makeRadial(24, 1, [
+      [0, '#FFFFFF'],
+      [0.35, '#6EE7B7'],
+      [0.7, '#10B981'],
+      [1, 'rgba(16, 185, 129, 0)'],
+    ]),
+    fireGlow: makeRadial(256, 6, [
+      [0, 'rgba(251, 191, 36, 0.35)'],
+      [0.4, 'rgba(245, 158, 11, 0.18)'],
+      [0.8, 'rgba(217, 119, 6, 0.06)'],
+      [1, 'rgba(0, 0, 0, 0)'],
+    ]),
+    candleGlow: makeRadial(90, 2, [
+      [0, 'rgba(251, 191, 36, 0.28)'],
+      [1, 'rgba(0, 0, 0, 0)'],
+    ]),
+  };
+  return cachedDecoSprites;
+}
+
 /**
  * Draws the Descent Portal in either Sealed (Guardian alive) or Transcendent Active (Guardian defeated) state.
  */
@@ -116,15 +197,20 @@ export function drawDungeonPortal(
     ctx.restore();
 
     // 4. Churning Dimensional Event Horizon Core
-    const vortexGrad = ctx.createRadialGradient(roundPx, roundPy, 2, roundPx, roundPy, 14);
-    vortexGrad.addColorStop(0, '#FFFFFF');
-    vortexGrad.addColorStop(0.3, '#7DD3FC');
-    vortexGrad.addColorStop(0.7, '#6366F1');
-    vortexGrad.addColorStop(1, '#1E1B4B');
-    ctx.fillStyle = vortexGrad;
-    ctx.beginPath();
-    ctx.arc(roundPx, roundPy, 14, 0, Math.PI * 2);
-    ctx.fill();
+    const sprites = getDecoSprites();
+    if (sprites) {
+      ctx.drawImage(sprites.portalVortex, roundPx - 14, roundPy - 14, 28, 28);
+    } else {
+      const vortexGrad = ctx.createRadialGradient(roundPx, roundPy, 2, roundPx, roundPy, 14);
+      vortexGrad.addColorStop(0, '#FFFFFF');
+      vortexGrad.addColorStop(0.3, '#7DD3FC');
+      vortexGrad.addColorStop(0.7, '#6366F1');
+      vortexGrad.addColorStop(1, '#1E1B4B');
+      ctx.fillStyle = vortexGrad;
+      ctx.beginPath();
+      ctx.arc(roundPx, roundPy, 14, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Inward-falling starlight spiral arms
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
@@ -165,10 +251,11 @@ export function drawDungeonPortal(
     const bob = Math.sin(now * 0.006) * 2;
     const badgeY = roundPy - 44 + bob;
     ctx.save();
-    ctx.font = '700 11px "JetBrains Mono", monospace';
+    const font1 = '700 11px "JetBrains Mono", monospace';
+    ctx.font = font1;
     ctx.textAlign = 'center';
     const label = floor === 0 ? '[E] EXPEDITION GATE' : '[E] ENTER THE DEEP';
-    const tw = ctx.measureText(label).width;
+    const tw = measureDecoTextCached(ctx, font1, label);
 
     ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
     ctx.fillRect(roundPx - tw / 2 - 8, badgeY - 11, tw + 16, 18);
@@ -244,11 +331,12 @@ export function drawDungeonPortal(
 
     // 4. Locked Indicator Label
     ctx.save();
-    ctx.font = '600 10px "JetBrains Mono", monospace';
+    const font2 = '600 10px "JetBrains Mono", monospace';
+    ctx.font = font2;
     ctx.textAlign = 'center';
     const label = sealText || 'SEALED · GUARDIAN AWAKE';
     const isGuardianSeal = label.includes('GUARDIANS');
-    const tw = ctx.measureText(label).width;
+    const tw = measureDecoTextCached(ctx, font2, label);
     ctx.fillStyle = 'rgba(15, 15, 22, 0.85)';
     ctx.fillRect(roundPx - tw / 2 - 5, roundPy - 36, tw + 10, 14);
     ctx.strokeStyle = isGuardianSeal ? '#F59E0B' : '#475569';
@@ -355,10 +443,11 @@ export function drawRelicVault(
 
     // 7. Interactive Prompt Badge
     ctx.save();
-    ctx.font = '700 10px "JetBrains Mono", monospace';
+    const font3 = '700 10px "JetBrains Mono", monospace';
+    ctx.font = font3;
     ctx.textAlign = 'center';
     const label = prop.chestGoldClaimed ? '[E] REOPEN VAULT' : '[E] RELIC VAULT';
-    const tw = ctx.measureText(label).width;
+    const tw = measureDecoTextCached(ctx, font3, label);
     ctx.fillStyle = 'rgba(23, 19, 36, 0.9)';
     ctx.fillRect(x - tw / 2 - 6, y - 38 + sealBob, tw + 12, 16);
     ctx.strokeStyle = '#F59E0B';
@@ -424,12 +513,17 @@ export function drawMysticShrine(
     // ACTIVE MYSTIC SHRINE
     // ==============================================================
     // 1. Soft blessing god-rays / vertical aura
-    const rayGrad = ctx.createLinearGradient(x, y + 8, x, y - 46);
-    rayGrad.addColorStop(0, 'rgba(52, 211, 153, 0.22)');
-    rayGrad.addColorStop(0.6, 'rgba(110, 231, 183, 0.1)');
-    rayGrad.addColorStop(1, 'rgba(167, 243, 208, 0)');
-    ctx.fillStyle = rayGrad;
-    ctx.fillRect(x - 16, y - 46, 32, 54);
+    const sprites = getDecoSprites();
+    if (sprites) {
+      ctx.drawImage(sprites.shrineRay, x - 16, y - 46, 32, 54);
+    } else {
+      const rayGrad = ctx.createLinearGradient(x, y + 8, x, y - 46);
+      rayGrad.addColorStop(0, 'rgba(52, 211, 153, 0.22)');
+      rayGrad.addColorStop(0.6, 'rgba(110, 231, 183, 0.1)');
+      rayGrad.addColorStop(1, 'rgba(167, 243, 208, 0)');
+      ctx.fillStyle = rayGrad;
+      ctx.fillRect(x - 16, y - 46, 32, 54);
+    }
 
     // 2. Stepped Temple Altar Plinth
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -469,15 +563,19 @@ export function drawMysticShrine(
     const cy = y - 24 + crystalBob;
 
     // Glowing holy aura around crystal
-    const crystalAura = ctx.createRadialGradient(x, cy, 1, x, cy, 12);
-    crystalAura.addColorStop(0, '#FFFFFF');
-    crystalAura.addColorStop(0.35, '#6EE7B7');
-    crystalAura.addColorStop(0.7, '#10B981');
-    crystalAura.addColorStop(1, 'rgba(16, 185, 129, 0)');
-    ctx.fillStyle = crystalAura;
-    ctx.beginPath();
-    ctx.arc(x, cy, 12, 0, Math.PI * 2);
-    ctx.fill();
+    if (sprites) {
+      ctx.drawImage(sprites.shrineCrystalAura, x - 12, cy - 12, 24, 24);
+    } else {
+      const crystalAura = ctx.createRadialGradient(x, cy, 1, x, cy, 12);
+      crystalAura.addColorStop(0, '#FFFFFF');
+      crystalAura.addColorStop(0.35, '#6EE7B7');
+      crystalAura.addColorStop(0.7, '#10B981');
+      crystalAura.addColorStop(1, 'rgba(16, 185, 129, 0)');
+      ctx.fillStyle = crystalAura;
+      ctx.beginPath();
+      ctx.arc(x, cy, 12, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Geometric Diamond Crystal Facets
     ctx.save();
@@ -537,10 +635,11 @@ export function drawMysticShrine(
 
     // 5. Interactive Prompt Badge
     ctx.save();
-    ctx.font = '700 10px "JetBrains Mono", monospace';
+    const font4 = '700 10px "JetBrains Mono", monospace';
+    ctx.font = font4;
     ctx.textAlign = 'center';
     const label = '[E] COMMUNE WITH SHRINE';
-    const tw = ctx.measureText(label).width;
+    const tw = measureDecoTextCached(ctx, font4, label);
     ctx.fillStyle = 'rgba(6, 44, 33, 0.9)';
     ctx.fillRect(x - tw / 2 - 6, y - 44 + crystalBob, tw + 12, 16);
     ctx.strokeStyle = '#34D399';
@@ -764,9 +863,10 @@ export function drawDungeonProp(
       } else {
         const chestLabel = prop.chestGoldClaimed ? '[E] REOPEN CHEST' : '[E] OPEN CHEST';
         ctx.save();
-        ctx.font = '700 9px "JetBrains Mono", monospace';
+        const chestFont = '700 9px "JetBrains Mono", monospace';
+        ctx.font = chestFont;
         ctx.textAlign = 'center';
-        const ctw = ctx.measureText(chestLabel).width;
+        const ctw = measureDecoTextCached(ctx, chestFont, chestLabel);
         ctx.fillStyle = 'rgba(20, 15, 10, 0.88)';
         ctx.fillRect(x - ctw / 2 - 5, y - 28, ctw + 10, 14);
         ctx.strokeStyle = '#F59E0B';
@@ -1043,16 +1143,21 @@ export function drawTavernDecorations(
   ctx.fillStyle = '#374151';
   ctx.fillRect(hx - 10, hy + 4, 20, 10);
 
-  // Warm Fireplace Light Radial Gradient Aura
-  const fireGlow = ctx.createRadialGradient(hx, hy + 10, 10, hx, hy + 10, 240);
-  fireGlow.addColorStop(0, 'rgba(251, 191, 36, 0.35)');
-  fireGlow.addColorStop(0.4, 'rgba(245, 158, 11, 0.18)');
-  fireGlow.addColorStop(0.8, 'rgba(217, 119, 6, 0.06)');
-  fireGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = fireGlow;
-  ctx.beginPath();
-  ctx.arc(hx, hy + 10, 240, 0, Math.PI * 2);
-  ctx.fill();
+  // Warm Fireplace Light Radial Gradient Aura (pre-baked sprite)
+  const tavernSprites = getDecoSprites();
+  if (tavernSprites) {
+    ctx.drawImage(tavernSprites.fireGlow, hx - 240, hy + 10 - 240, 480, 480);
+  } else {
+    const fireGlow = ctx.createRadialGradient(hx, hy + 10, 10, hx, hy + 10, 240);
+    fireGlow.addColorStop(0, 'rgba(251, 191, 36, 0.35)');
+    fireGlow.addColorStop(0.4, 'rgba(245, 158, 11, 0.18)');
+    fireGlow.addColorStop(0.8, 'rgba(217, 119, 6, 0.06)');
+    fireGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = fireGlow;
+    ctx.beginPath();
+    ctx.arc(hx, hy + 10, 240, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // 2. Stacked Ale Barrels / Casks Behind Bar (x: 14..20, y: 5)
   for (let bx = 14; bx <= 20; bx += 2) {
@@ -1147,14 +1252,18 @@ export function drawTavernDecorations(
     ctx.fillStyle = '#FEF08A';
     ctx.fillRect(tbl.x - 1, tbl.y - 15 + candleBob, 2, 2);
 
-    // Warm Candle Glow
-    const candleGlow = ctx.createRadialGradient(tbl.x, tbl.y - 12, 2, tbl.x, tbl.y - 12, 45);
-    candleGlow.addColorStop(0, 'rgba(251, 191, 36, 0.28)');
-    candleGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = candleGlow;
-    ctx.beginPath();
-    ctx.arc(tbl.x, tbl.y - 12, 45, 0, Math.PI * 2);
-    ctx.fill();
+    // Warm Candle Glow (pre-baked sprite)
+    if (tavernSprites) {
+      ctx.drawImage(tavernSprites.candleGlow, tbl.x - 45, tbl.y - 12 - 45, 90, 90);
+    } else {
+      const candleGlow = ctx.createRadialGradient(tbl.x, tbl.y - 12, 2, tbl.x, tbl.y - 12, 45);
+      candleGlow.addColorStop(0, 'rgba(251, 191, 36, 0.28)');
+      candleGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = candleGlow;
+      ctx.beginPath();
+      ctx.arc(tbl.x, tbl.y - 12, 45, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Beer Mug on Table
     ctx.fillStyle = '#D97706';
@@ -1357,12 +1466,11 @@ export function drawWardenGateProp(
   // Inscribed Sacred Moving Obfuscated Text (Minecraft §k style with English alphabet)
   const obfText = `[ ${getMinecraftObfuscatedString(14, now)} ]`;
   ctx.font = '700 8px "JetBrains Mono", monospace';
-  ctx.fillStyle = '#FEF08A';
   ctx.textAlign = 'center';
-  ctx.shadowColor = 'rgba(245, 158, 11, 0.8)';
-  ctx.shadowBlur = 5;
+  ctx.fillStyle = 'rgba(120, 53, 15, 0.85)';
+  ctx.fillText(obfText, x + 1, lintelY - 3);
+  ctx.fillStyle = '#FEF08A';
   ctx.fillText(obfText, x, lintelY - 4);
-  ctx.shadowBlur = 0;
 
   // 5. Massive Closed Sanctuary Doors (Dual Ivory & Gold Panels)
   const doorW = 56;

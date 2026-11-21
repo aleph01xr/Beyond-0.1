@@ -7,6 +7,20 @@ import type {
 
 export type HeroClassId = 'vanguard' | 'ranger' | 'arcanist' | 'cleric';
 
+export type VestmentPassiveId =
+  | 'iron_will'
+  | 'war_monger'
+  | 'heat'
+  | 'eagle_keenness'
+  | 'momentum'
+  | 'predators_instinct'
+  | 'astral_resonance'
+  | 'temporal_acceleration'
+  | 'void_consumption'
+  | 'radiant_aura'
+  | 'shared_grace'
+  | 'sacred_retribution';
+
 export type DifficultyTier = 'Normal' | 'Heroic' | 'Abyssal';
 
 export type BiomeId =
@@ -70,6 +84,59 @@ export interface CombatResistances {
 }
 
 export type DamageCategory = 'physical' | 'arcane' | 'divine' | 'fire' | 'frost' | 'lightning' | 'poison' | 'bleed';
+
+export type DamageTypeFamily = 'physical' | 'magic' | 'divine' | 'poison';
+
+export function getDamageTypeFamily(
+  category?: DamageCategory | 'elemental' | null
+): DamageTypeFamily {
+  if (category === 'divine') return 'divine';
+  if (
+    category === 'arcane' ||
+    category === 'elemental' ||
+    category === 'fire' ||
+    category === 'frost' ||
+    category === 'lightning'
+  ) {
+    return 'magic';
+  }
+  if (category === 'poison') return 'poison';
+  return 'physical';
+}
+
+export function getDamageTypeColor(
+  category?: DamageCategory | 'elemental' | null,
+  isCrit: boolean = false
+): string {
+  const family = getDamageTypeFamily(category);
+  if (family === 'magic') {
+    return isCrit ? '#E9D5FF' : '#C084FC';
+  }
+  if (family === 'divine') {
+    return isCrit ? '#FEF08A' : '#FDE047';
+  }
+  if (family === 'poison') {
+    return isCrit ? '#BEF264' : '#A3E635';
+  }
+  return isCrit ? '#FCA5A5' : '#F87171';
+}
+
+export function inferDamageCategoryFromProjectileStyle(
+  style: ProjectileState['style']
+): DamageCategory {
+  if (style === 'radiant') return 'divine';
+  if (style === 'fireball') return 'fire';
+  if (style === 'frost_lance') return 'frost';
+  if (
+    style === 'arcane' ||
+    style === 'voidorb' ||
+    style === 'arcane_orb' ||
+    style === 'arcane_barrage'
+  ) {
+    return 'arcane';
+  }
+  return 'physical';
+}
 
 export interface EnemyResistances {
   physical: number;
@@ -502,6 +569,15 @@ export interface PlayerState {
   ownedVestments?: string[];
   equippedWeapon?: string | null;
   equippedVestment?: string | null;
+  activePassiveId?: VestmentPassiveId;
+  vanguardHeat?: number;
+  rangerMomentum?: number;
+  predatorTargetId?: string | null;
+  predatorStacks?: number;
+  voidEnergy?: number;
+  storedGrace?: number;
+  clericSanctity?: number;
+  eclipseChargeRatio?: number;
 }
 
 export type PlayerStatusType =
@@ -580,6 +656,7 @@ export interface EnemyState {
   shieldWallMs?: number;
   abilityCdMs?: number;
   chronoSuspendedMs?: number;
+  galeburstMarks?: number;
 }
 
 export interface ProjectileState {
@@ -667,7 +744,13 @@ export interface FieldZoneState {
     | 'warden_shatter'
     | 'arcane_meteor'
     | 'chain_lightning_arc'
-    | 'fireball_burn';
+    | 'fireball_burn'
+    | 'sunforged_shockwave'
+    | 'tempest_wheel'
+    | 'galeburst_nova'
+    | 'cinderflare_blast'
+    | 'seraphim_holy_burst'
+    | 'sacred_retribution';
   x: number;
   y: number;
   radius: number;
@@ -694,6 +777,7 @@ export interface FloatingEvent {
   y: number;
   text: string;
   color: string;
+  damageCategory?: DamageCategory | 'elemental';
 }
 
 export interface ChatMessage {

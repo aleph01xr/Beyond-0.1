@@ -1,8 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import {
   computeCameraZoom,
+  computeMapCropRect,
   computeWorldAimAngle,
   getWorldViewBounds,
+  snapToScreenPixel,
   stepCameraFollow,
 } from '../client/camera.ts';
 import { computeExpSmoothingFactor } from '../client/networkStats.ts';
@@ -77,6 +79,8 @@ import {
 } from '../client/desktopInput.ts';
 import { voiceManager } from '../client/voice/voiceClient.ts';
 import {
+  getDamageTypeColor,
+  getDamageTypeFamily,
   HERO_CLASSES,
   TILE_SIZE,
   type ClientMessage,
@@ -172,6 +176,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   const spaceAttackDownRef = useRef(false);
   const localPlayerPosRef = useRef<{ x: number; y: number } | null>(null);
   const viewportRef = useRef<{ cw: number; ch: number; zoom: number }>({ cw: 1, ch: 1, zoom: 1 });
+  const canvasRectRef = useRef<{ left: number; top: number; width: number; height: number }>({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  });
   const localSwingTriggerRef = useRef<{
     bornAt: number;
     durationMs: number;
@@ -252,7 +262,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
   ): { aimAngle: number; aimDistance: number; magnitude: number } => {
     const snap = latestSnapshotRef.current;
     const me = snap?.players.find((p) => p.id === playerId) || snap?.players[0];
-    const spec = getAbilityTargetSpec(me?.heroClass || 'vanguard', action, me?.equippedScrollId);
+    const spec = getAbilityTargetSpec(
+      me?.heroClass || 'vanguard',
+      action,
+      me?.equippedScrollId,
+      me?.equippedWeapon
+    );
     const pos = localPlayerPosRef.current || (me ? { x: me.x, y: me.y } : null);
     const vp = viewportRef.current;
 
@@ -870,6 +885,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         if (syncDirectionalAimFromKeys()) changed = true;
       } else if (e.code === 'Space') {
         e.preventDefault();
+        if (e.repeat) return;
         syncDirectionalAimFromKeys();
         spaceAttackDownRef.current = true;
         if (!keysRef.current.attack) {
@@ -993,10 +1009,14 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     };
 
     const handleWindowMouseMove = (e: MouseEvent) => {
+      if (controlsBlockedRef.current) return;
       const cur = abilityAimPropRef.current.current;
       const isDraggingAbility = Boolean(cur && cur.source !== 'touch');
       const isDraggingAttack = mouseButtonDownRef.current;
       if (!isDraggingAbility && !isDraggingAttack) return;
+
+      // Canvas onMouseMove already processed events targeting the canvas directly when not dragging an ability
+      if (!isDraggingAbility && e.target === canvasRef.current) return;
 
       if (cur && cur.originClientX !== undefined && cur.originClientY !== undefined && !cur.hasDragged) {
         if (Math.hypot(e.clientX - cur.originClientX, e.clientY - cur.originClientY) <= 12) {
@@ -1007,7 +1027,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
       const canvasEl = canvasRef.current;
       if (canvasEl) {
-        const rect = canvasEl.getBoundingClientRect();
+        let rect = canvasRectRef.current;
+        if (rect.width <= 1) {
+          const domRect = canvasEl.getBoundingClientRect();
+          rect = { left: domRect.left, top: domRect.top, width: domRect.width, height: domRect.height };
+          canvasRectRef.current = rect;
+        }
         mouseScreenRef.current = {
           x: e.clientX - rect.left,
           y: e.clientY - rect.top,
@@ -1139,6 +1164,31 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     const bossAnimMap = new Map<string, BossAnimRuntime>();
     const dyingBosses: DyingBossEntry[] = [];
     const seenEventIds = new Set<string>();
+    const currentZoneIds = new Set<string>();
+    const currentProjIds = new Set<string>();
+    const activeProjIds = new Set<string>();
+    const minimapFlagMap = new Map<
+      number,
+      GameSnapshot['roomClearedFlags'][number]
+    >();
+    const enemyStatusIcons: string[] = [];
+    const enemyStatusColors: string[] = [];
+    const scratchProj = {} as ProjectileState;
+    const floatOffsetsBuf: number[] = [];
+    const textWidthCache = new Map<string, number>();
+    const measureTextCached = (font: string, text: string): number => {
+      const key = `${font}|${text}`;
+      let w = textWidthCache.get(key);
+      if (w === undefined) {
+        if (textWidthCache.size >= 256) {
+          textWidthCache.clear();
+        }
+        ctx.font = font;
+        w = ctx.measureText(text).width;
+        textWidthCache.set(key, w);
+      }
+      return w;
+    };
     const particleManager = new ParticleManager();
     const localPredictor = new LocalPredictionController();
     let lastSeenSnapshot: GameSnapshot | null = null;
@@ -1149,6 +1199,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     let lastPlayerShield: number | null = null;
     let lastPlayerDowned = false;
     let lastRenderTime = performance.now();
+    let lastAutoSnap: GameSnapshot | null = null;
+    let lastAutoX = -99999;
+    let lastAutoY = -99999;
+    let lastAutoAim = -999;
+    let lastAutoSrc = '';
+    let cachedAutoTargetId: string | null = null;
 
     // Offscreen caches to eliminate per-frame gradient allocations & 3,000+ minimap fillRect calls
     const torchGlowCanvas = document.createElement('canvas');
@@ -1163,15 +1219,129 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       torchGlowCtx.fillRect(0, 0, 136, 136);
     }
 
+    const createRadialZoneSprite = (
+      size: number,
+      stops: readonly [number, string][]
+    ): HTMLCanvasElement => {
+      const c = document.createElement('canvas');
+      c.width = size;
+      c.height = size;
+      const gCtx = c.getContext('2d');
+      if (gCtx) {
+        const half = size / 2;
+        const grad = gCtx.createRadialGradient(half, half, 2, half, half, half);
+        for (let s = 0; s < stops.length; s++) {
+          grad.addColorStop(stops[s][0], stops[s][1]);
+        }
+        gCtx.fillStyle = grad;
+        gCtx.fillRect(0, 0, size, size);
+      }
+      return c;
+    };
+
+    const createLinearZoneSprite = (
+      w: number,
+      h: number,
+      horizontal: boolean,
+      stops: readonly [number, string][]
+    ): HTMLCanvasElement => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const gCtx = c.getContext('2d');
+      if (gCtx) {
+        const grad = horizontal
+          ? gCtx.createLinearGradient(0, 0, w, 0)
+          : gCtx.createLinearGradient(0, 0, 0, h);
+        for (let s = 0; s < stops.length; s++) {
+          grad.addColorStop(stops[s][0], stops[s][1]);
+        }
+        gCtx.fillStyle = grad;
+        gCtx.fillRect(0, 0, w, h);
+      }
+      return c;
+    };
+
+    const frostNovaSprite = createRadialZoneSprite(128, [
+      [0, 'rgba(186, 230, 253, 0.45)'],
+      [0.6, 'rgba(56, 189, 248, 0.28)'],
+      [1, 'rgba(14, 165, 233, 0.12)'],
+    ]);
+    const magmaPillarSprite = createRadialZoneSprite(128, [
+      [0, 'rgba(254, 240, 138, 0.55)'],
+      [0.35, 'rgba(249, 115, 22, 0.42)'],
+      [0.8, 'rgba(220, 38, 38, 0.28)'],
+      [1, 'rgba(68, 10, 10, 0.15)'],
+    ]);
+    const singularitySprite = createRadialZoneSprite(128, [
+      [0, 'rgba(15, 7, 24, 0.9)'],
+      [0.3, 'rgba(88, 28, 135, 0.55)'],
+      [0.75, 'rgba(147, 51, 234, 0.35)'],
+      [1, 'rgba(244, 63, 94, 0.15)'],
+    ]);
+    const fireballCraterSprite = createRadialZoneSprite(128, [
+      [0, 'rgba(251, 146, 60, 0.42)'],
+      [0.55, 'rgba(220, 38, 38, 0.28)'],
+      [0.88, 'rgba(124, 45, 18, 0.18)'],
+      [1, 'rgba(28, 25, 23, 0)'],
+    ]);
+    const meteorFloorSprite = createRadialZoneSprite(128, [
+      [0, 'rgba(232, 121, 249, 0.42)'],
+      [0.7, 'rgba(126, 34, 206, 0.34)'],
+      [1, 'rgba(56, 189, 248, 0.10)'],
+    ]);
+    const meteorCoreSprite = createRadialZoneSprite(64, [
+      [0, '#FFFFFF'],
+      [0.35, '#F0ABFC'],
+      [0.7, '#A855F7'],
+      [1, 'rgba(56, 189, 248, 0)'],
+    ]);
+    const starlightBeamSprite = createLinearZoneSprite(4, 128, false, [
+      [0, 'rgba(253, 224, 71, 0)'],
+      [0.7, 'rgba(253, 224, 71, 0.35)'],
+      [1, 'rgba(255, 255, 255, 0.65)'],
+    ]);
+    const soundLaneSprite = createLinearZoneSprite(128, 4, true, [
+      [0, 'rgba(245, 158, 11, 0.05)'],
+      [0.5, 'rgba(251, 191, 36, 0.22)'],
+      [1, 'rgba(245, 158, 11, 0.05)'],
+    ]);
+    const scriptureLineSprite = createLinearZoneSprite(4, 32, false, [
+      [0, 'rgba(126, 34, 206, 0.12)'],
+      [0.5, 'rgba(168, 85, 247, 0.28)'],
+      [1, 'rgba(126, 34, 206, 0.12)'],
+    ]);
+    const lanceThrustSprite = createLinearZoneSprite(4, 32, false, [
+      [0, 'rgba(250, 204, 21, 0.08)'],
+      [0.5, 'rgba(253, 224, 71, 0.28)'],
+      [1, 'rgba(250, 204, 21, 0.08)'],
+    ]);
+    const meteorTailSprite = createLinearZoneSprite(4, 64, false, [
+      [0, 'rgba(56, 189, 248, 0)'],
+      [0.4, 'rgba(56, 189, 248, 0.35)'],
+      [1, 'rgba(232, 121, 249, 0.78)'],
+    ]);
+    const coneGlowSprite = createRadialZoneSprite(128, [
+      [0, 'rgba(250, 204, 21, 0.34)'],
+      [0.55, 'rgba(56, 189, 248, 0.22)'],
+      [1, 'rgba(56, 189, 248, 0)'],
+    ]);
+
     let minimapTilesCanvas: HTMLCanvasElement | null = null;
     let minimapCachedScale = -1;
 
+    const updateCanvasRect = () => {
+      const r = canvas.getBoundingClientRect();
+      canvasRectRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
+    };
     const resize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
+      updateCanvasRect();
     };
     resize();
     window.addEventListener('resize', resize);
+    window.addEventListener('scroll', updateCanvasRect, { passive: true });
 
     let rafId = 0;
     const render = (now: number) => {
@@ -1204,9 +1374,10 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         lastSnapshotAt = now;
       }
 
-      const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
-      let activeBossRuntime: BossAnimRuntime | null = null;
-      let bossAimAngle = 0;
+      if (isNewSnapshot) {
+        const activeBoss = snap.enemies.find((e) => e.kind === 'boss' && e.hp > 0);
+        let activeBossRuntime: BossAnimRuntime | null = null;
+        let bossAimAngle = 0;
       if (activeBoss) {
         const activeBossKey = resolveFirstFiveBossKey(activeBoss.name, map.floor, map.biome);
         if (activeBossKey) {
@@ -1228,6 +1399,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       let didVoidStepStatus = false;
+      let hitSparkBurstsThisTick = 0;
       for (const ev of snap.events) {
         if (!seenEventIds.has(ev.id)) {
           seenEventIds.add(ev.id);
@@ -1252,11 +1424,16 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               ) {
                 pushFloating = false;
               } else {
-                const activeNonDialogueStatus = floatingTexts.filter(
-                  (f) => f.kind === 'status' && !f.text.trim().startsWith('"') && now - f.bornAt < 800
-                ).length;
-                if (activeNonDialogueStatus >= 4) {
-                  pushFloating = false;
+                let activeNonDialogueStatus = 0;
+                for (let fi = 0; fi < floatingTexts.length; fi++) {
+                  const f = floatingTexts[fi];
+                  if (f.kind === 'status' && now - f.bornAt < 800 && !f.text.trim().startsWith('"')) {
+                    activeNonDialogueStatus++;
+                    if (activeNonDialogueStatus >= 4) {
+                      pushFloating = false;
+                      break;
+                    }
+                  }
                 }
               }
               if (pushFloating) {
@@ -1266,6 +1443,12 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           }
 
           if (pushFloating) {
+            if (floatingTexts.length >= 48) {
+              const dropIdx = floatingTexts.findIndex((f) => !f.text.startsWith('"'));
+              if (dropIdx >= 0) {
+                floatingTexts.splice(dropIdx, 1);
+              }
+            }
             floatingTexts.push({ ...ev, bornAt: now });
           }
           if (ev.kind === 'gold') sfx.playCoin();
@@ -1291,15 +1474,28 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
               );
             } else {
               sfx.playEnemyHit(false);
-              particleManager.spawnHitSparks(ev.x, ev.y, ev.color || '#EF4444', 6, now, false);
-              particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 4, now);
-              screenShake = Math.min(5, screenShake + 1.2);
+              if (hitSparkBurstsThisTick < 3) {
+                hitSparkBurstsThisTick++;
+                particleManager.spawnHitSparks(ev.x, ev.y, ev.color || '#EF4444', 5, now, false);
+                if (!ev.damageCategory || ev.damageCategory === 'physical') {
+                  particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 3, now);
+                }
+              }
+              screenShake = Math.min(5, screenShake + 1.0);
             }
           } else if (ev.kind === 'crit') {
+            const critSparkColor = ev.damageCategory
+              ? getDamageTypeColor(ev.damageCategory, true)
+              : ev.color || '#FBBF24';
             sfx.playEnemyHit(true);
-            particleManager.spawnHitSparks(ev.x, ev.y, '#FBBF24', 12, now, true);
-            particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 8, now);
-            screenShake = Math.min(8, screenShake + 3.0);
+            if (hitSparkBurstsThisTick < 4) {
+              hitSparkBurstsThisTick++;
+              particleManager.spawnHitSparks(ev.x, ev.y, critSparkColor, 10, now, true);
+              if (!ev.damageCategory || ev.damageCategory === 'physical') {
+                particleManager.spawnPhysicalImpact(ev.x, ev.y, Math.random() * Math.PI * 2, 6, now);
+              }
+            }
+            screenShake = Math.min(8, screenShake + 2.6);
           } else if (ev.text.includes('Relic')) {
             sfx.playRelicChime();
           } else if (ev.kind === 'status') {
@@ -1586,19 +1782,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             });
           }
         }
-
-        if (p.id === playerId && localSwingTriggerRef.current) {
-          const trig = localSwingTriggerRef.current;
-          const curSwing = playerWeaponSwings.get(p.id);
-          if (!curSwing || trig.bornAt > curSwing.bornAt) {
-            playerWeaponSwings.set(p.id, {
-              bornAt: trig.bornAt,
-              durationMs: trig.durationMs,
-              kind: trig.kind,
-            });
-          }
-          localSwingTriggerRef.current = null;
-        }
       }
       prevPlayersMap.clear();
       prevAttackAnimMap.clear();
@@ -1613,23 +1796,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           shield: p.shield,
         });
         prevAttackAnimMap.set(p.id, p.attackAnimMs);
-
-        const activeSwing = playerWeaponSwings.get(p.id);
-        if (activeSwing && (now - activeSwing.bornAt >= activeSwing.durationMs || p.downed)) {
-          playerWeaponSwings.delete(p.id);
-        }
-
-        const dashTrail = activeDashTrails.get(p.id);
-        if (dashTrail) {
-          if (now >= dashTrail.until || p.downed) {
-            activeDashTrails.delete(p.id);
-          } else if (now - dashTrail.lastEmit >= 42) {
-            const livePos = smoothedPlayers.get(p.id) || { x: p.x, y: p.y };
-            const liveAngle = Math.hypot(p.vx, p.vy) > 15 ? Math.atan2(p.vy, p.vx) : dashTrail.angle;
-            particleManager.spawnClassDashTrailStep(p.heroClass, livePos.x, livePos.y, liveAngle, now);
-            dashTrail.lastEmit = now;
-          }
-        }
       }
       for (const id of activeDashTrails.keys()) {
         if (!prevPlayersMap.has(id)) {
@@ -1643,7 +1809,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       // Track newly spawned class field zones and expiring boss hazard detonations
-      const currentZoneIds = new Set<string>();
+      currentZoneIds.clear();
       for (const z of snap.zones) {
         currentZoneIds.add(z.id);
       }
@@ -1777,7 +1943,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       // Track newly fired melee cleave arcs, spell scroll launches, boss nova spreads & projectile impacts
-      const currentProjIds = new Set<string>();
+      currentProjIds.clear();
       let newBossProjCount = 0;
       for (const proj of snap.projectiles) {
         currentProjIds.add(proj.id);
@@ -1846,6 +2012,43 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
       prevBossState = activeBoss ? { id: activeBoss.id, x: activeBoss.x, y: activeBoss.y } : null;
       hasInitWorldEffects = true;
+      }
+
+      // Consume immediate local swing triggers and advance active swing/dash timers every render frame
+      if (localSwingTriggerRef.current) {
+        const trig = localSwingTriggerRef.current;
+        const curSwing = playerWeaponSwings.get(playerId);
+        if (!curSwing || trig.bornAt > curSwing.bornAt) {
+          playerWeaponSwings.set(playerId, {
+            bornAt: trig.bornAt,
+            durationMs: trig.durationMs,
+            kind: trig.kind,
+          });
+        }
+        localSwingTriggerRef.current = null;
+      }
+      if (playerWeaponSwings.size > 0) {
+        for (const [pid, activeSwing] of playerWeaponSwings.entries()) {
+          const pSnap = snap.players.find((x) => x.id === pid);
+          if (!pSnap || pSnap.downed || now - activeSwing.bornAt >= activeSwing.durationMs) {
+            playerWeaponSwings.delete(pid);
+          }
+        }
+      }
+      if (activeDashTrails.size > 0) {
+        for (const [pid, dashTrail] of activeDashTrails.entries()) {
+          const pSnap = snap.players.find((x) => x.id === pid);
+          if (!pSnap || pSnap.downed || now >= dashTrail.until) {
+            activeDashTrails.delete(pid);
+          } else if (now - dashTrail.lastEmit >= 42) {
+            const livePos = smoothedPlayers.get(pid) || { x: pSnap.x, y: pSnap.y };
+            const liveAngle =
+              Math.hypot(pSnap.vx, pSnap.vy) > 15 ? Math.atan2(pSnap.vy, pSnap.vx) : dashTrail.angle;
+            particleManager.spawnClassDashTrailStep(pSnap.heroClass, livePos.x, livePos.y, liveAngle, now);
+            dashTrail.lastEmit = now;
+          }
+        }
+      }
 
       // Client-side prediction with server reconciliation for local player;
       // snapshot-age velocity lead + dt-normalized exponential smoothing for remote players & enemies
@@ -1908,28 +2111,30 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
       const me = snap.players.find((p) => p.id === playerId) || snap.players[0];
       if (me) {
-        // Attack SFX when animation starts or resets
-        if (
-          (me.attackAnimMs > 0 && lastMyAttackAnim === 0) ||
-          me.attackAnimMs > lastMyAttackAnim + 40
-        ) {
-          sfx.playAttack(me.heroClass);
-        }
-        lastMyAttackAnim = me.attackAnimMs;
+        if (isNewSnapshot) {
+          // Attack SFX when animation starts or resets
+          if (
+            (me.attackAnimMs > 0 && lastMyAttackAnim === 0) ||
+            me.attackAnimMs > lastMyAttackAnim + 40
+          ) {
+            sfx.playAttack(me.heroClass);
+          }
+          lastMyAttackAnim = me.attackAnimMs;
 
-        // Player health & shield damage tracking (taking damage feedback)
-        if (lastPlayerHp !== null && me.hp < lastPlayerHp && !me.downed) {
-          sfx.playHurt();
+          // Player health & shield damage tracking (taking damage feedback)
+          if (lastPlayerHp !== null && me.hp < lastPlayerHp && !me.downed) {
+            sfx.playHurt();
+          }
+          if (lastPlayerShield !== null && lastPlayerShield > 0 && me.shield === 0) {
+            sfx.playShieldBreak();
+          }
+          if (!lastPlayerDowned && me.downed) {
+            sfx.playPlayerDowned();
+          }
+          lastPlayerHp = me.hp;
+          lastPlayerShield = me.shield;
+          lastPlayerDowned = me.downed;
         }
-        if (lastPlayerShield !== null && lastPlayerShield > 0 && me.shield === 0) {
-          sfx.playShieldBreak();
-        }
-        if (!lastPlayerDowned && me.downed) {
-          sfx.playPlayerDowned();
-        }
-        lastPlayerHp = me.hp;
-        lastPlayerShield = me.shield;
-        lastPlayerDowned = me.downed;
 
         const mySmooth = smoothedPlayers.get(me.id) || { x: me.x, y: me.y };
         localPlayerPosRef.current = { x: mySmooth.x, y: mySmooth.y };
@@ -2052,7 +2257,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       ctx.translate(-snappedCamX, -snappedCamY);
 
       if (mapLayerRef.current) {
-        ctx.drawImage(mapLayerRef.current, 0, 0);
+        const off = mapLayerRef.current;
+        const crop = computeMapCropRect(worldView, off.width, off.height);
+        if (crop) {
+          ctx.drawImage(off, crop.sx, crop.sy, crop.sw, crop.sh, crop.sx, crop.sy, crop.sw, crop.sh);
+        }
       }
 
       // Grand Descent Portal
@@ -2091,8 +2300,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillRect(t.x - 1, t.y - 6, 2, 3);
       }
 
-      // Field Zones
+      // Field Zones (viewport-culled)
       for (const z of snap.zones) {
+        const zMargin = Math.max(z.radius || 0, (z.width || 0) * 0.6, (z.height || 0) * 0.6) + 210;
+        if (
+          z.x < worldView.left - zMargin ||
+          z.x > worldView.right + zMargin ||
+          z.y < worldView.top - zMargin ||
+          z.y > worldView.bottom + zMargin
+        ) {
+          continue;
+        }
         if (z.kind === 'aegis_dome') {
           const rot = now * 0.0012;
           ctx.save();
@@ -2501,15 +2719,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         } else if (z.kind === 'frost_nova') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
-          // Frost nova ground fill with subtle frosty radial gradient
-          const frostGrad = ctx.createRadialGradient(z.x, z.y, 4, z.x, z.y, z.radius);
-          frostGrad.addColorStop(0, 'rgba(186, 230, 253, 0.45)');
-          frostGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.28)');
-          frostGrad.addColorStop(1, 'rgba(14, 165, 233, 0.12)');
-          ctx.fillStyle = frostGrad;
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          // Frost nova ground fill using cached offscreen radial sprite
+          ctx.drawImage(frostNovaSprite, z.x - z.radius, z.y - z.radius, z.radius * 2, z.radius * 2);
 
           // Outer cyan crystalline perimeter rim with frost spikes
           ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
@@ -2581,16 +2792,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         } else if (z.kind === 'magma_pillar') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
           ctx.save();
-          // Molten earth ground fill with scorched incandescent core
-          const magmaGrad = ctx.createRadialGradient(z.x, z.y, 4, z.x, z.y, z.radius);
-          magmaGrad.addColorStop(0, 'rgba(254, 240, 138, 0.55)');
-          magmaGrad.addColorStop(0.35, 'rgba(249, 115, 22, 0.42)');
-          magmaGrad.addColorStop(0.8, 'rgba(220, 38, 38, 0.28)');
-          magmaGrad.addColorStop(1, 'rgba(68, 10, 10, 0.15)');
-          ctx.fillStyle = magmaGrad;
-          ctx.beginPath();
-          ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          // Molten earth ground fill using cached offscreen radial sprite
+          ctx.drawImage(magmaPillarSprite, z.x - z.radius, z.y - z.radius, z.radius * 2, z.radius * 2);
 
           // Outer fiery danger rim
           ctx.strokeStyle = 'rgba(249, 115, 22, 0.95)';
@@ -2646,16 +2849,8 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.save();
           ctx.translate(z.x, z.y);
 
-          // Outer gravitational distortion field with warning border
-          const singGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, z.radius);
-          singGrad.addColorStop(0, 'rgba(15, 7, 24, 0.9)');
-          singGrad.addColorStop(0.3, 'rgba(88, 28, 135, 0.55)');
-          singGrad.addColorStop(0.75, 'rgba(147, 51, 234, 0.35)');
-          singGrad.addColorStop(1, 'rgba(244, 63, 94, 0.15)');
-          ctx.fillStyle = singGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          // Outer gravitational distortion field using cached offscreen radial sprite
+          ctx.drawImage(singularitySprite, -z.radius, -z.radius, z.radius * 2, z.radius * 2);
 
           ctx.strokeStyle = 'rgba(232, 121, 249, 0.95)';
           ctx.lineWidth = 3;
@@ -2791,12 +2986,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.restore();
 
           // Heavenly beam pillar indicator descending from above
-          const beamGrad = ctx.createLinearGradient(z.x, z.y - 160, z.x, z.y);
-          beamGrad.addColorStop(0, 'rgba(253, 224, 71, 0)');
-          beamGrad.addColorStop(0.7, 'rgba(253, 224, 71, 0.35)');
-          beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0.65)');
-          ctx.fillStyle = beamGrad;
-          ctx.fillRect(z.x - z.radius * 0.6, z.y - 160, z.radius * 1.2, 160);
+          ctx.drawImage(starlightBeamSprite, z.x - z.radius * 0.6, z.y - 160, z.radius * 1.2, 160);
           ctx.restore();
         } else if (z.kind === 'sound_lane') {
           const progress = 1 - Math.max(0, z.ttlMs) / Math.max(1, z.maxTtlMs);
@@ -2808,12 +2998,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.rotate(ang);
 
           // Background acoustic corridor fill
-          const bgGrad = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
-          bgGrad.addColorStop(0, 'rgba(245, 158, 11, 0.05)');
-          bgGrad.addColorStop(0.5, 'rgba(251, 191, 36, 0.22)');
-          bgGrad.addColorStop(1, 'rgba(245, 158, 11, 0.05)');
-          ctx.fillStyle = bgGrad;
-          ctx.fillRect(-w / 2, -h / 2, w, h);
+          ctx.drawImage(soundLaneSprite, -w / 2, -h / 2, w, h);
 
           // Outer glowing acoustic gold borders
           ctx.strokeStyle = 'rgba(251, 191, 36, 0.9)';
@@ -3068,12 +3253,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.rotate(ang);
 
           // Parchment & Deep Purple Scripture Path
-          const scripGrad = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
-          scripGrad.addColorStop(0, 'rgba(126, 34, 206, 0.12)');
-          scripGrad.addColorStop(0.5, 'rgba(168, 85, 247, 0.28)');
-          scripGrad.addColorStop(1, 'rgba(126, 34, 206, 0.12)');
-          ctx.fillStyle = scripGrad;
-          ctx.fillRect(-w / 2, -h / 2, w, h);
+          ctx.drawImage(scriptureLineSprite, -w / 2, -h / 2, w, h);
 
           // Illuminated Manuscript Gold & Lavender Borders
           ctx.strokeStyle = 'rgba(232, 121, 249, 0.9)';
@@ -3186,12 +3366,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.rotate(ang);
 
           // Solar energy runway fill
-          const runGrad = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
-          runGrad.addColorStop(0, 'rgba(250, 204, 21, 0.08)');
-          runGrad.addColorStop(0.5, 'rgba(253, 224, 71, 0.28)');
-          runGrad.addColorStop(1, 'rgba(250, 204, 21, 0.08)');
-          ctx.fillStyle = runGrad;
-          ctx.fillRect(0, -h / 2, w, h);
+          ctx.drawImage(lanceThrustSprite, 0, -h / 2, w, h);
 
           // Dual Golden Energy Rails
           ctx.strokeStyle = 'rgba(250, 204, 21, 0.95)';
@@ -3517,16 +3692,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.save();
           ctx.translate(z.x, z.y);
 
-          // Scorched magma crater ground gradient
-          const craterGrad = ctx.createRadialGradient(0, 0, z.radius * 0.1, 0, 0, z.radius);
-          craterGrad.addColorStop(0, `rgba(251, 146, 60, ${(0.38 * fadeOut * pulse).toFixed(3)})`);
-          craterGrad.addColorStop(0.55, `rgba(220, 38, 38, ${(0.26 * fadeOut).toFixed(3)})`);
-          craterGrad.addColorStop(0.88, `rgba(124, 45, 18, ${(0.18 * fadeOut).toFixed(3)})`);
-          craterGrad.addColorStop(1, 'rgba(28, 25, 23, 0)');
-          ctx.fillStyle = craterGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          // Scorched magma crater ground sprite
+          ctx.save();
+          ctx.globalAlpha = Math.max(0.05, Math.min(1, fadeOut * pulse));
+          ctx.drawImage(fireballCraterSprite, -z.radius, -z.radius, z.radius * 2, z.radius * 2);
+          ctx.restore();
 
           // Glowing magma fissure cracks radiating from impact center
           ctx.strokeStyle = `rgba(253, 224, 71, ${(0.55 * fadeOut * pulse).toFixed(3)})`;
@@ -3561,15 +3731,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.save();
           ctx.translate(z.x, z.y);
 
-          // Arcane cosmic blast zone fill + celestial rune ring
-          const metFloorGrad = ctx.createRadialGradient(0, 0, 8, 0, 0, z.radius);
-          metFloorGrad.addColorStop(0, `rgba(232, 121, 249, ${(0.18 + progress * 0.26).toFixed(3)})`);
-          metFloorGrad.addColorStop(0.7, `rgba(126, 34, 206, ${(0.16 + progress * 0.2).toFixed(3)})`);
-          metFloorGrad.addColorStop(1, 'rgba(56, 189, 248, 0.08)');
-          ctx.fillStyle = metFloorGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-          ctx.fill();
+          // Arcane cosmic blast zone fill using cached sprite
+          ctx.save();
+          ctx.globalAlpha = 0.45 + progress * 0.55;
+          ctx.drawImage(meteorFloorSprite, -z.radius, -z.radius, z.radius * 2, z.radius * 2);
+          ctx.restore();
 
           // Rotating celestial outer rune ring
           ctx.save();
@@ -3600,27 +3766,18 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           // Falling celestial meteor comet descending from above
           const dropY = -(1 - progress) * 210;
           const mRadius = 11 + progress * 14;
-          const tailGrad = ctx.createLinearGradient(0, dropY, 0, dropY - 76);
-          tailGrad.addColorStop(0, 'rgba(232, 121, 249, 0.78)');
-          tailGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.35)');
-          tailGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-          ctx.fillStyle = tailGrad;
+          ctx.save();
           ctx.beginPath();
           ctx.moveTo(-mRadius * 0.85, dropY);
           ctx.lineTo(0, dropY - 76);
           ctx.lineTo(mRadius * 0.85, dropY);
           ctx.closePath();
-          ctx.fill();
+          ctx.clip();
+          ctx.drawImage(meteorTailSprite, -mRadius * 0.85, dropY - 76, mRadius * 1.7, 76);
+          ctx.restore();
 
-          const metGrad = ctx.createRadialGradient(0, dropY, 2, 0, dropY, mRadius * 1.15);
-          metGrad.addColorStop(0, '#FFFFFF');
-          metGrad.addColorStop(0.35, '#F0ABFC');
-          metGrad.addColorStop(0.7, '#A855F7');
-          metGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-          ctx.fillStyle = metGrad;
-          ctx.beginPath();
-          ctx.arc(0, dropY, mRadius * 1.15, 0, Math.PI * 2);
-          ctx.fill();
+          const coreR = mRadius * 1.15;
+          ctx.drawImage(meteorCoreSprite, -coreR, dropY - coreR, coreR * 2, coreR * 2);
           ctx.restore();
 
           if ((z.chronoSuspendedMs || 0) <= 0) {
@@ -3636,17 +3793,16 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
           ctx.save();
 
-          // 1. Electrified cone flash sector + crisp cone edges
-          const coneGrad = ctx.createRadialGradient(z.x, z.y, 10, z.x, z.y, coneRange);
-          coneGrad.addColorStop(0, `rgba(250, 204, 21, ${(0.34 * alpha).toFixed(3)})`);
-          coneGrad.addColorStop(0.55, `rgba(56, 189, 248, ${(0.22 * alpha).toFixed(3)})`);
-          coneGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-          ctx.fillStyle = coneGrad;
+          // 1. Electrified cone flash sector + crisp cone edges using cached glow sprite
+          ctx.save();
+          ctx.globalAlpha = alpha;
           ctx.beginPath();
           ctx.moveTo(z.x, z.y);
           ctx.arc(z.x, z.y, coneRange, minA, maxA);
           ctx.closePath();
-          ctx.fill();
+          ctx.clip();
+          ctx.drawImage(coneGlowSprite, z.x - coneRange, z.y - coneRange, coneRange * 2, coneRange * 2);
+          ctx.restore();
 
           ctx.strokeStyle = `rgba(253, 224, 71, ${(0.65 * alpha).toFixed(3)})`;
           ctx.lineWidth = 2;
@@ -3736,6 +3892,137 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             }
           }
           ctx.restore();
+        } else if (z.kind === 'sunforged_shockwave') {
+          const alpha = Math.max(0.12, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const progress = 1 - alpha;
+          const coneAng = z.angle ?? 0;
+          const halfArc = z.coneHalfAngleRad ?? 0.58;
+          const r = (z.radius || 118) * (0.45 + 0.55 * progress);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(251, 191, 36, ${(0.24 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.arc(0, 0, r, coneAng - halfArc, coneAng + halfArc);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = `rgba(254, 240, 138, ${(0.9 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, coneAng - halfArc, coneAng + halfArc);
+          ctx.stroke();
+          ctx.restore();
+        } else if (z.kind === 'tempest_wheel') {
+          const alpha = Math.max(0.15, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const r = z.radius || 92;
+          const spin = now * 0.018;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(56, 189, 248, ${(0.12 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(251, 191, 36, ${(0.88 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, spin, spin + Math.PI * 1.4);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(125, 211, 252, ${(0.85 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 0.72, spin + Math.PI, spin + Math.PI * 2.4);
+          ctx.stroke();
+          ctx.restore();
+        } else if (z.kind === 'galeburst_nova') {
+          const alpha = Math.max(0.12, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const progress = 1 - alpha;
+          const r = (z.radius || 88) * (0.35 + 0.65 * progress);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(52, 211, 153, ${(0.2 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(110, 231, 183, ${(0.92 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 2.6;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(186, 230, 253, ${(0.75 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 1.6;
+          for (let i = 0; i < 4; i++) {
+            const a = progress * 2.2 + (i * Math.PI) / 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, r * 0.68, a, a + 0.85);
+            ctx.stroke();
+          }
+          ctx.restore();
+        } else if (z.kind === 'cinderflare_blast') {
+          const alpha = Math.max(0.12, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const progress = 1 - alpha;
+          const r = (z.radius || 64) * (0.4 + 0.6 * progress);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(249, 115, 22, ${(0.28 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(253, 224, 71, ${(0.92 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = `rgba(239, 68, 68, ${(0.35 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else if (z.kind === 'seraphim_holy_burst') {
+          const alpha = Math.max(0.12, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const progress = 1 - alpha;
+          const r = z.radius || 110;
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(250, 204, 21, ${(0.22 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(254, 240, 138, ${(0.95 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * (0.55 + 0.45 * progress), 0, Math.PI * 2);
+          ctx.stroke();
+          // Descending radiant judgment beam flash
+          const beamHalfW = Math.max(6, r * 0.24 * alpha);
+          ctx.fillStyle = `rgba(254, 249, 195, ${(0.42 * alpha).toFixed(3)})`;
+          ctx.fillRect(-beamHalfW, -180, beamHalfW * 2, 180);
+          ctx.strokeStyle = `rgba(245, 158, 11, ${(0.85 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        } else if (z.kind === 'sacred_retribution') {
+          const alpha = Math.max(0.12, Math.min(1, z.ttlMs / Math.max(1, z.maxTtlMs)));
+          const progress = 1 - alpha;
+          const r = (z.radius || 145) * (0.25 + 0.75 * progress);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.fillStyle = `rgba(253, 224, 71, ${(0.18 * alpha).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = `rgba(255, 255, 255, ${(0.92 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = `rgba(250, 204, 21, ${(0.8 * alpha).toFixed(3)})`;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, 0, r * 0.65, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
         }
       }
 
@@ -3744,24 +4031,42 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         drawTavernDecorations(ctx, now);
       }
 
-      // Target Acquisition for local player (exact class range + wall LoS)
+      // Target Acquisition for local player (exact class range + wall LoS, cached across micro-frames)
       let lockedEnemyId: string | null = null;
       const mySmoothPos = me ? smoothedPlayers.get(me.id) || { x: me.x, y: me.y } : null;
       if (me && !me.downed && mySmoothPos) {
-        const maxDist = getPrimaryAttackRange(me.heroClass);
-        const isMouseAim = aimSourceRef.current === 'mouse';
-        const lockMatch = findBestAutoTarget({
-          playerX: mySmoothPos.x,
-          playerY: mySmoothPos.y,
-          maxRange: maxDist,
-          preferredAngle: aimAngleRef.current,
-          minDot: isMouseAim ? 0.88 : -1,
-          map,
-          props: snap.props,
-          enemies: snap.enemies,
-          trainingDummies: snap.trainingDummies,
-        });
-        lockedEnemyId = lockMatch?.target.id ?? null;
+        if (
+          isNewSnapshot ||
+          lastAutoSnap !== snap ||
+          Math.abs(mySmoothPos.x - lastAutoX) > 6 ||
+          Math.abs(mySmoothPos.y - lastAutoY) > 6 ||
+          angleDeltaRad(aimAngleRef.current, lastAutoAim) > 0.08 ||
+          aimSourceRef.current !== lastAutoSrc
+        ) {
+          const maxDist = getPrimaryAttackRange(me.heroClass);
+          const isMouseAim = aimSourceRef.current === 'mouse';
+          const lockMatch = findBestAutoTarget({
+            playerX: mySmoothPos.x,
+            playerY: mySmoothPos.y,
+            maxRange: maxDist,
+            preferredAngle: aimAngleRef.current,
+            minDot: isMouseAim ? 0.88 : -1,
+            map,
+            props: snap.props,
+            enemies: snap.enemies,
+            trainingDummies: snap.trainingDummies,
+          });
+          cachedAutoTargetId = lockMatch?.target.id ?? null;
+          lastAutoSnap = snap;
+          lastAutoX = mySmoothPos.x;
+          lastAutoY = mySmoothPos.y;
+          lastAutoAim = aimAngleRef.current;
+          lastAutoSrc = aimSourceRef.current;
+        }
+        lockedEnemyId = cachedAutoTargetId;
+      } else {
+        lastAutoSnap = null;
+        cachedAutoTargetId = null;
       }
 
       // Real-Time Drag-to-Aim Ability Targeting Indicator OR Subtle Basic-Attack Range Ring
@@ -3795,9 +4100,18 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // Props, Relic Vault, Mystic Shrine & Pickups
+      // Props, Relic Vault, Mystic Shrine & Pickups (viewport-culled)
       for (const prop of snap.props) {
         if (prop.opened && (prop.kind === 'crate' || prop.kind === 'coin' || prop.kind === 'potion')) {
+          continue;
+        }
+        const propMargin = prop.kind === 'warden_gate' ? 180 : 96;
+        if (
+          prop.x < worldView.left - propMargin ||
+          prop.x > worldView.right + propMargin ||
+          prop.y < worldView.top - propMargin ||
+          prop.y > worldView.bottom + propMargin
+        ) {
           continue;
         }
         if (prop.kind === 'relic_chest') {
@@ -3811,9 +4125,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // NPCs & Training Dummies (Tavern Social Hub)
+      // NPCs & Training Dummies (Tavern Social Hub, viewport-culled)
       if (snap.npcs) {
         for (const npc of snap.npcs) {
+          if (
+            npc.x < worldView.left - 96 ||
+            npc.x > worldView.right + 96 ||
+            npc.y < worldView.top - 96 ||
+            npc.y > worldView.bottom + 96
+          ) {
+            continue;
+          }
           const npcPose = resolveNpcDirection8(npc, snap.players, 140);
           drawNpc(ctx, npc, now, npcPose);
         }
@@ -3821,6 +4143,14 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
       if (snap.trainingDummies) {
         for (const dummy of snap.trainingDummies) {
+          if (
+            dummy.x < worldView.left - 96 ||
+            dummy.x > worldView.right + 96 ||
+            dummy.y < worldView.top - 96 ||
+            dummy.y > worldView.bottom + 96
+          ) {
+            continue;
+          }
           drawTrainingDummy(ctx, dummy, now, dummy.id === lockedEnemyId);
         }
       }
@@ -3833,6 +4163,14 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           dyingBosses.splice(i, 1);
           continue;
         }
+        if (
+          db.x < worldView.left - 180 ||
+          db.x > worldView.right + 180 ||
+          db.y < worldView.top - 180 ||
+          db.y > worldView.bottom + 180
+        ) {
+          continue;
+        }
         const dp = Math.max(0, Math.min(1, elapsed / db.durationMs));
         drawFirstFiveBossByKey(ctx, db.x, db.y, db.bossKey, now, db.enemy, db.pose, {
           ...db.lastAnim,
@@ -3842,11 +4180,20 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         });
       }
 
-      // Enemies
+      // Enemies (viewport-culled)
       for (const en of snap.enemies) {
         const pos = smoothedEnemies.get(en.id) || { x: en.x, y: en.y };
-        const ex = Math.round(pos.x);
-        const ey = Math.round(pos.y);
+        const ex = snapToScreenPixel(pos.x, zoom);
+        const ey = snapToScreenPixel(pos.y, zoom);
+        const enMargin = en.radius + (en.kind === 'boss' ? 220 : 80);
+        if (
+          ex < worldView.left - enMargin ||
+          ex > worldView.right + enMargin ||
+          ey < worldView.top - enMargin ||
+          ey > worldView.bottom + enMargin
+        ) {
+          continue;
+        }
         const prevEnemyFacing = enemyFacingMap.get(en.id);
         const enemyPose = resolveEnemyDirection8(
           en,
@@ -4118,6 +4465,41 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.restore();
         }
 
+        if ((en.galeburstMarks ?? 0) > 0) {
+          const marks = Math.min(2, en.galeburstMarks || 0);
+          const pipY = ey - en.radius - 24;
+          ctx.save();
+          for (let m = 0; m < marks; m++) {
+            const pipX = ex + (m - (marks - 1) * 0.5) * 9;
+            ctx.fillStyle = '#34D399';
+            ctx.strokeStyle = '#ECFDF5';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(pipX, pipY, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        if (me?.predatorTargetId === en.id && (me.predatorStacks ?? 0) > 0) {
+          const stacks = me.predatorStacks ?? 0;
+          const pr = en.radius + 7;
+          ctx.save();
+          ctx.strokeStyle = '#34D399';
+          ctx.lineWidth = 1.6;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.arc(ex, ey, pr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#34D399';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(`x${stacks}`, ex, ey + en.radius + 11);
+          ctx.restore();
+        }
+
         const barW = en.kind === 'boss' ? 76 : 30;
         const hpRatio = Math.max(0, en.hp / Math.max(1, en.maxHp));
         const isCatacombs = map.biome === 'catacombs' || map.floor === 2;
@@ -4218,30 +4600,32 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           }
         }
 
-        // Active Status Badges beneath health bar
-        const activeStatuses: { icon: string; color: string }[] = [];
-        if ((en.burnedMs ?? 0) > 0) activeStatuses.push({ icon: 'BRN', color: '#F97316' });
-        if ((en.frozenMs ?? 0) > 0) activeStatuses.push({ icon: 'FRZ', color: '#38BDF8' });
-        if ((en.shockedMs ?? 0) > 0) activeStatuses.push({ icon: 'SHK', color: '#FBBF24' });
-        if ((en.poisonedMs ?? 0) > 0) activeStatuses.push({ icon: 'PSN', color: '#22C55E' });
-        if ((en.bleedingMs ?? 0) > 0) activeStatuses.push({ icon: 'BLD', color: '#EF4444' });
-        if ((en.stunnedMs ?? 0) > 0) activeStatuses.push({ icon: 'STN', color: '#EAB308' });
+        // Active Status Badges beneath health bar (reusing shared buffers)
+        enemyStatusIcons.length = 0;
+        enemyStatusColors.length = 0;
+        if ((en.burnedMs ?? 0) > 0) { enemyStatusIcons.push('BRN'); enemyStatusColors.push('#F97316'); }
+        if ((en.frozenMs ?? 0) > 0) { enemyStatusIcons.push('FRZ'); enemyStatusColors.push('#38BDF8'); }
+        if ((en.shockedMs ?? 0) > 0) { enemyStatusIcons.push('SHK'); enemyStatusColors.push('#FBBF24'); }
+        if ((en.poisonedMs ?? 0) > 0) { enemyStatusIcons.push('PSN'); enemyStatusColors.push('#22C55E'); }
+        if ((en.bleedingMs ?? 0) > 0) { enemyStatusIcons.push('BLD'); enemyStatusColors.push('#EF4444'); }
+        if ((en.stunnedMs ?? 0) > 0) { enemyStatusIcons.push('STN'); enemyStatusColors.push('#EAB308'); }
 
-        if (activeStatuses.length > 0) {
+        if (enemyStatusIcons.length > 0) {
           ctx.save();
           const badgeSpacing = 11;
-          const totalW = activeStatuses.length * badgeSpacing;
+          const totalW = enemyStatusIcons.length * badgeSpacing;
           const startX = ex - totalW / 2 + 5;
           const badgeY = ey - en.radius - 7;
           ctx.font = '9px monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          activeStatuses.forEach((st, idx) => {
+          for (let idx = 0; idx < enemyStatusIcons.length; idx++) {
             const bx = startX + idx * badgeSpacing;
             ctx.fillStyle = 'rgba(15, 15, 22, 0.75)';
             ctx.fillRect(bx - 5, badgeY - 5, 10, 10);
-            ctx.fillText(st.icon, bx, badgeY);
-          });
+            ctx.fillStyle = enemyStatusColors[idx];
+            ctx.fillText(enemyStatusIcons[idx], bx, badgeY);
+          }
           ctx.restore();
         }
 
@@ -4452,10 +4836,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       }
 
       // Players
+      const speakingSet = voiceManager.getSpeakingParticipantIds();
       for (const p of snap.players) {
         const pos = smoothedPlayers.get(p.id) || { x: p.x, y: p.y };
-        const hx = Math.round(pos.x);
-        const hy = Math.round(pos.y);
+        const hx = snapToScreenPixel(pos.x, zoom);
+        const hy = snapToScreenPixel(pos.y, zoom);
         const def = HERO_CLASSES[p.heroClass];
         const isLocalPlayer = p.id === playerId;
         const ang = isLocalPlayer ? aimAngleRef.current : p.aimAngle;
@@ -4547,30 +4932,43 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
             ctx.fillRect(ox - 0.5, oy - 0.5, 1, 1);
           }
         } else if (p.heroClass === 'cleric') {
-          // Cleric: Radiant Aura 140px Warmth Halo (enhanced by Martyr & Templar vestments)
-          const auraPulse = Math.sin(now * 0.004 + hx) * 3;
-          const isTemplar = p.equippedVestment === 'cleric_templar_cassock';
-          const isMartyr = p.equippedVestment === 'cleric_martyr_surplice';
-          ctx.fillStyle = isTemplar
-            ? 'rgba(250, 204, 21, 0.08)'
-            : isMartyr
-              ? 'rgba(52, 211, 153, 0.1)'
-              : 'rgba(34, 197, 94, 0.08)';
-          ctx.beginPath();
-          ctx.arc(hx, hy, 140, 0, Math.PI * 2);
-          ctx.fill();
+          // Cleric aura matches active Vestment passive strictly:
+          // Only default Vestment ('radiant_aura') emits the 140px green Radiant Aura ring.
+          const activeClericPassive = p.activePassiveId || (!p.equippedVestment ? 'radiant_aura' : undefined);
+          if (activeClericPassive === 'radiant_aura' || p.equippedVestment === 'cleric_solar_vestments') {
+            const auraPulse = Math.sin(now * 0.004 + hx) * 3;
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.08)';
+            ctx.beginPath();
+            ctx.arc(hx, hy, 140, 0, Math.PI * 2);
+            ctx.fill();
 
-          ctx.strokeStyle = isTemplar
-            ? 'rgba(250, 204, 21, 0.48)'
-            : isMartyr
-              ? 'rgba(52, 211, 153, 0.48)'
-              : 'rgba(34, 197, 94, 0.4)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
-          ctx.stroke();
+            ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(hx, hy, 140 + auraPulse, 0, Math.PI * 2);
+            ctx.stroke();
 
-          particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
+            particleManager.spawnClericBeaconMotes(hx, hy, 40, now);
+          } else if (activeClericPassive === 'shared_grace') {
+            // Subtle emerald grace halo around the Cleric (proportional to storedGrace)
+            const graceRatio = Math.min(1, (p.storedGrace ?? 0) / 60);
+            ctx.strokeStyle = `rgba(52, 211, 153, ${(0.28 + graceRatio * 0.45).toFixed(2)})`;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.arc(hx, hy, 22 + graceRatio * 6, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (activeClericPassive === 'sacred_retribution') {
+            // Subtle golden Sanctity halo around the Cleric (brightens when ready at 100)
+            const sancRatio = Math.min(1, (p.clericSanctity ?? 0) / 100);
+            ctx.strokeStyle =
+              sancRatio >= 1
+                ? 'rgba(254, 240, 138, 0.85)'
+                : `rgba(250, 204, 21, ${(0.25 + sancRatio * 0.4).toFixed(2)})`;
+            ctx.lineWidth = sancRatio >= 1 ? 2.2 : 1.5;
+            ctx.beginPath();
+            ctx.arc(hx, hy, 22 + sancRatio * 6, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         }
 
         // Subtle ambient motes for equipped Forged/Ascendant Vestments & Weapons
@@ -4584,28 +4982,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           now
         );
 
-      // Render and update Cleric passive green pulse waves
-      for (let i = clericPulses.length - 1; i >= 0; i--) {
-        const pulse = clericPulses[i];
-        const age = now - pulse.bornAt;
-        if (age > 800) {
-          clericPulses.splice(i, 1);
-          continue;
-        }
-        const progress = age / 800; // 0 to 1
-        const radius = 15 + progress * 140; // expands from 15 to 155
-        const alpha = Math.max(0, 1 - progress);
-        ctx.strokeStyle = `rgba(34, 197, 94, ${alpha * 0.75})`;
-        ctx.lineWidth = 2.5 * alpha;
-        ctx.beginPath();
-        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = `rgba(34, 197, 94, ${alpha * 0.12})`;
-        ctx.beginPath();
-        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
         // Floor Status Effects Visual Feedback
         if (p.statuses && p.statuses.length > 0) {
           const statusCount = p.statuses.length;
@@ -4702,7 +5078,6 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
         ctx.font = '700 11px "Plus Jakarta Sans", sans-serif';
         ctx.textAlign = 'center';
-        const labelWidth = ctx.measureText(displayLabel).width;
         const badgeY = hy - 38;
 
         // Gold Marker Arrow for Local Player
@@ -4725,11 +5100,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         ctx.fillText(displayLabel, hx, badgeY + 1);
 
         // Live Proximity Voice Speaking Indicator beside player nameplate
-        const speakingSet = voiceManager.getSpeakingParticipantIds();
         const isSpeakingNow =
           speakingSet.has(p.id) &&
           (isLocalPlayer || !voiceManager.isUserMutedLocally(p.id));
         if (isSpeakingNow) {
+          const labelWidth = measureTextCached('700 11px "Plus Jakarta Sans", sans-serif', displayLabel);
           const iconX = hx + labelWidth / 2 + 10;
           const iconY = badgeY - 3;
           const pulse = (Math.sin(now * 0.015) + 1) * 0.5;
@@ -4791,6 +5166,23 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.strokeStyle = '#FDBA74';
           ctx.lineWidth = 1;
           ctx.strokeRect(cbX - 1, cbY - 1, cbW + 2, 7);
+          ctx.restore();
+        }
+
+        // Ranger Eclipse Longbow hold-to-charge bar
+        if ((p.eclipseChargeRatio ?? 0) > 0) {
+          const chargePct = Math.max(0, Math.min(1, p.eclipseChargeRatio || 0));
+          const ebW = 42;
+          const ebX = hx - ebW / 2;
+          const ebY = hy - 54;
+          ctx.save();
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+          ctx.fillRect(ebX - 1, ebY - 1, ebW + 2, 6);
+          ctx.fillStyle = chargePct >= 0.95 ? '#FDE047' : '#818CF8';
+          ctx.fillRect(ebX, ebY, Math.round(ebW * chargePct), 4);
+          ctx.strokeStyle = '#C4B5FD';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(ebX - 1, ebY - 1, ebW + 2, 6);
           ctx.restore();
         }
 
@@ -4896,24 +5288,59 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // Enhanced Projectiles & Combat Trails (smoothly extrapolated at display refresh rate)
+      // Render and update Cleric passive green pulse waves once per frame (outside player loop)
+      for (let i = clericPulses.length - 1; i >= 0; i--) {
+        const pulse = clericPulses[i];
+        const age = now - pulse.bornAt;
+        if (age > 800) {
+          clericPulses.splice(i, 1);
+          continue;
+        }
+        const progress = age / 800;
+        const radius = 15 + progress * 140;
+        const alpha = Math.max(0, 1 - progress);
+        ctx.strokeStyle = `rgba(34, 197, 94, ${alpha * 0.75})`;
+        ctx.lineWidth = 2.5 * alpha;
+        ctx.beginPath();
+        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(34, 197, 94, ${alpha * 0.12})`;
+        ctx.beginPath();
+        ctx.arc(pulse.x, pulse.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Enhanced Projectiles & Combat Trails (smoothly extrapolated & viewport-culled)
       const projLeadSec = Math.min(0.032, Math.max(0, (now - lastSnapshotAt) / 1000));
-      const activeProjIds = new Set<string>();
+      activeProjIds.clear();
       for (const proj of snap.projectiles) {
         activeProjIds.add(proj.id);
         const isSuspendedProj = (proj.chronoSuspendedMs || 0) > 0;
-        const drawProj =
+        const canLead =
           projLeadSec > 0 &&
           !isSuspendedProj &&
           proj.style !== 'slash' &&
           proj.style !== 'arcane_barrage' &&
-          (proj.vx !== 0 || proj.vy !== 0)
-            ? {
-                ...proj,
-                x: proj.x + proj.vx * projLeadSec,
-                y: proj.y + proj.vy * projLeadSec,
-              }
-            : proj;
+          (proj.vx !== 0 || proj.vy !== 0);
+        const px = canLead ? proj.x + proj.vx * projLeadSec : proj.x;
+        const py = canLead ? proj.y + proj.vy * projLeadSec : proj.y;
+        const pMargin = (proj.radius || 16) + 64;
+        if (
+          px < worldView.left - pMargin ||
+          px > worldView.right + pMargin ||
+          py < worldView.top - pMargin ||
+          py > worldView.bottom + pMargin
+        ) {
+          continue;
+        }
+        let drawProj = proj;
+        if (canLead) {
+          Object.assign(scratchProj, proj);
+          scratchProj.x = px;
+          scratchProj.y = py;
+          drawProj = scratchProj;
+        }
         drawEnhancedProjectile(ctx, drawProj, now);
         if (!isSuspendedProj) {
           particleManager.spawnProjectileWake(drawProj, now);
@@ -4922,32 +5349,36 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       particleManager.cleanupInactiveProjectiles(activeProjIds);
 
       // Floating Numbers, Critical Hit Animations & Speech Bubbles with Vertical Stacking
-      const floatOffsets = new Array(floatingTexts.length).fill(0);
-      for (let i = 0; i < floatingTexts.length; i++) {
-        const ft = floatingTexts[i];
-        const age = now - ft.bornAt;
-        const isDialogue = ft.text.startsWith('"');
-        const duration = isDialogue ? 5500 : ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
-        if (age >= duration) continue;
-        const t = age / duration;
-        const baseFloatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
-
-        let stackSlot = 0;
-        for (let j = 0; j < i; j++) {
-          const other = floatingTexts[j];
-          const otherAge = now - other.bornAt;
-          const otherDuration = other.text.startsWith('"') ? 5500 : other.kind === 'ping' ? 2600 : other.kind === 'crit' ? 1200 : 950;
-          if (otherAge >= otherDuration) continue;
-          const otherT = otherAge / otherDuration;
-          const otherBaseFloatY = other.y - (other.text.startsWith('"') ? Math.min(10, otherT * 12) : otherT * (other.kind === 'ping' ? 20 : other.kind === 'crit' ? 36 : 28));
-          const otherFloatY = otherBaseFloatY - (floatOffsets[j] * 18);
-
-          if (Math.abs(ft.x - other.x) < 45 && Math.abs(baseFloatY - otherFloatY) < 20) {
-            stackSlot = Math.max(stackSlot, floatOffsets[j] + 1);
-          }
+      if (floatingTexts.length > 0) {
+        if (floatOffsetsBuf.length < floatingTexts.length) {
+          floatOffsetsBuf.length = floatingTexts.length;
         }
-        floatOffsets[i] = stackSlot;
-      }
+        floatOffsetsBuf.fill(0, 0, floatingTexts.length);
+        for (let i = 0; i < floatingTexts.length; i++) {
+          const ft = floatingTexts[i];
+          const age = now - ft.bornAt;
+          const isDialogue = ft.text.startsWith('"');
+          const duration = isDialogue ? 5500 : ft.kind === 'ping' ? 2600 : ft.kind === 'crit' ? 1200 : 950;
+          if (age >= duration) continue;
+          const t = age / duration;
+          const baseFloatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
+
+          let stackSlot = 0;
+          for (let j = 0; j < i; j++) {
+            const other = floatingTexts[j];
+            const otherAge = now - other.bornAt;
+            const otherDuration = other.text.startsWith('"') ? 5500 : other.kind === 'ping' ? 2600 : other.kind === 'crit' ? 1200 : 950;
+            if (otherAge >= otherDuration) continue;
+            const otherT = otherAge / otherDuration;
+            const otherBaseFloatY = other.y - (other.text.startsWith('"') ? Math.min(10, otherT * 12) : otherT * (other.kind === 'ping' ? 20 : other.kind === 'crit' ? 36 : 28));
+            const otherFloatY = otherBaseFloatY - (floatOffsetsBuf[j] * 18);
+
+            if (Math.abs(ft.x - other.x) < 45 && Math.abs(baseFloatY - otherFloatY) < 20) {
+              stackSlot = Math.max(stackSlot, floatOffsetsBuf[j] + 1);
+            }
+          }
+          floatOffsetsBuf[i] = stackSlot;
+        }
 
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
@@ -4961,30 +5392,75 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
         const t = age / duration;
         const alpha = Math.max(0, 1 - Math.pow(t, 4)); // 100% opacity for most of the duration
         const baseFloatY = ft.y - (isDialogue ? Math.min(10, t * 12) : t * (ft.kind === 'ping' ? 20 : ft.kind === 'crit' ? 36 : 28));
-        const floatY = baseFloatY - (floatOffsets[i] * 18);
+        const floatY = baseFloatY - (floatOffsetsBuf[i] * 18);
+
+        if (
+          ft.x < worldView.left - 160 ||
+          ft.x > worldView.right + 160 ||
+          floatY < worldView.top - 100 ||
+          floatY > worldView.bottom + 100
+        ) {
+          continue;
+        }
 
         ctx.save();
         ctx.globalAlpha = alpha;
 
         if (ft.kind === 'crit') {
-          // Explosive Scale Pop & Golden Glow for Critical Hits
+          // Explosive Scale Pop & Damage-Type Colored Glow for Critical Hits
           const pop = t < 0.18 ? 0.6 + (t / 0.18) * 1.0 : Math.max(1, 1.6 - (t - 0.18) * 0.7);
           ctx.translate(ft.x, floatY);
           ctx.scale(pop, pop);
 
-          // Glowing badge background
-          ctx.fillStyle = 'rgba(220, 38, 38, 0.45)';
-          ctx.fillRect(-32, -12, 64, 16);
-          ctx.strokeStyle = '#F59E0B';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(-32, -12, 64, 16);
+          const rawTrim = ft.text.trim();
+          const critDisplay = rawTrim.endsWith('!') ? rawTrim : `${rawTrim}!`;
+          const critFont = '800 13px "JetBrains Mono", monospace';
+          const badgeW = Math.max(48, Math.ceil(measureTextCached(critFont, critDisplay)) + 14);
+          ctx.font = critFont;
 
-          ctx.font = '800 13px "JetBrains Mono", monospace';
+          const critColor = ft.damageCategory
+            ? getDamageTypeColor(ft.damageCategory, true)
+            : ft.color || '#FEF08A';
+          const upperCol = critColor.toUpperCase();
+          const family = ft.damageCategory
+            ? getDamageTypeFamily(ft.damageCategory)
+            : upperCol === '#EF4444' || upperCol === '#F87171' || upperCol === '#FCA5A5' || upperCol === '#DC2626'
+              ? 'physical'
+              : upperCol === '#A855F7' || upperCol === '#C084FC' || upperCol === '#D8B4FE' || upperCol === '#E9D5FF'
+                ? 'magic'
+                : upperCol === '#FACC15' || upperCol === '#FDE047' || upperCol === '#FEF08A' || upperCol === '#FBBF24' || upperCol === '#FCD34D'
+                  ? 'divine'
+                  : 'other';
+
+          const badgeBg =
+            family === 'physical'
+              ? 'rgba(127, 29, 29, 0.76)'
+              : family === 'magic'
+                ? 'rgba(88, 28, 135, 0.76)'
+                : family === 'divine'
+                  ? 'rgba(113, 63, 18, 0.78)'
+                  : 'rgba(15, 23, 42, 0.82)';
+          const badgeStroke =
+            family === 'physical'
+              ? '#EF4444'
+              : family === 'magic'
+                ? '#A855F7'
+                : family === 'divine'
+                  ? '#FACC15'
+                  : critColor;
+
+          // Glowing badge background matched to damage type
+          ctx.fillStyle = badgeBg;
+          ctx.fillRect(-badgeW / 2, -12, badgeW, 16);
+          ctx.strokeStyle = badgeStroke;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(-badgeW / 2, -12, badgeW, 16);
+
           ctx.textAlign = 'center';
           ctx.fillStyle = '#111219';
-          ctx.fillText(` ${ft.text}!`, 1, 1);
-          ctx.fillStyle = '#FEF08A';
-          ctx.fillText(` ${ft.text}!`, 0, 0);
+          ctx.fillText(critDisplay, 1, 1);
+          ctx.fillStyle = critColor;
+          ctx.fillText(critDisplay, 0, 0);
         } else if (ft.kind === 'status') {
           const trimmed = ft.text.trim();
           const upper = trimmed.toUpperCase();
@@ -5016,10 +5492,11 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
           ctx.translate(ft.x, floatY);
           if (isMajorStatus) {
-            ctx.font = isDialogue
+            const statusFont = isDialogue
               ? '600 12px "Plus Jakarta Sans", sans-serif'
               : '700 11px "JetBrains Mono", monospace';
-            const textW = ctx.measureText(ft.text).width;
+            const textW = measureTextCached(statusFont, ft.text);
+            ctx.font = statusFont;
 
             ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
             ctx.fillRect(-textW / 2 - 8, -13, textW + 16, 20);
@@ -5058,15 +5535,21 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           ctx.fillStyle = '#111219';
           ctx.fillText(ft.text, ft.x + 1, floatY + 1);
-          ctx.fillStyle = ft.kind === 'heal' ? '#34D399' : ft.color;
+          ctx.fillStyle =
+            ft.kind === 'heal'
+              ? '#34D399'
+              : ft.kind === 'damage' && ft.damageCategory
+                ? getDamageTypeColor(ft.damageCategory, false)
+                : ft.color;
           ctx.fillText(ft.text, ft.x, floatY);
         }
 
         ctx.restore();
       }
+      }
 
-      // Update and render combat particles in world coordinates
-      particleManager.updateAndDraw(ctx, now, dtSec);
+      // Update and render combat particles in world coordinates (viewport-culled)
+      particleManager.updateAndDraw(ctx, now, dtSec, worldView);
 
       ctx.restore();
 
@@ -5145,11 +5628,17 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       ctx.lineWidth = 1;
       ctx.strokeRect(mmX, mmY, mmW, mmH);
 
-      const flagMap = new Map(snap.roomClearedFlags.map((f) => [f.id, f]));
+      if (isNewSnapshot || minimapFlagMap.size === 0) {
+        minimapFlagMap.clear();
+        for (let i = 0; i < snap.roomClearedFlags.length; i++) {
+          const f = snap.roomClearedFlags[i];
+          minimapFlagMap.set(f.id, f);
+        }
+      }
 
       // 5. Rooms
       for (const room of map.rooms) {
-        const flags = flagMap.get(room.id);
+        const flags = minimapFlagMap.get(room.id);
         const discovered = flags ? flags.discovered : room.discovered;
         const cleared = flags ? flags.cleared : room.cleared;
         const isGuardian = Boolean(room.guardian || flags?.guardian);
@@ -5285,6 +5774,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', resize);
+      window.removeEventListener('scroll', updateCanvasRect);
     };
   }, [latestSnapshotRef, map, playerId]);
 
@@ -5318,9 +5808,19 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
     }
   };
 
+  const getCachedCanvasRect = (el: HTMLCanvasElement) => {
+    let rect = canvasRectRef.current;
+    if (rect.width <= 1) {
+      const domRect = el.getBoundingClientRect();
+      rect = { left: domRect.left, top: domRect.top, width: domRect.width, height: domRect.height };
+      canvasRectRef.current = rect;
+    }
+    return rect;
+  };
+
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (controlsBlockedRef.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = getCachedCanvasRect(e.currentTarget);
     const nx = e.clientX - rect.left;
     const ny = e.clientY - rect.top;
     const moved =
@@ -5332,10 +5832,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
       lastMouseActiveAtRef.current = performance.now();
       updateMouseAimImmediately(nx, ny);
     }
-    if (
-      keysRef.current.attack ||
-      angleDeltaRad(aimAngleRef.current, lastSentAimAngleRef.current) >= 0.03
-    ) {
+    if (angleDeltaRad(aimAngleRef.current, lastSentAimAngleRef.current) >= 0.03) {
       lastSentAimAngleRef.current = aimAngleRef.current;
       onSendKeyboardInput({ ...keysRef.current, aimAngle: aimAngleRef.current });
     }
@@ -5359,7 +5856,7 @@ const GameCanvasComponent: React.FC<GameCanvasProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (controlsBlockedRef.current) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+    const rect = getCachedCanvasRect(e.currentTarget);
     const nx = e.clientX - rect.left;
     const ny = e.clientY - rect.top;
     mouseScreenRef.current = { x: nx, y: ny };

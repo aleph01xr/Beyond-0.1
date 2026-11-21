@@ -96,3 +96,41 @@ export function getWorldViewBounds(
     height,
   };
 }
+
+/**
+ * Aligns a world-space coordinate to the exact device pixel grid used by the zoomed camera
+ * so sprites and floor tiles move in lockstep without sub-pixel phase jitter.
+ */
+export function snapToScreenPixel(worldCoord: number, zoom: number): number {
+  const safeZoom = Math.max(0.1, zoom);
+  return Math.round(worldCoord * safeZoom) / safeZoom;
+}
+
+export interface MapCropRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+/**
+ * Computes the clamped source/destination rectangle for blitting only the visible slice
+ * of the cached offscreen dungeon tile canvas.
+ */
+export function computeMapCropRect(
+  worldView: WorldViewBounds,
+  mapPixelWidth: number,
+  mapPixelHeight: number,
+  padPx = 2
+): MapCropRect | null {
+  if (mapPixelWidth <= 0 || mapPixelHeight <= 0) return null;
+  const sx = Math.max(0, Math.floor(worldView.left - padPx));
+  const sy = Math.max(0, Math.floor(worldView.top - padPx));
+  const ex = Math.min(mapPixelWidth, Math.ceil(worldView.right + padPx));
+  const ey = Math.min(mapPixelHeight, Math.ceil(worldView.bottom + padPx));
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw <= 0 || sh <= 0) return null;
+  return { sx, sy, sw, sh };
+}
+

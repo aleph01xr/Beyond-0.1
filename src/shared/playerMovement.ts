@@ -21,6 +21,28 @@ export interface MovablePlayerLike {
   statuses?: readonly PlayerStatusEffect[];
 }
 
+interface PropGateCacheEntry {
+  len: number;
+  gates: PropState[];
+}
+
+const propGateCache = new WeakMap<readonly PropState[], PropGateCacheEntry>();
+
+function getWardenGateProps(props: readonly PropState[]): readonly PropState[] {
+  const cached = propGateCache.get(props);
+  if (cached && cached.len === props.length) {
+    return cached.gates;
+  }
+  const gates: PropState[] = [];
+  for (let i = 0; i < props.length; i++) {
+    if (props[i].kind === 'warden_gate') {
+      gates.push(props[i]);
+    }
+  }
+  propGateCache.set(props, { len: props.length, gates });
+  return gates;
+}
+
 export function isWallAtWorld(
   map: DungeonMap,
   props: readonly PropState[],
@@ -36,21 +58,24 @@ export function isWallAtWorld(
   const code = map.tiles[ty * map.width + tx];
   if (code === 0 || code === 2 || code === 3) return true;
 
-  // Solid collision barrier for Warden's Gate landmark prop
-  for (let i = 0; i < props.length; i++) {
-    const prop = props[i];
-    if (prop.kind === 'warden_gate' && !prop.opened) {
-      if (Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
+  // Solid collision barrier for Warden's Gate landmark prop (O(1) on floors 0-9)
+  if (props.length > 0) {
+    const gates = getWardenGateProps(props);
+    for (let i = 0; i < gates.length; i++) {
+      const prop = gates[i];
+      if (!prop.opened && Math.abs(wx - prop.x) <= 88 && wy >= prop.y - 50 && wy <= prop.y + 20) {
         return true;
       }
     }
   }
 
   // Solid collision barrier for NPCs so players cannot walk through them
-  if (npcs) {
+  if (npcs && npcs.length > 0) {
     for (let i = 0; i < npcs.length; i++) {
       const npc = npcs[i];
-      if (Math.hypot(wx - npc.x, wy - npc.y) <= 20) {
+      const dx = wx - npc.x;
+      const dy = wy - npc.y;
+      if (dx * dx + dy * dy <= 400) {
         return true;
       }
     }

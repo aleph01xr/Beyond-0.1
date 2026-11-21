@@ -61,12 +61,15 @@ export interface SnapshotDelta {
   lastRunSummary?: GameSnapshot['lastRunSummary'];
 }
 
+const hasOwn = Object.prototype.hasOwnProperty;
+
 function shallowEqualValues(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
   if (typeof a !== typeof b || a === null || b === null) return false;
   if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
+    const len = a.length;
+    if (len !== b.length) return false;
+    for (let i = 0; i < len; i++) {
       if (!shallowEqualValues(a[i], b[i])) return false;
     }
     return true;
@@ -74,15 +77,21 @@ function shallowEqualValues(a: unknown, b: unknown): boolean {
   if (typeof a === 'object' && typeof b === 'object') {
     const objA = a as Record<string, unknown>;
     const objB = b as Record<string, unknown>;
-    const keysA = Object.keys(objA);
-    const keysB = Object.keys(objB);
-    if (keysA.length !== keysB.length) return false;
-    for (let i = 0; i < keysA.length; i++) {
-      const k = keysA[i];
-      if (!Object.prototype.hasOwnProperty.call(objB, k)) return false;
+    let countA = 0;
+    for (const k in objA) {
+      if (!hasOwn.call(objA, k)) continue;
+      countA++;
+      if (!hasOwn.call(objB, k)) return false;
       if (!shallowEqualValues(objA[k], objB[k])) return false;
     }
-    return true;
+    let countB = 0;
+    for (const k in objB) {
+      if (hasOwn.call(objB, k)) {
+        countB++;
+        if (countB > countA) return false;
+      }
+    }
+    return countA === countB;
   }
   return false;
 }
@@ -96,17 +105,17 @@ function diffEntity<T extends { id: string }>(
   let changes: Record<string, unknown> | null = null;
   let removedKeys: string[] | undefined;
 
-  for (const key of Object.keys(nextRec)) {
-    if (key === 'id') continue;
+  for (const key in nextRec) {
+    if (key === 'id' || !hasOwn.call(nextRec, key)) continue;
     if (!shallowEqualValues(prevRec[key], nextRec[key])) {
       if (!changes) changes = {};
       changes[key] = nextRec[key];
     }
   }
 
-  for (const key of Object.keys(prevRec)) {
-    if (key === 'id') continue;
-    if ((!(key in nextRec) || nextRec[key] === undefined) && prevRec[key] !== undefined) {
+  for (const key in prevRec) {
+    if (key === 'id' || !hasOwn.call(prevRec, key)) continue;
+    if ((!hasOwn.call(nextRec, key) || nextRec[key] === undefined) && prevRec[key] !== undefined) {
       if (!removedKeys) removedKeys = [];
       removedKeys.push(key);
     }
@@ -127,8 +136,39 @@ function diffEntityArray<T extends { id: string }>(
   updated?: EntityPatch<T>[];
   removed?: string[];
 } {
+  const prevLen = prevList.length;
+  const nextLen = nextList.length;
+  if (prevLen === 0 && nextLen === 0) return {};
+
+  // Fast path: identical length & matching ID order (avoids Map/Set allocation on ~99% of ticks)
+  if (prevLen === nextLen) {
+    let sameOrder = true;
+    for (let i = 0; i < prevLen; i++) {
+      if (prevList[i].id !== nextList[i].id) {
+        sameOrder = false;
+        break;
+      }
+    }
+    if (sameOrder) {
+      let updated: EntityPatch<T>[] | undefined;
+      for (let i = 0; i < nextLen; i++) {
+        const nextItem = nextList[i];
+        const patch = diffEntity(prevList[i], nextItem);
+        if (patch) {
+          if (!updated) updated = [];
+          updated.push({
+            id: nextItem.id,
+            changes: patch.changes,
+            ...(patch.removedKeys ? { removedKeys: patch.removedKeys } : {}),
+          });
+        }
+      }
+      return { updated };
+    }
+  }
+
   const prevById = new Map<string, T>();
-  for (let i = 0; i < prevList.length; i++) {
+  for (let i = 0; i < prevLen; i++) {
     prevById.set(prevList[i].id, prevList[i]);
   }
 
@@ -136,7 +176,7 @@ function diffEntityArray<T extends { id: string }>(
   let added: T[] | undefined;
   let updated: EntityPatch<T>[] | undefined;
 
-  for (let i = 0; i < nextList.length; i++) {
+  for (let i = 0; i < nextLen; i++) {
     const nextItem = nextList[i];
     nextIds.add(nextItem.id);
     const prevItem = prevById.get(nextItem.id);
@@ -157,7 +197,7 @@ function diffEntityArray<T extends { id: string }>(
   }
 
   let removed: string[] | undefined;
-  for (let i = 0; i < prevList.length; i++) {
+  for (let i = 0; i < prevLen; i++) {
     const prevId = prevList[i].id;
     if (!nextIds.has(prevId)) {
       if (!removed) removed = [];

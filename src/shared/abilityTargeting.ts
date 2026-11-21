@@ -239,12 +239,29 @@ const ARCANIST_SCROLL_TARGET_SPECS: Record<ArcanistScrollId, AbilityTargetSpec> 
 export function getAbilityTargetSpec(
   heroClass: HeroClassId,
   action: AimableAction,
-  equippedScrollId?: ArcanistScrollId | null
+  equippedScrollId?: ArcanistScrollId | null,
+  equippedWeaponId?: string | null
 ): AbilityTargetSpec {
   if (action === 'dash') return DASH_TARGET_SPEC;
   if (heroClass === 'arcanist' && action === 'tactical' && equippedScrollId) {
     const scrollSpec = ARCANIST_SCROLL_TARGET_SPECS[equippedScrollId];
     if (scrollSpec) return scrollSpec;
+  }
+  if (
+    heroClass === 'cleric' &&
+    action === 'tactical' &&
+    equippedWeaponId === 'cleric_seraphim_crozier'
+  ) {
+    return {
+      action: 'tactical',
+      label: 'Seraphic Judgment',
+      kind: 'ground_aoe',
+      range: 210,
+      aoeRadius: 110,
+      defaultDist: 120,
+      accentColor: '#FDE047',
+      secondaryColor: '#F59E0B',
+    };
   }
   return CLASS_ABILITY_SPECS[heroClass][action];
 }
@@ -341,16 +358,19 @@ export function findBestAutoTarget(opts: {
   ): { target: AutoTargetCandidate; angle: number; distance: number } | null => {
     let bestTarget: AutoTargetCandidate | null = null;
     let bestScore = Infinity;
-    let bestAngle = 0;
+    let bestDx = 0;
+    let bestDy = 0;
     let bestDist = Infinity;
+    const maxRangeSq = opts.maxRange * opts.maxRange;
 
     for (let i = 0; i < list.length; i++) {
       const candidate = list[i];
       if (typeof candidate.hp === 'number' && candidate.hp <= 0) continue;
       const dx = candidate.x - opts.playerX;
       const dy = candidate.y - opts.playerY;
-      const dist = Math.hypot(dx, dy);
-      if (dist <= 0.001 || dist > opts.maxRange) continue;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= 0.000001 || distSq > maxRangeSq) continue;
+      const dist = Math.sqrt(distSq);
 
       const dot = hasPref ? (dx * prefCos + dy * prefSin) / dist : 0;
       if (minDot > -1 && dot < minDot) continue;
@@ -375,13 +395,14 @@ export function findBestAutoTarget(opts: {
       if (score < bestScore) {
         bestScore = score;
         bestTarget = candidate;
-        bestAngle = Math.atan2(dy, dx);
+        bestDx = dx;
+        bestDy = dy;
         bestDist = dist;
       }
     }
 
     if (!bestTarget) return null;
-    return { target: bestTarget, angle: bestAngle, distance: bestDist };
+    return { target: bestTarget, angle: Math.atan2(bestDy, bestDx), distance: bestDist };
   };
 
   const enemyMatch = pickFrom(opts.enemies);

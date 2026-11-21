@@ -126,13 +126,19 @@ function parseRgb(colorStr: string): RgbColor {
   if (colorStr.startsWith('#')) {
     const hex = colorStr.slice(1);
     if (hex.length === 3) {
-      r = parseInt(hex[0] + hex[0], 16) || 255;
-      g = parseInt(hex[1] + hex[1], 16) || 255;
-      b = parseInt(hex[2] + hex[2], 16) || 255;
+      const pr = parseInt(hex[0] + hex[0], 16);
+      const pg = parseInt(hex[1] + hex[1], 16);
+      const pb = parseInt(hex[2] + hex[2], 16);
+      r = Number.isNaN(pr) ? 255 : pr;
+      g = Number.isNaN(pg) ? 255 : pg;
+      b = Number.isNaN(pb) ? 255 : pb;
     } else if (hex.length === 6) {
-      r = parseInt(hex.slice(0, 2), 16) || 255;
-      g = parseInt(hex.slice(2, 4), 16) || 255;
-      b = parseInt(hex.slice(4, 6), 16) || 255;
+      const pr = parseInt(hex.slice(0, 2), 16);
+      const pg = parseInt(hex.slice(2, 4), 16);
+      const pb = parseInt(hex.slice(4, 6), 16);
+      r = Number.isNaN(pr) ? 255 : pr;
+      g = Number.isNaN(pg) ? 255 : pg;
+      b = Number.isNaN(pb) ? 255 : pb;
     }
   } else if (colorStr.startsWith('rgb')) {
     const match = colorStr.match(/(\d+),\s*(\d+),\s*(\d+)/);
@@ -144,17 +150,88 @@ function parseRgb(colorStr: string): RgbColor {
   }
 
   const res: RgbColor = { r, g, b };
-  if (colorCache.size < 120) {
+  if (colorCache.size < 256) {
     colorCache.set(colorStr, res);
   }
   return res;
 }
 
-function interpolateColorRgb(c1: RgbColor, c2: RgbColor, t: number): string {
-  const r = Math.round(c1.r + (c2.r - c1.r) * t);
-  const g = Math.round(c1.g + (c2.g - c1.g) * t);
-  const b = Math.round(c1.b + (c2.b - c1.b) * t);
-  return `rgb(${r},${g},${b})`;
+/**
+ * Quantizes 8-bit RGB channels to 4 bits each (16 steps/channel, 4,096 total buckets)
+ * so color-interpolated particles share cached offscreen glow sprites across frames
+ * instead of allocating a new <canvas> + radial gradient for every RGB step.
+ */
+export function quantizeGlowRgbKey(r: number, g: number, b: number): number {
+  const rq = Math.max(0, Math.min(15, r >> 4));
+  const gq = Math.max(0, Math.min(15, g >> 4));
+  const bq = Math.max(0, Math.min(15, b >> 4));
+  return (rq << 8) | (gq << 4) | bq;
+}
+
+// Offscreen radial sprite cache for particle soft glows & projectile halos
+// (eliminates per-frame Gaussian shadowBlur & createRadialGradient allocations)
+const glowSpriteCache = new Map<number, HTMLCanvasElement>();
+const radialSpriteCache = new Map<string, HTMLCanvasElement>();
+
+function getParticleGlowSpriteRgb(r: number, g: number, b: number): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const key = quantizeGlowRgbKey(r, g, b);
+  let canvas = glowSpriteCache.get(key);
+  if (canvas) return canvas;
+
+  if (glowSpriteCache.size >= 256) {
+    const firstKey = glowSpriteCache.keys().next().value;
+    if (firstKey !== undefined) glowSpriteCache.delete(firstKey);
+  }
+
+  const qr = Math.min(255, ((key >> 8) & 0xf) * 16 + 8);
+  const qg = Math.min(255, ((key >> 4) & 0xf) * 16 + 8);
+  const qb = Math.min(255, (key & 0xf) * 16 + 8);
+
+  canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const gCtx = canvas.getContext('2d');
+  if (gCtx) {
+    const grad = gCtx.createRadialGradient(16, 16, 1, 16, 16, 16);
+    grad.addColorStop(0, `rgba(${qr},${qg},${qb},0.65)`);
+    grad.addColorStop(0.45, `rgba(${qr},${qg},${qb},0.26)`);
+    grad.addColorStop(1, `rgba(${qr},${qg},${qb},0)`);
+    gCtx.fillStyle = grad;
+    gCtx.fillRect(0, 0, 32, 32);
+  }
+  glowSpriteCache.set(key, canvas);
+  return canvas;
+}
+
+function getParticleGlowSprite(colorStr: string): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  const { r, g, b } = parseRgb(colorStr);
+  return getParticleGlowSpriteRgb(r, g, b);
+}
+
+function getCachedRadialSprite(
+  key: string,
+  size: number,
+  buildStops: (grad: CanvasGradient) => void
+): HTMLCanvasElement | null {
+  if (typeof document === 'undefined') return null;
+  let canvas = radialSpriteCache.get(key);
+  if (canvas) return canvas;
+
+  canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const sCtx = canvas.getContext('2d');
+  if (sCtx) {
+    const half = size / 2;
+    const grad = sCtx.createRadialGradient(half, half, 1, half, half, half);
+    buildStops(grad);
+    sCtx.fillStyle = grad;
+    sCtx.fillRect(0, 0, size, size);
+  }
+  radialSpriteCache.set(key, canvas);
+  return canvas;
 }
 
 // =========================================================================
@@ -624,11 +701,14 @@ export class ParticleManager {
       return false;
     }
     if (priority === 'normal' && currentCount >= max - this.budget.reserveForCritical) {
-      // Try to reclaim an expired or oldest low-priority particle
+      // O(1) swap-and-pop reclaim of a low-priority particle
       let reclaimed = false;
       for (let i = 0; i < currentCount; i++) {
         if (this.particles[i].priority === 'low') {
-          const removed = this.particles.splice(i, 1)[0];
+          const removed = this.particles[i];
+          const lastIdx = this.particles.length - 1;
+          if (i !== lastIdx) this.particles[i] = this.particles[lastIdx];
+          this.particles.pop();
           this.recycleParticle(removed);
           reclaimed = true;
           break;
@@ -639,11 +719,14 @@ export class ParticleManager {
       }
     }
     if (priority === 'high' && currentCount >= max) {
-      // Reclaim low or normal priority particle
+      // O(1) swap-and-pop reclaim low or normal priority particle
       for (let i = 0; i < currentCount; i++) {
         const pPrio = this.particles[i].priority;
         if (pPrio === 'low' || pPrio === 'normal') {
-          const removed = this.particles.splice(i, 1)[0];
+          const removed = this.particles[i];
+          const lastIdx = this.particles.length - 1;
+          if (i !== lastIdx) this.particles[i] = this.particles[lastIdx];
+          this.particles.pop();
           this.recycleParticle(removed);
           break;
         }
@@ -653,10 +736,13 @@ export class ParticleManager {
       }
     }
     if (priority === 'critical' && currentCount >= max + 50) {
-      // Reclaim any non-critical particle
+      // O(1) swap-and-pop reclaim any non-critical particle
       for (let i = 0; i < currentCount; i++) {
         if (this.particles[i].priority !== 'critical') {
-          const removed = this.particles.splice(i, 1)[0];
+          const removed = this.particles[i];
+          const lastIdx = this.particles.length - 1;
+          if (i !== lastIdx) this.particles[i] = this.particles[lastIdx];
+          this.particles.pop();
           this.recycleParticle(removed);
           break;
         }
@@ -7198,12 +7284,14 @@ export class ParticleManager {
   public updateAndDraw(
     ctx: CanvasRenderingContext2D,
     now: number,
-    dtSec: number
+    dtSec: number,
+    viewportBounds?: { left: number; right: number; top: number; bottom: number }
   ): void {
     const list = this.particles;
     const len = list.length;
     if (len === 0) return;
 
+    const canDrawSprite = typeof ctx.drawImage === 'function';
     let writeIdx = 0;
 
     for (let i = 0; i < len; i++) {
@@ -7232,11 +7320,13 @@ export class ParticleManager {
       }
 
       // 3. Lateral Curve Drift (Perpendicular Curvature)
+      let cachedSpeed = -1;
       if (p.curveDrift) {
-        const sp = Math.hypot(p.vx, p.vy);
-        if (sp > 2) {
-          p.vx += (-p.vy / sp) * p.curveDrift * dtSec;
-          p.vy += (p.vx / sp) * p.curveDrift * dtSec;
+        cachedSpeed = Math.hypot(p.vx, p.vy);
+        if (cachedSpeed > 2) {
+          p.vx += (-p.vy / cachedSpeed) * p.curveDrift * dtSec;
+          p.vy += (p.vx / cachedSpeed) * p.curveDrift * dtSec;
+          cachedSpeed = -1; // velocity mutated
         }
       }
 
@@ -7293,11 +7383,26 @@ export class ParticleManager {
         const wAng = (age * 0.001 * p.waveFrequency * Math.PI * 2) + (p.wavePhase || 0);
         const wVal = Math.sin(wAng) * p.waveAmplitude;
         const sp = Math.hypot(p.vx, p.vy);
+        cachedSpeed = sp;
         if (sp > 2) {
           renderX += (-p.vy / sp) * wVal;
           renderY += (p.vx / sp) * wVal;
         } else {
           renderX += wVal;
+        }
+      }
+
+      // Viewport culling: advance simulation & lifetime offscreen without emitting Canvas draws
+      if (viewportBounds) {
+        const cullMargin = p.ringRadius !== undefined ? Math.max(24, (p.ringMaxRadius || 24) + 8) : Math.max(20, p.size * 4 + 12);
+        if (
+          renderX < viewportBounds.left - cullMargin ||
+          renderX > viewportBounds.right + cullMargin ||
+          renderY < viewportBounds.top - cullMargin ||
+          renderY > viewportBounds.bottom + cullMargin
+        ) {
+          list[writeIdx++] = p;
+          continue;
         }
       }
 
@@ -7328,6 +7433,10 @@ export class ParticleManager {
         alpha *= 0.35;
       }
       alpha = Math.max(0, Math.min(1, alpha));
+      if (alpha <= 0.01) {
+        list[writeIdx++] = p;
+        continue;
+      }
 
       // Scale Curve Calculation
       const sStart = p.startScale !== undefined ? p.startScale : 1.0;
@@ -7348,10 +7457,23 @@ export class ParticleManager {
 
       // Color Transition Over Lifetime
       let drawColor = p.color;
+      let glowR_ch = -1;
+      let glowG_ch = 0;
+      let glowB_ch = 0;
       if (p.colorEnd) {
         const c1 = parseRgb(p.color);
         const c2 = parseRgb(p.colorEnd);
-        drawColor = interpolateColorRgb(c1, c2, progress);
+        const cr = Math.round(c1.r + (c2.r - c1.r) * progress);
+        const cg = Math.round(c1.g + (c2.g - c1.g) * progress);
+        const cb = Math.round(c1.b + (c2.b - c1.b) * progress);
+        // Quantize particle fill color string slightly to cut GC string churn while preserving smooth fades
+        const qr = cr & 0xfc;
+        const qg = cg & 0xfc;
+        const qb = cb & 0xfc;
+        drawColor = `rgb(${qr},${qg},${qb})`;
+        glowR_ch = cr;
+        glowG_ch = cg;
+        glowB_ch = cb;
       }
 
       // Velocity Stretch & Orientation
@@ -7359,7 +7481,7 @@ export class ParticleManager {
       let stretchX = 1.0;
       if (p.stretchWithVelocity) {
         rot = Math.atan2(p.vy, p.vx);
-        const sp = Math.hypot(p.vx, p.vy);
+        const sp = cachedSpeed >= 0 ? cachedSpeed : Math.hypot(p.vx, p.vy);
         stretchX = 1 + sp * (p.stretchFactor || 0.006);
       }
 
@@ -7371,19 +7493,27 @@ export class ParticleManager {
         ctx.globalCompositeOperation = p.blendMode;
       }
 
-      if (p.glow) {
-        ctx.shadowColor = drawColor;
-        ctx.shadowBlur = Math.min(8, p.glowBlur || 4);
+      const px = Math.round(renderX);
+      const py = Math.round(renderY);
+
+      ctx.translate(px, py);
+
+      // Stamp cached radial glow sprite instead of per-particle Gaussian ctx.shadowBlur
+      if (p.glow && canDrawSprite) {
+        const glowSprite =
+          glowR_ch >= 0
+            ? getParticleGlowSpriteRgb(glowR_ch, glowG_ch, glowB_ch)
+            : getParticleGlowSprite(drawColor);
+        if (glowSprite) {
+          const glowR = curSize * 2.2 + Math.min(8, p.glowBlur || 4);
+          ctx.drawImage(glowSprite, -glowR, -glowR, glowR * 2, glowR * 2);
+        }
       }
 
       ctx.fillStyle = drawColor;
       ctx.strokeStyle = drawColor;
       ctx.lineWidth = 1;
 
-      const px = Math.round(renderX);
-      const py = Math.round(renderY);
-
-      ctx.translate(px, py);
       if (rot !== 0) ctx.rotate(rot);
       if (stretchX !== 1) ctx.scale(stretchX, 1);
 
@@ -7836,14 +7966,22 @@ export function drawEnhancedProjectile(
 
   } else if (proj.style === 'frost_lance') {
     // Luminous crystalline piercing spearhead with frosted halo & razor tail
-    const halo = ctx.createRadialGradient(0, 0, 2, 0, 0, 20);
-    halo.addColorStop(0, 'rgba(224, 242, 254, 0.72)');
-    halo.addColorStop(0.55, 'rgba(56, 189, 248, 0.35)');
-    halo.addColorStop(1, 'rgba(2, 132, 199, 0)');
-    ctx.fillStyle = halo;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 22, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const canDrawImg = typeof ctx.drawImage === 'function';
+    const frostHaloSprite = canDrawImg
+      ? getCachedRadialSprite('proj_frost_lance', 64, (grad) => {
+          grad.addColorStop(0, 'rgba(224, 242, 254, 0.72)');
+          grad.addColorStop(0.55, 'rgba(56, 189, 248, 0.35)');
+          grad.addColorStop(1, 'rgba(2, 132, 199, 0)');
+        })
+      : null;
+    if (frostHaloSprite) {
+      ctx.drawImage(frostHaloSprite, -22, -10, 44, 20);
+    } else {
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.38)';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 22, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.fillStyle = '#0284C7';
     ctx.beginPath();
@@ -7871,15 +8009,24 @@ export function drawEnhancedProjectile(
     // Persistent floating cosmic energy sphere with dual counter-rotating rune arcs & orbiting satellites
     const r = Math.max(16, proj.radius || 22);
     const spin = now * 0.0045;
-    const orbGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, r * 1.15);
-    orbGrad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
-    orbGrad.addColorStop(0.32, 'rgba(216, 180, 254, 0.9)');
-    orbGrad.addColorStop(0.68, 'rgba(99, 102, 241, 0.62)');
-    orbGrad.addColorStop(1, 'rgba(56, 189, 248, 0.06)');
-    ctx.fillStyle = orbGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, r * 1.15, 0, Math.PI * 2);
-    ctx.fill();
+    const canDrawImg = typeof ctx.drawImage === 'function';
+    const orbSprite = canDrawImg
+      ? getCachedRadialSprite('proj_arcane_orb', 64, (grad) => {
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.98)');
+          grad.addColorStop(0.32, 'rgba(216, 180, 254, 0.9)');
+          grad.addColorStop(0.68, 'rgba(99, 102, 241, 0.62)');
+          grad.addColorStop(1, 'rgba(56, 189, 248, 0.06)');
+        })
+      : null;
+    const orbR = r * 1.15;
+    if (orbSprite) {
+      ctx.drawImage(orbSprite, -orbR, -orbR, orbR * 2, orbR * 2);
+    } else {
+      ctx.fillStyle = 'rgba(216, 180, 254, 0.72)';
+      ctx.beginPath();
+      ctx.arc(0, 0, orbR, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Inner rotating rune ring
     ctx.save();
@@ -7916,14 +8063,22 @@ export function drawEnhancedProjectile(
 
   } else if (proj.style === 'arcane_barrage') {
     // Sleek cyan-magenta plasma barrage missile with bright streaking tail
-    const glow = ctx.createRadialGradient(0, 0, 1, 0, 0, 12);
-    glow.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-    glow.addColorStop(0.5, 'rgba(232, 121, 249, 0.45)');
-    glow.addColorStop(1, 'rgba(96, 165, 250, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.ellipse(-2, 0, 14, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const canDrawImg = typeof ctx.drawImage === 'function';
+    const barrageSprite = canDrawImg
+      ? getCachedRadialSprite('proj_arcane_barrage', 48, (grad) => {
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+          grad.addColorStop(0.5, 'rgba(232, 121, 249, 0.45)');
+          grad.addColorStop(1, 'rgba(96, 165, 250, 0)');
+        })
+      : null;
+    if (barrageSprite) {
+      ctx.drawImage(barrageSprite, -16, -7, 28, 14);
+    } else {
+      ctx.fillStyle = 'rgba(232, 121, 249, 0.48)';
+      ctx.beginPath();
+      ctx.ellipse(-2, 0, 14, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     ctx.fillStyle = '#60A5FA';
     ctx.beginPath();
@@ -7950,16 +8105,25 @@ export function drawEnhancedProjectile(
     // Enlarged Fireball: Blazing molten sphere with rotating flame corona & flickering tail
     const r = Math.max(13, proj.radius || 14);
     const pulse = Math.sin(now * 0.025) * 1.8;
-    const corona = ctx.createRadialGradient(0, 0, 2, 0, 0, r + 5 + pulse);
-    corona.addColorStop(0, '#FFFFFF');
-    corona.addColorStop(0.28, '#FEF08A');
-    corona.addColorStop(0.62, '#F97316');
-    corona.addColorStop(0.88, 'rgba(220, 38, 38, 0.72)');
-    corona.addColorStop(1, 'rgba(220, 38, 38, 0)');
-    ctx.fillStyle = corona;
-    ctx.beginPath();
-    ctx.arc(0, 0, r + 5 + pulse, 0, Math.PI * 2);
-    ctx.fill();
+    const coronaR = r + 5 + pulse;
+    const canDrawImg = typeof ctx.drawImage === 'function';
+    const coronaSprite = canDrawImg
+      ? getCachedRadialSprite('proj_fireball_corona', 64, (grad) => {
+          grad.addColorStop(0, '#FFFFFF');
+          grad.addColorStop(0.28, '#FEF08A');
+          grad.addColorStop(0.62, '#F97316');
+          grad.addColorStop(0.88, 'rgba(220, 38, 38, 0.72)');
+          grad.addColorStop(1, 'rgba(220, 38, 38, 0)');
+        })
+      : null;
+    if (coronaSprite) {
+      ctx.drawImage(coronaSprite, -coronaR, -coronaR, coronaR * 2, coronaR * 2);
+    } else {
+      ctx.fillStyle = 'rgba(249, 115, 22, 0.52)';
+      ctx.beginPath();
+      ctx.arc(0, 0, coronaR, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Inner molten core
     ctx.fillStyle = '#EA580C';

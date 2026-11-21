@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sfx } from '../client/sound.ts';
 import { getMinecraftObfuscatedString } from '../client/dungeonDecorations.ts';
 
@@ -59,6 +59,10 @@ import {
   type AbilityAimState,
   type AimableAction,
 } from '../shared/abilityTargeting.ts';
+import {
+  ARMAMENT_TUNING,
+  resolveActiveVestmentPassive,
+} from '../shared/armaments.ts';
 import {
   applyKeyboardToUnifiedInput,
   applyTouchStickToUnifiedInput,
@@ -232,6 +236,24 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
   const me =
     snapshot.players.find((p) => p.id === playerId) || snapshot.players[0];
+  const meXQuantized = me ? Math.round(me.x / 16) * 16 : 0;
+  const meYQuantized = me ? Math.round(me.y / 16) * 16 : 0;
+  const voiceMyPos = useMemo(
+    () => ({ x: meXQuantized, y: meYQuantized }),
+    [meXQuantized, meYQuantized]
+  );
+  const otherPlayersKey = snapshot.players
+    .filter((p) => p.id !== playerId)
+    .map((p) => `${p.id}:${p.username}`)
+    .join(',');
+  const voiceOtherPlayers = useMemo(
+    () =>
+      snapshot.players
+        .filter((p) => p.id !== playerId)
+        .map((p) => ({ id: p.id, x: p.x, y: p.y, username: p.username })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [otherPlayersKey]
+  );
   const hasLootModalOpen = Boolean(
     me &&
       snapshot.status === 'playing' &&
@@ -471,6 +493,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
   const myDef = me ? HERO_CLASSES[me.heroClass] : HERO_CLASSES.vanguard;
   const equippedScroll =
     me?.heroClass === 'arcanist' ? getArcanistScrollDef(me.equippedScrollId) : null;
+  const isSeraphimTactical = Boolean(
+    me && me.heroClass === 'cleric' && me.equippedWeapon === 'cleric_seraphim_crozier'
+  );
+  const myActivePassive = me
+    ? me.activePassiveId || resolveActiveVestmentPassive(me.heroClass, me.equippedVestment)
+    : 'iron_will';
   const isChronoSuspended = Boolean(me && (me.chronoSuspendedMs || 0) > 0);
   const isChannelingDisintegration = Boolean(me?.disintegrationState?.active);
   const tacSec = me ? Math.ceil(me.skillCooldownMs / 1000) : 0;
@@ -567,7 +595,12 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
     if (action === 'ult' && me.ultCooldownMs > 0) return;
     if (action === 'dash' && (me.dashCooldownMs || 0) > 0) return;
 
-    const spec = getAbilityTargetSpec(me.heroClass, action, me.equippedScrollId);
+    const spec = getAbilityTargetSpec(
+      me.heroClass,
+      action,
+      me.equippedScrollId,
+      me.equippedWeapon
+    );
     const liveSnap = latestSnapshotRef.current;
     const liveMe = liveSnap?.players.find((p) => p.id === playerId) || me;
     const smart = resolveSkillSmartTarget({
@@ -975,7 +1008,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
         return (
           <div
-            className={`pointer-events-none fixed top-9 sm:top-14 left-1/2 -translate-x-1/2 z-10 w-[min(460px,92vw)] ${theme.bg} border ${theme.border} px-2.5 py-1 sm:px-4 sm:py-2 shadow-2xl backdrop-blur-xs`}
+            className={`pointer-events-none fixed top-9 sm:top-14 left-1/2 -translate-x-1/2 z-10 w-[min(460px,92vw)] ${theme.bg} border ${theme.border} px-2.5 py-1 sm:px-4 sm:py-2 shadow-2xl`}
           >
             <div className="flex items-center justify-between gap-2 text-xs font-mono tabular-nums mb-1">
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1127,7 +1160,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
       {/* Dedicated Fixed Player HP & Status Effects HUD */}
       {me && (
-        <div className="pointer-events-auto fixed top-20 sm:top-24 left-1.5 sm:left-5 z-20 w-52 sm:w-64 bg-[#191824]/95 border border-[#3A384C] p-2 sm:p-2.5 shadow-2xl backdrop-blur-sm space-y-1.5 font-mono">
+        <div className="pointer-events-auto fixed top-20 sm:top-24 left-1.5 sm:left-5 z-20 w-52 sm:w-64 bg-[#191824]/95 border border-[#3A384C] p-2 sm:p-2.5 shadow-2xl space-y-1.5 font-mono">
           <div className="flex items-center justify-between gap-1 text-xs">
             <span className="font-display text-xs sm:text-sm text-white font-bold truncate">
               {me.username}
@@ -1231,6 +1264,172 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
               )}
             </div>
           )}
+
+          {/* Active Vestment Passive & Eclipse Charge Gauges */}
+          {(myActivePassive === 'heat' ||
+            myActivePassive === 'momentum' ||
+            myActivePassive === 'predators_instinct' ||
+            myActivePassive === 'void_consumption' ||
+            myActivePassive === 'shared_grace' ||
+            myActivePassive === 'sacred_retribution' ||
+            (me.eclipseChargeRatio ?? 0) > 0) && (
+            <div className="pt-1 border-t border-[#2E2B3D] space-y-1 text-[9px] tabular-nums">
+              {myActivePassive === 'heat' && (
+                <div>
+                  <div className="flex justify-between text-[#FDBA74]">
+                    <span>HEAT</span>
+                    <span>
+                      {Math.round(me.vanguardHeat ?? 0)}/{ARMAMENT_TUNING.passives.heat.cap} (+
+                      {Math.round(
+                        (Math.min(ARMAMENT_TUNING.passives.heat.cap, me.vanguardHeat ?? 0) /
+                          ARMAMENT_TUNING.passives.heat.cap) *
+                          ARMAMENT_TUNING.passives.heat.maxDamageBonusPct *
+                          100
+                      )}
+                      % DMG)
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((me.vanguardHeat ?? 0) / ARMAMENT_TUNING.passives.heat.cap) * 100
+                        )}%`,
+                      }}
+                      className="h-full bg-gradient-to-r from-[#EA580C] to-[#FACC15]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {myActivePassive === 'momentum' && (
+                <div>
+                  <div className="flex justify-between text-[#7DD3FC]">
+                    <span>MOMENTUM</span>
+                    <span>
+                      {Math.round(me.rangerMomentum ?? 0)}/{ARMAMENT_TUNING.passives.momentum.cap} (+
+                      {Math.round(
+                        (Math.min(ARMAMENT_TUNING.passives.momentum.cap, me.rangerMomentum ?? 0) /
+                          ARMAMENT_TUNING.passives.momentum.cap) *
+                          ARMAMENT_TUNING.passives.momentum.maxAttackSpeedBonusPct *
+                          100
+                      )}
+                      % SPD)
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((me.rangerMomentum ?? 0) / ARMAMENT_TUNING.passives.momentum.cap) * 100
+                        )}%`,
+                      }}
+                      className="h-full bg-gradient-to-r from-[#0284C7] to-[#34D399]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {myActivePassive === 'predators_instinct' && (
+                <div className="flex items-center justify-between text-[#6EE7B7]">
+                  <span>PREDATOR HUNT</span>
+                  <span className="font-bold">
+                    {me.predatorStacks ?? 0}/{ARMAMENT_TUNING.passives.predatorsInstinct.maxStacks} (+
+                    {(me.predatorStacks ?? 0) *
+                      Math.round(ARMAMENT_TUNING.passives.predatorsInstinct.damagePerStackPct * 100)}
+                    %{me.predatorTargetId ? ' · LOCK' : ''})
+                  </span>
+                </div>
+              )}
+
+              {myActivePassive === 'void_consumption' && (
+                <div>
+                  <div className="flex justify-between text-[#E879F9]">
+                    <span>VOID ENERGY</span>
+                    <span className={(me.voidEnergy ?? 0) >= ARMAMENT_TUNING.passives.voidConsumption.cap ? 'font-bold text-[#FDE047]' : ''}>
+                      {(me.voidEnergy ?? 0) >= ARMAMENT_TUNING.passives.voidConsumption.cap
+                        ? 'READY (+35% Q)'
+                        : `${Math.round(me.voidEnergy ?? 0)}/${ARMAMENT_TUNING.passives.voidConsumption.cap}`}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((me.voidEnergy ?? 0) / ARMAMENT_TUNING.passives.voidConsumption.cap) * 100
+                        )}%`,
+                      }}
+                      className="h-full bg-gradient-to-r from-[#7E22CE] to-[#E879F9]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {myActivePassive === 'shared_grace' && (
+                <div>
+                  <div className="flex justify-between text-[#86EFAC]">
+                    <span>SHARED GRACE</span>
+                    <span>
+                      {Math.round(me.storedGrace ?? 0)}/{ARMAMENT_TUNING.passives.sharedGrace.maxCap}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((me.storedGrace ?? 0) / ARMAMENT_TUNING.passives.sharedGrace.maxCap) * 100
+                        )}%`,
+                      }}
+                      className="h-full bg-gradient-to-r from-[#16A34A] to-[#4ADE80]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {myActivePassive === 'sacred_retribution' && (
+                <div>
+                  <div className="flex justify-between text-[#FDE047]">
+                    <span>SANCTITY</span>
+                    <span className={(me.clericSanctity ?? 0) >= ARMAMENT_TUNING.passives.sacredRetribution.cap ? 'font-bold text-white' : ''}>
+                      {(me.clericSanctity ?? 0) >= ARMAMENT_TUNING.passives.sacredRetribution.cap
+                        ? 'READY (NEXT ATK)'
+                        : `${Math.round(me.clericSanctity ?? 0)}/${ARMAMENT_TUNING.passives.sacredRetribution.cap}`}
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          ((me.clericSanctity ?? 0) / ARMAMENT_TUNING.passives.sacredRetribution.cap) * 100
+                        )}%`,
+                      }}
+                      className="h-full bg-gradient-to-r from-[#CA8A04] to-[#FEF08A]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(me.eclipseChargeRatio ?? 0) > 0 && (
+                <div>
+                  <div className="flex justify-between text-[#C4B5FD]">
+                    <span>ECLIPSE DRAW</span>
+                    <span>{Math.round((me.eclipseChargeRatio ?? 0) * 100)}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-[#111018] border border-[#2E2B3D] overflow-hidden">
+                    <div
+                      style={{ width: `${Math.min(100, (me.eclipseChargeRatio ?? 0) * 100)}%` }}
+                      className="h-full bg-gradient-to-r from-[#6366F1] to-[#FDE047]"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1268,7 +1467,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           <span className="font-display text-xs tracking-wide whitespace-nowrap">
             {activeAimUi.cancelled
               ? 'Release to Cancel Cast'
-              : `Aiming ${getAbilityTargetSpec(me.heroClass, activeAimUi.action, me.equippedScrollId).label} · Drag Here or [ESC] to Cancel`}
+              : `Aiming ${getAbilityTargetSpec(me.heroClass, activeAimUi.action, me.equippedScrollId, me.equippedWeapon).label} · Drag Here or [ESC] to Cancel`}
           </span>
         </div>
       )}
@@ -1331,11 +1530,15 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
                 ? 'Silenced: Tactical ability sealed'
                 : equippedScroll
                 ? `${equippedScroll.scrollName} (${equippedScroll.role}): ${equippedScroll.summary}`
+                : isSeraphimTactical
+                ? 'Seraphic Judgment: Ground AoE Divine burst dealing immediate damage to enemies (no healing). (Hold & drag to aim, release to cast)'
                 : `${myDef.tacticalName}: ${myDef.tacticalDesc} (Hold & drag to aim, release to cast)`
             }
             style={
               equippedScroll && !isSilenced && tacSec === 0
                 ? { borderColor: `${equippedScroll.accentColor}99` }
+                : isSeraphimTactical && !isSilenced && tacSec === 0
+                ? { borderColor: '#FDE04799' }
                 : undefined
             }
             className={`stone-button stone-button-dark flex-col items-start min-w-[130px] h-auto py-1.5 ${
@@ -1358,9 +1561,19 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
             </div>
             <div
               className="font-display text-sm whitespace-nowrap"
-              style={equippedScroll ? { color: equippedScroll.accentColor } : undefined}
+              style={
+                equippedScroll
+                  ? { color: equippedScroll.accentColor }
+                  : isSeraphimTactical
+                  ? { color: '#FDE047' }
+                  : undefined
+              }
             >
-              {equippedScroll ? equippedScroll.tacticalTitle : myDef.tacticalName}
+              {equippedScroll
+                ? equippedScroll.tacticalTitle
+                : isSeraphimTactical
+                ? 'Seraphic Judgment'
+                : myDef.tacticalName}
             </div>
           </button>
 
@@ -1975,7 +2188,7 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
 
       {/* Floating Prompt near Portal in Tavern */}
       {isTavern && nearPortal && !expeditionGateOpen && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#D9AA52] shadow-2xl backdrop-blur-sm animate-bounce">
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto flex items-center gap-2 px-4 py-2 bg-[#1A1926]/95 border-2 border-[#D9AA52] shadow-2xl">
           <span className="font-display font-bold text-xs sm:text-sm text-[#FCD34D] flex items-center gap-1.5">
              Ancient Expedition Portal
           </span>
@@ -2340,8 +2553,8 @@ export const DungeonRunView: React.FC<DungeonRunViewProps> = ({
           userId={playerId}
           username={me.username}
           latestSnapshotRef={latestSnapshotRef}
-          myPos={{ x: me.x, y: me.y }}
-          otherPlayers={snapshot.players.filter(p => p.id !== playerId).map(p => ({ id: p.id, x: p.x, y: p.y, username: p.username }))}
+          myPos={voiceMyPos}
+          otherPlayers={voiceOtherPlayers}
           hasTouchControls={Boolean(isTouchDevice || forceTouchGamepad)}
           mapWidth={map.width}
           mapHeight={map.height}
